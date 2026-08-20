@@ -1,0 +1,33 @@
+repos:
+  - repo: local
+    hooks:
+      - id: fix-guards
+        name: Fix Header Guards
+        entry: python3 scripts/fix_guards.py
+        language: system
+        types: [c++] # Looks for .cpp, .h, .inl etc
+        files: \.(h|hpp|inl)$
+      - id: clang-format
+        name: Clang Format
+        entry: clang-format -i -style=google
+        language: system
+        files: \.(h|hpp|inl|cu|cpp)$
+      - id: jupyter-nb-clear-output
+        name: jupyter-nb-clear-output
+        files: \.ipynb$
+        stages: [pre-commit]
+        language: system
+        entry: jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace
+      # - id: cpp_format
+      #   name: C++ Trailing Return Types and variable normalization
+      #   entry: cpp_format --in-place --extra-arg=-I/usr/lib/llvm-18/lib/clang/18/include --normalize-variables-scope=member --normalize-variables-style=m_prefix --trailing-return-types -p .
+      #   language: system
+      #   types: [c++]
+      #   files: \.(h|inl|cpp)$
+
+      # - id: clang-tidy
+      #   name: Clang Tidy
+      #   entry: clang-tidy -p . "$@"' --
+      #   language: system
+      #   types: [c++]
+      #   exclude: \.inl$

@@ -1,0 +1,12 @@
+**/*.pkl
+**/*_pb2.py
+**/*_pb2.pyi
+**/*_pb2_grpc.py
+**/.ipynb_checkpoints
+**/.nfs*
+**/MODULE.bazel.lock
+**/bazel-**
+.cache
+.ipynb_checkpoints
+__pycache__
+compile_commands.json

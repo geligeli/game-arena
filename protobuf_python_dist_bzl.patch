@@ -1,0 +1,11 @@
+--- a/python/dist/dist.bzl
++++ b/python/dist/dist.bzl
+@@ -1,7 +1,7 @@
+ """Rules to create python distribution files and properly name them"""
+ 
+ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+-load("@system_python//:version.bzl", "SYSTEM_PYTHON_VERSION")
++SYSTEM_PYTHON_VERSION = "312"  # patched: rules_python >= 1.5 interpreter repos have no version.bzl
+ 
+ def _get_suffix(limited_api, python_version, cpu):
+     """Computes an ABI version tag for an extension module per PEP 3149."""
