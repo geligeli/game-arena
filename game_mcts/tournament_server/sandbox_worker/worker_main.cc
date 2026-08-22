@@ -31,8 +31,8 @@
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_split.h"
-#include "cpp/tournament_server/arena.grpc.pb.h"
-#include "cpp/tournament_server/sandbox_worker/local_backend.h"
+#include "game_mcts/tournament_server/arena.grpc.pb.h"
+#include "game_mcts/tournament_server/sandbox_worker/local_backend.h"
 
 ABSL_FLAG(std::string, server, "localhost:50051",
           "host:port of the arena's SandboxFleet service");

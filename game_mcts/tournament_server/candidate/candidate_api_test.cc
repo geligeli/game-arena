@@ -6,7 +6,7 @@
 // worker generates at runtime, where a compile error would surface as a
 // mystifying build failure for whoever submitted the candidate.
 
-#include "cpp/tournament_server/candidate/candidate_api.h"
+#include "game_mcts/tournament_server/candidate/candidate_api.h"
 
 #include <random>
 

@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/worker_pool.h"
+#include "game_mcts/tournament_server/worker_pool.h"
 
 #include <algorithm>
 #include <utility>

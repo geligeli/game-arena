@@ -1,8 +1,8 @@
 #ifndef RISK_GAME_AI_CPP_BENCHGAME_BENCH_SERIALIZATION_H
 #define RISK_GAME_AI_CPP_BENCHGAME_BENCH_SERIALIZATION_H
 
-#include "cpp/benchgame/bench.pb.h"
-#include "cpp/benchgame/bench_game.h"
+#include "game_mcts/tournament_server/benchgame/bench.pb.h"
+#include "game_mcts/tournament_server/benchgame/bench_game.h"
 #include "game_mcts/cpp/mcts/serialization.h"
 
 namespace mcts {

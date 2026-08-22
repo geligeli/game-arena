@@ -17,7 +17,7 @@
 #include <filesystem>
 #include <string>
 
-#include "cpp/tournament_server/sandbox_worker/sandbox_backend.h"
+#include "game_mcts/tournament_server/sandbox_worker/sandbox_backend.h"
 
 namespace tournament_arena {
 

@@ -2,7 +2,7 @@
 // cannot debug, so it is asserted directly rather than only through whether a
 // build happened to succeed.
 
-#include "cpp/tournament_server/sandbox_worker/candidate_build.h"
+#include "game_mcts/tournament_server/sandbox_worker/candidate_build.h"
 
 #include <string>
 
@@ -41,7 +41,7 @@ TEST(GenerateCandidateBuildTest, WiresTheEntryHeaderAndGameIntoTheBinary) {
             std::string::npos);
   EXPECT_NE(
       build.find(
-          "CANDIDATE_ENTRY_HEADER=\\\"cpp/tournament_server/candidates/"
+          "CANDIDATE_ENTRY_HEADER=\\\"game_mcts/tournament_server/candidates/"
           "my-bot-abc123/strategy.h\\\""),
       std::string::npos);
   EXPECT_NE(build.find("CANDIDATE_GAME_RISK2"), std::string::npos);

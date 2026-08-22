@@ -11,7 +11,7 @@
 #include <string_view>
 #include <vector>
 
-#include "cpp/tournament_server/game_session.h"
+#include "game_mcts/tournament_server/game_session.h"
 #include "game_mcts/cpp/mcts/game_traits.h"
 #include "game_mcts/cpp/mcts/minimax.h"
 #include "game_mcts/cpp/mcts/serialization.h"

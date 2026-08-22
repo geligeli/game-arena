@@ -30,10 +30,10 @@
 #include <string>
 #include <vector>
 
-#include "cpp/tournament_server/arena.pb.h"
-#include "cpp/tournament_server/candidate_store.h"
-#include "cpp/tournament_server/elo_store.h"
-#include "cpp/tournament_server/fleet_worker.h"
+#include "game_mcts/tournament_server/arena.pb.h"
+#include "game_mcts/tournament_server/candidate_store.h"
+#include "game_mcts/tournament_server/elo_store.h"
+#include "game_mcts/tournament_server/fleet_worker.h"
 
 namespace tournament_arena {
 

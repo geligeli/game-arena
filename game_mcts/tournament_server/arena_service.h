@@ -9,10 +9,10 @@
 
 #include <string>
 
-#include "cpp/tournament_server/arena.grpc.pb.h"
-#include "cpp/tournament_server/candidate_store.h"
-#include "cpp/tournament_server/elo_store.h"
-#include "cpp/tournament_server/scheduler.h"
+#include "game_mcts/tournament_server/arena.grpc.pb.h"
+#include "game_mcts/tournament_server/candidate_store.h"
+#include "game_mcts/tournament_server/elo_store.h"
+#include "game_mcts/tournament_server/scheduler.h"
 
 namespace tournament_arena {
 

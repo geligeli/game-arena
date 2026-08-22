@@ -24,8 +24,8 @@
 #include <vector>
 
 #include "absl/log/log.h"
-#include "cpp/tournament_server/policies.h"
-#include "cpp/tournament_server/tournament_broker.grpc.pb.h"
+#include "game_mcts/tournament_server/policies.h"
+#include "game_mcts/tournament_server/tournament_broker.grpc.pb.h"
 #include "game_mcts/cpp/mcts/game_traits.h"
 #include "game_mcts/cpp/mcts/serialization.h"
 #include "game_mcts/cpp/mcts/tournament.h"

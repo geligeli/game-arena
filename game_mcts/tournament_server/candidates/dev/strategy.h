@@ -17,7 +17,7 @@
 
 #include <random>
 
-#include "cpp/tournament_server/candidate/candidate_api.h"
+#include "game_mcts/tournament_server/candidate/candidate_api.h"
 
 // This example is the stock Risk MCTS bot: the repo's proposer expands the
 // tree, and battles in rollouts are resolved by their expected outcome rather
@@ -66,7 +66,7 @@ inline auto MakePolicy(const candidate::Params &params) -> candidate::policy_t {
 //  - support_size() must mirror sample()'s branches exactly, or DedupSampler
 //    asserts (game_mcts/cpp/mcts/game_traits.h in the game-mcts repo).
 //  - A proposer that avoids attacking stalls rollouts until the move cap, so
-//    games take minutes and finish as draws (cpp/risk/tuning_result.md).
+//    games take minutes and finish as draws (game_mcts/cpp/risk/tuning_result.md).
 //    Always sanity-check against builtin:random before submitting.
 
 #endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATES_DEV_STRATEGY_H

@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/arena_service.h"
+#include "game_mcts/tournament_server/arena_service.h"
 
 #include <algorithm>
 #include <utility>

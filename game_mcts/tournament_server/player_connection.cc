@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/player_connection.h"
+#include "game_mcts/tournament_server/player_connection.h"
 
 #include <utility>
 

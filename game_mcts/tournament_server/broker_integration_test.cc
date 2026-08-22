@@ -16,13 +16,13 @@
 #include "gtest/gtest.h"
 #include "game_mcts/cpp/tictactoe/tictactoe.h"
 #include "game_mcts/cpp/tictactoe/tictactoe_serialization.h"
-#include "cpp/tournament_server/broker_service.h"
-#include "cpp/tournament_server/elo_store.h"
-#include "cpp/tournament_server/game_history.h"
-#include "cpp/tournament_server/http_leaderboard.h"
-#include "cpp/tournament_server/matchmaker.h"
-#include "cpp/tournament_server/remote_client.h"
-#include "cpp/tournament_server/tournament_broker.grpc.pb.h"
+#include "game_mcts/tournament_server/broker_service.h"
+#include "game_mcts/tournament_server/elo_store.h"
+#include "game_mcts/tournament_server/game_history.h"
+#include "game_mcts/tournament_server/http_leaderboard.h"
+#include "game_mcts/tournament_server/matchmaker.h"
+#include "game_mcts/tournament_server/remote_client.h"
+#include "game_mcts/tournament_server/tournament_broker.grpc.pb.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>

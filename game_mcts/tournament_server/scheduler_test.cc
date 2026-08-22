@@ -6,7 +6,7 @@
 // because a lone half would sit at the broker's rendezvous until it timed out,
 // holding a slot and producing no game.
 
-#include "cpp/tournament_server/scheduler.h"
+#include "game_mcts/tournament_server/scheduler.h"
 
 #include <filesystem>
 #include <memory>

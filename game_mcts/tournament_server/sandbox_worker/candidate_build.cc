@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/sandbox_worker/candidate_build.h"
+#include "game_mcts/tournament_server/sandbox_worker/candidate_build.h"
 
 #include <algorithm>
 #include <map>

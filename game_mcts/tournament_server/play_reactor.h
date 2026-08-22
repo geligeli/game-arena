@@ -19,9 +19,9 @@
 #include <memory>
 #include <mutex>
 
-#include "cpp/tournament_server/matchmaker.h"
-#include "cpp/tournament_server/player_connection.h"
-#include "cpp/tournament_server/tournament_broker.grpc.pb.h"
+#include "game_mcts/tournament_server/matchmaker.h"
+#include "game_mcts/tournament_server/player_connection.h"
+#include "game_mcts/tournament_server/tournament_broker.grpc.pb.h"
 
 namespace tournament_broker {
 

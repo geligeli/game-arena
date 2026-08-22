@@ -1,17 +1,17 @@
-#include "cpp/tournament_server/game_registry.h"
+#include "game_mcts/tournament_server/game_registry.h"
 
 #include <string_view>
 
 #include "game_mcts/cpp/mcts/mcts.inl"
-#include "cpp/risk/risk_game.h"
-#include "cpp/risk/strategies/risk_proposer.h"
-#include "cpp/risk/strategies/risk_rollout_shortcuts.h"
-#include "cpp/risk/risk_serialization.h"
-#include "cpp/benchgame/bench_game.h"
-#include "cpp/benchgame/bench_serialization.h"
+#include "game_mcts/cpp/risk/risk_game.h"
+#include "game_mcts/cpp/risk/strategies/risk_proposer.h"
+#include "game_mcts/cpp/risk/strategies/risk_rollout_shortcuts.h"
+#include "game_mcts/cpp/risk/risk_serialization.h"
+#include "game_mcts/tournament_server/benchgame/bench_game.h"
+#include "game_mcts/tournament_server/benchgame/bench_serialization.h"
 #include "game_mcts/cpp/tictactoe/tictactoe.h"
 #include "game_mcts/cpp/tictactoe/tictactoe_serialization.h"
-#include "cpp/tournament_server/builtins.h"
+#include "game_mcts/tournament_server/builtins.h"
 
 namespace tournament_broker {
 

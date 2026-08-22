@@ -23,12 +23,12 @@
 #include <random>
 #include <string>
 
-#include "cpp/tournament_server/client_handle.h"
-#include "cpp/tournament_server/elo_store.h"
-#include "cpp/tournament_server/game_history.h"
-#include "cpp/tournament_server/game_session.h"
-#include "cpp/tournament_server/tournament_broker.pb.h"
-#include "cpp/tournament_server/worker_pool.h"
+#include "game_mcts/tournament_server/client_handle.h"
+#include "game_mcts/tournament_server/elo_store.h"
+#include "game_mcts/tournament_server/game_history.h"
+#include "game_mcts/tournament_server/game_session.h"
+#include "game_mcts/tournament_server/tournament_broker.pb.h"
+#include "game_mcts/tournament_server/worker_pool.h"
 
 namespace tournament_broker {
 

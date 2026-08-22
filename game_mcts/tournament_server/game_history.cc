@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/game_history.h"
+#include "game_mcts/tournament_server/game_history.h"
 
 #include <algorithm>
 #include <fstream>

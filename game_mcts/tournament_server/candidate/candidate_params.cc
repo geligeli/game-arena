@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/candidate/candidate_params.h"
+#include "game_mcts/tournament_server/candidate/candidate_params.h"
 
 namespace candidate {
 

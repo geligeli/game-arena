@@ -17,9 +17,9 @@
 #include <string>
 #include <thread>
 
-#include "cpp/tournament_server/candidate_store.h"
-#include "cpp/tournament_server/elo_store.h"
-#include "cpp/tournament_server/game_history.h"
+#include "game_mcts/tournament_server/candidate_store.h"
+#include "game_mcts/tournament_server/elo_store.h"
+#include "game_mcts/tournament_server/game_history.h"
 
 namespace tournament_broker {
 

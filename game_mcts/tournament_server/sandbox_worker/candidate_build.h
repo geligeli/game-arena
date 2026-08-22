@@ -10,13 +10,13 @@
 #include <string>
 #include <vector>
 
-#include "cpp/tournament_server/arena.pb.h"
+#include "game_mcts/tournament_server/arena.pb.h"
 
 namespace tournament_arena {
 
 // Where a candidate is patched into the repo clone, relative to the workspace
 // root. The generated label is //<kCandidateDir>/<candidate_id>:bot.
-inline constexpr const char *kCandidateDir = "cpp/tournament_server/candidates";
+inline constexpr const char *kCandidateDir = "game_mcts/tournament_server/candidates";
 
 // The bazel label of |order|'s bot binary.
 auto CandidateTarget(const std::string &candidate_id) -> std::string;

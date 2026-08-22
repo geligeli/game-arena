@@ -29,18 +29,18 @@
 
 #include <string_view>
 
-#include "cpp/tournament_server/candidate/candidate_params.h"
-#include "cpp/tournament_server/policies.h"
+#include "game_mcts/tournament_server/candidate/candidate_params.h"
+#include "game_mcts/tournament_server/policies.h"
 #include "game_mcts/cpp/mcts/tournament.h"
 
 #if defined(CANDIDATE_GAME_TICTACTOE)
 #include "game_mcts/cpp/tictactoe/tictactoe.h"
 #include "game_mcts/cpp/tictactoe/tictactoe_serialization.h"
 #else
-#include "cpp/risk/risk_game.h"
-#include "cpp/risk/risk_serialization.h"
-#include "cpp/risk/strategies/risk_proposer.h"
-#include "cpp/risk/strategies/risk_rollout_shortcuts.h"
+#include "game_mcts/cpp/risk/risk_game.h"
+#include "game_mcts/cpp/risk/risk_serialization.h"
+#include "game_mcts/cpp/risk/strategies/risk_proposer.h"
+#include "game_mcts/cpp/risk/strategies/risk_rollout_shortcuts.h"
 #endif
 
 namespace candidate {

@@ -5,7 +5,7 @@
 // once would race the game state it exists to protect, and a Strand freed by
 // its own last task would be a use-after-free in the drain loop.
 
-#include "cpp/tournament_server/worker_pool.h"
+#include "game_mcts/tournament_server/worker_pool.h"
 
 #include <atomic>
 #include <chrono>

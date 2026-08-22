@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/elo_store.h"
+#include "game_mcts/tournament_server/elo_store.h"
 
 #include <cmath>
 #include <fstream>

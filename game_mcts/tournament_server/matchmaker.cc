@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/matchmaker.h"
+#include "game_mcts/tournament_server/matchmaker.h"
 
 #include <algorithm>
 #include <array>
@@ -9,7 +9,7 @@
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
-#include "cpp/tournament_server/game_registry.h"
+#include "game_mcts/tournament_server/game_registry.h"
 
 namespace tournament_broker {
 

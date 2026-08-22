@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/game_run.h"
+#include "game_mcts/tournament_server/game_run.h"
 
 #include <utility>
 

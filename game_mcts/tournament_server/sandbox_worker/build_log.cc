@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/sandbox_worker/build_log.h"
+#include "game_mcts/tournament_server/sandbox_worker/build_log.h"
 
 #include <cstdio>
 #include <sstream>

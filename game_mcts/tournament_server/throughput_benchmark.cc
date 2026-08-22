@@ -41,13 +41,13 @@
 #include "absl/flags/parse.h"
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
-#include "cpp/benchgame/bench_game.h"
-#include "cpp/benchgame/bench_serialization.h"
-#include "cpp/tournament_server/broker_service.h"
-#include "cpp/tournament_server/elo_store.h"
-#include "cpp/tournament_server/game_history.h"
-#include "cpp/tournament_server/matchmaker.h"
-#include "cpp/tournament_server/tournament_broker.grpc.pb.h"
+#include "game_mcts/tournament_server/benchgame/bench_game.h"
+#include "game_mcts/tournament_server/benchgame/bench_serialization.h"
+#include "game_mcts/tournament_server/broker_service.h"
+#include "game_mcts/tournament_server/elo_store.h"
+#include "game_mcts/tournament_server/game_history.h"
+#include "game_mcts/tournament_server/matchmaker.h"
+#include "game_mcts/tournament_server/tournament_broker.grpc.pb.h"
 
 ABSL_FLAG(std::string, label, "new",
           "Implementation name recorded in the CSV (e.g. old/new)");

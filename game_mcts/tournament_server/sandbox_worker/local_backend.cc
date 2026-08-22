@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/sandbox_worker/local_backend.h"
+#include "game_mcts/tournament_server/sandbox_worker/local_backend.h"
 
 #include <fstream>
 #include <sstream>
@@ -6,8 +6,8 @@
 
 #include "absl/log/log.h"
 #include "game_mcts/cpp/process/process.h"
-#include "cpp/tournament_server/sandbox_worker/build_log.h"
-#include "cpp/tournament_server/sandbox_worker/candidate_build.h"
+#include "game_mcts/tournament_server/sandbox_worker/build_log.h"
+#include "game_mcts/tournament_server/sandbox_worker/candidate_build.h"
 
 namespace tournament_arena {
 

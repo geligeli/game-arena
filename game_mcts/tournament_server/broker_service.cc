@@ -1,6 +1,6 @@
-#include "cpp/tournament_server/broker_service.h"
+#include "game_mcts/tournament_server/broker_service.h"
 
-#include "cpp/tournament_server/play_reactor.h"
+#include "game_mcts/tournament_server/play_reactor.h"
 
 namespace tournament_broker {
 

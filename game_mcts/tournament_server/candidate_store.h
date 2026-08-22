@@ -26,7 +26,7 @@
 #include <string>
 #include <vector>
 
-#include "cpp/tournament_server/arena.pb.h"
+#include "game_mcts/tournament_server/arena.pb.h"
 
 namespace tournament_arena {
 

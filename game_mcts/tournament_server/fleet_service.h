@@ -19,9 +19,9 @@
 #include <string>
 #include <thread>
 
-#include "cpp/tournament_server/arena.grpc.pb.h"
-#include "cpp/tournament_server/fleet_worker.h"
-#include "cpp/tournament_server/scheduler.h"
+#include "game_mcts/tournament_server/arena.grpc.pb.h"
+#include "game_mcts/tournament_server/fleet_worker.h"
+#include "game_mcts/tournament_server/scheduler.h"
 
 namespace tournament_arena {
 

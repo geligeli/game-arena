@@ -20,9 +20,9 @@
 #include "absl/flags/parse.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
-#include "cpp/tournament_server/candidate/candidate_api.h"
-#include "cpp/tournament_server/remote_client.h"
-#include "cpp/tournament_server/tournament_broker.grpc.pb.h"
+#include "game_mcts/tournament_server/candidate/candidate_api.h"
+#include "game_mcts/tournament_server/remote_client.h"
+#include "game_mcts/tournament_server/tournament_broker.grpc.pb.h"
 
 #ifndef CANDIDATE_ENTRY_HEADER
 #error "CANDIDATE_ENTRY_HEADER must name the candidate's strategy header"

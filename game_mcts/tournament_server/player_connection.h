@@ -27,8 +27,8 @@
 #include <optional>
 #include <string>
 
-#include "cpp/tournament_server/client_handle.h"
-#include "cpp/tournament_server/tournament_broker.pb.h"
+#include "game_mcts/tournament_server/client_handle.h"
+#include "game_mcts/tournament_server/tournament_broker.pb.h"
 
 namespace tournament_broker {
 

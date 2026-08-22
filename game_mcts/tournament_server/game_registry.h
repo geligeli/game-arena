@@ -7,7 +7,7 @@
 #include <map>
 #include <string>
 
-#include "cpp/tournament_server/game_session.h"
+#include "game_mcts/tournament_server/game_session.h"
 
 namespace tournament_broker {
 

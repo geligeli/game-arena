@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/candidate_store.h"
+#include "game_mcts/tournament_server/candidate_store.h"
 
 #include <algorithm>
 #include <array>

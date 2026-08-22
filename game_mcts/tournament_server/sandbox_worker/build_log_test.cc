@@ -2,7 +2,7 @@
 // output, so the thing worth testing is that the diagnostic lines survive and
 // the noise does not.
 
-#include "cpp/tournament_server/sandbox_worker/build_log.h"
+#include "game_mcts/tournament_server/sandbox_worker/build_log.h"
 
 #include <string>
 

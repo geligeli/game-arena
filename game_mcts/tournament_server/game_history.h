@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "cpp/tournament_server/tournament_broker.pb.h"
+#include "game_mcts/tournament_server/tournament_broker.pb.h"
 
 namespace tournament_broker {
 

@@ -1,4 +1,4 @@
-#include "cpp/tournament_server/http_leaderboard.h"
+#include "game_mcts/tournament_server/http_leaderboard.h"
 
 #include <algorithm>
 #include <cstdio>

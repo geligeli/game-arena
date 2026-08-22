@@ -41,13 +41,13 @@ cc_library(
 # from a dependency to its dependents.
 exports_files(["candidate_main.cc"])
 
-# The local iteration loop: builds cpp/tournament_server/candidates/dev against
+# The local iteration loop: builds game_mcts/tournament_server/candidates/dev against
 # the same harness the arena uses, so what runs here is what gets submitted.
 cc_binary(
     name = "dev_bot",
     srcs = ["candidate_main.cc"],
     local_defines = [
-        r'CANDIDATE_ENTRY_HEADER=\"cpp/tournament_server/candidates/dev/strategy.h\"',
+        r'CANDIDATE_ENTRY_HEADER=\"game_mcts/tournament_server/candidates/dev/strategy.h\"',
         "CANDIDATE_GAME_RISK2",
     ],
     deps = [

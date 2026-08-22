@@ -6,7 +6,7 @@
 // by standing up a server and misbehaving over the network, which is why most
 // of them had no coverage at all.
 
-#include "cpp/tournament_server/game_run.h"
+#include "game_mcts/tournament_server/game_run.h"
 
 #include <array>
 #include <chrono>
@@ -26,7 +26,7 @@
 #include "gtest/gtest.h"
 #include "game_mcts/cpp/tictactoe/tictactoe.h"
 #include "game_mcts/cpp/tictactoe/tictactoe_serialization.h"
-#include "cpp/tournament_server/game_registry.h"
+#include "game_mcts/tournament_server/game_registry.h"
 
 namespace tournament_broker {
 namespace {

@@ -1,15 +1,15 @@
-#include "cpp/tournament_server/game_session.h"
+#include "game_mcts/tournament_server/game_session.h"
 
 #include <random>
 
 #include "gtest/gtest.h"
-#include "cpp/risk/risk_game.h"
-#include "cpp/risk/risk_serialization.h"
-#include "cpp/risk/strategies/risk_proposer.h"
+#include "game_mcts/cpp/risk/risk_game.h"
+#include "game_mcts/cpp/risk/risk_serialization.h"
+#include "game_mcts/cpp/risk/strategies/risk_proposer.h"
 #include "game_mcts/cpp/tictactoe/tictactoe.h"
 #include "game_mcts/cpp/tictactoe/tictactoe.pb.h"
 #include "game_mcts/cpp/tictactoe/tictactoe_serialization.h"
-#include "cpp/tournament_server/game_registry.h"
+#include "game_mcts/tournament_server/game_registry.h"
 
 namespace tournament_broker {
 namespace {

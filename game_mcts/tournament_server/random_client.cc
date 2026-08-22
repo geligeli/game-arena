@@ -14,8 +14,8 @@
 #include "absl/flags/parse.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
-#include "cpp/tournament_server/game_registry.h"
-#include "cpp/tournament_server/tournament_broker.grpc.pb.h"
+#include "game_mcts/tournament_server/game_registry.h"
+#include "game_mcts/tournament_server/tournament_broker.grpc.pb.h"
 
 ABSL_FLAG(std::string, server, "localhost:50051", "host:port of the broker");
 ABSL_FLAG(std::string, name, "", "Player name (required)");
