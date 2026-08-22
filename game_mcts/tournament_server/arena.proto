@@ -1,0 +1,288 @@
+syntax = "proto3";
+
+package tournament_arena.proto;
+
+// The arena: a registry of agent-authored strategies, and the sandbox fleet
+// that builds and runs them.
+//
+// Two services, hosted in the same process as TournamentBroker because they
+// share its candidate store and ELO. They are separate surfaces because they
+// have separate audiences:
+//
+//   Arena         agents (through the MCP server): submit a strategy, read any
+//                 rival's source, ask for matches, read standings.
+//   SandboxFleet  build-and-run workers. The worker dials in, so a fleet can
+//                 be attached from any host with no inbound port and no
+//                 registration step. Work is pushed to it over that stream.
+//
+// A candidate's id is also its broker player_name, so ratings, game history
+// and the leaderboard come from the existing per-(game, player) ELO store with
+// nothing extra.
+
+service Arena {
+  // Registers a new candidate and queues its build plus a placement series.
+  rpc Submit(SubmitRequest) returns (SubmitResponse);
+
+  // Manifest only; use GetSource for file contents.
+  rpc GetCandidate(GetCandidateRequest) returns (Candidate);
+
+  // One file of a candidate's source. Any agent may read any candidate: the
+  // point of the arena is that strategies are improved upon, not hidden.
+  rpc GetSource(GetSourceRequest) returns (SourceFile);
+
+  rpc ListCandidates(ListCandidatesRequest) returns (ListCandidatesResponse);
+
+  // Queues more games for a candidate against a chosen opponent.
+  rpc Challenge(ChallengeRequest) returns (ChallengeResponse);
+
+  rpc GetJob(GetJobRequest) returns (Job);
+
+  rpc Leaderboard(LeaderboardRequest) returns (LeaderboardResponse);
+}
+
+service SandboxFleet {
+  // One long-lived stream per worker. The worker opens it with `hello`, then
+  // reports progress and results; the server pushes work orders back.
+  rpc Attach(stream WorkerMessage) returns (stream FleetMessage);
+}
+
+// ---------------------------------------------------------------------------
+// Candidates
+// ---------------------------------------------------------------------------
+
+message SourceFile {
+  // Repo-relative to the candidate's own directory, e.g. "strategy.h". Never
+  // absolute, never containing "..".
+  string path = 1;
+  bytes content = 2;
+}
+
+message Candidate {
+  // "<slug>-<6 hex>". Also the broker player_name, so ELO and game history are
+  // keyed by it directly.
+  string candidate_id = 1;
+  string display_name = 2;
+  string author = 3;  // the agent that submitted it
+  string game = 4;    // "risk2" | "tictactoe"
+
+  // The candidate this one was derived from, if any. Agents are expected to
+  // read rivals and build on them, so lineage is worth keeping.
+  string parent_id = 5;
+  string notes = 6;
+
+  // The commit the sandbox checks out before patching the sources in, so a
+  // result stays attributable to a known tree.
+  string base_commit = 7;
+
+  repeated string file_paths = 8;
+  // Header the harness includes; must be one of file_paths.
+  string entry_header = 9;
+  // Extra bazel deps, checked against the arena's allowlist at submit time.
+  repeated string extra_deps = 10;
+  map<string, string> params = 11;
+
+  enum Status {
+    PENDING = 0;       // stored, waiting for a worker
+    BUILDING = 1;
+    READY = 2;         // built, playing or played
+    BUILD_FAILED = 3;
+    DISABLED = 4;      // withdrawn, or retired for misbehaving
+  }
+  Status status = 12;
+  // Compact compiler errors on BUILD_FAILED; the worker trims these before
+  // they ever cross the wire.
+  string build_error = 13;
+  int64 submitted_unix_ms = 14;
+}
+
+message SubmitRequest {
+  string display_name = 1;
+  string author = 2;
+  string game = 3;
+  string parent_id = 4;
+  string notes = 5;
+  repeated SourceFile files = 6;
+  string entry_header = 7;
+  repeated string extra_deps = 8;
+  map<string, string> params = 9;
+}
+
+message SubmitResponse {
+  string candidate_id = 1;
+  // The build + placement job. Poll it with GetJob.
+  string job_id = 2;
+}
+
+message GetCandidateRequest { string candidate_id = 1; }
+
+message GetSourceRequest {
+  string candidate_id = 1;
+  string path = 2;
+}
+
+message ListCandidatesRequest {
+  string game = 1;    // empty: all games
+  string author = 2;  // empty: all authors
+  int32 limit = 3;    // 0: server default
+  enum Order {
+    ELO_DESC = 0;
+    NEWEST = 1;
+  }
+  Order order = 4;
+}
+
+// A candidate plus its current standing, which is what a leaderboard row needs
+// and what an agent deciding whom to learn from actually wants.
+message CandidateStanding {
+  Candidate candidate = 1;
+  double elo = 2;
+  int32 wins = 3;
+  int32 draws = 4;
+  int32 losses = 5;
+}
+
+message ListCandidatesResponse { repeated CandidateStanding candidates = 1; }
+
+// ---------------------------------------------------------------------------
+// Jobs
+// ---------------------------------------------------------------------------
+
+message ChallengeRequest {
+  string candidate_id = 1;
+  // "builtin:<spec>" | "<candidate_id>" | "top" (the current leader) |
+  // "ladder" (a spread of rated opponents).
+  string opponent = 2;
+  int32 games = 3;
+}
+
+message ChallengeResponse { string job_id = 1; }
+
+message GetJobRequest { string job_id = 1; }
+
+message Job {
+  string job_id = 1;
+  string candidate_id = 2;
+
+  enum State {
+    QUEUED = 0;
+    RUNNING = 1;
+    DONE = 2;
+    FAILED = 3;
+  }
+  State state = 3;
+
+  // Set when a build failed or a worker could not run the order; already
+  // trimmed to something an agent can read in one go.
+  string error = 4;
+
+  int32 games_requested = 5;
+  int32 games_played = 6;
+  int32 wins = 7;
+  int32 draws = 8;
+  int32 losses = 9;
+  double elo = 10;
+
+  int64 created_unix_ms = 11;
+  int64 finished_unix_ms = 12;
+}
+
+message LeaderboardRequest {
+  string game = 1;
+  int32 limit = 2;
+}
+
+message LeaderboardResponse { repeated CandidateStanding rows = 1; }
+
+// ---------------------------------------------------------------------------
+// Sandbox fleet
+// ---------------------------------------------------------------------------
+
+message WorkerHello {
+  // Stable across reconnects, so a returning worker is recognised rather than
+  // counted twice.
+  string worker_id = 1;
+  int32 slots = 2;           // orders it will run concurrently
+  string backend = 3;        // "local" | "docker"
+  repeated string games = 4; // empty: any game the server knows
+}
+
+message WorkOrder {
+  string order_id = 1;
+  string job_id = 2;
+  string candidate_id = 3;
+  string game = 4;
+
+  // Everything the worker needs to reproduce the build: check out
+  // |base_commit|, drop |files| into the candidate directory, generate a BUILD
+  // from |entry_header| and |extra_deps|, build, run.
+  string base_commit = 5;
+  repeated SourceFile files = 6;
+  string entry_header = 7;
+  repeated string extra_deps = 8;
+
+  // host:port the built bot dials. Not necessarily the address the worker used
+  // to reach the fleet service: workers may be on other hosts.
+  string broker_target = 9;
+  // "any" | "builtin:<spec>" | "player:<candidate_id>". Both sides of a
+  // candidate-vs-candidate match get mirrored "player:" orders.
+  string opponent = 10;
+  int32 num_games = 11;
+  map<string, string> params = 12;
+
+  int32 build_timeout_s = 13;
+  int32 run_timeout_s = 14;
+}
+
+message CancelOrder { string order_id = 1; }
+
+message OrderProgress {
+  string order_id = 1;
+  enum Phase {
+    CLONING = 0;
+    BUILDING = 1;
+    RUNNING = 2;
+  }
+  Phase phase = 2;
+}
+
+message OrderResult {
+  string order_id = 1;
+  bool build_ok = 2;
+  // Compacted on the worker, before it crosses the wire: a failing bazel build
+  // is megabytes, and an agent needs the twenty lines with file:line in them.
+  string build_log = 3;
+  int32 games_played = 4;
+  int32 wins = 5;
+  int32 draws = 6;
+  int32 losses = 7;
+  double elo = 8;
+  // Non-empty when the order could not be completed at all (clone failed, bot
+  // crashed, timed out). Distinct from a clean build that lost every game.
+  string error = 9;
+}
+
+message Heartbeat { int32 free_slots = 1; }
+
+message WorkerMessage {
+  oneof msg {
+    WorkerHello hello = 1;
+    OrderProgress progress = 2;
+    OrderResult result = 3;
+    Heartbeat heartbeat = 4;
+  }
+}
+
+message FleetMessage {
+  oneof msg {
+    WorkOrder order = 1;
+    CancelOrder cancel = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Persistence (not part of the RPC surface)
+// ---------------------------------------------------------------------------
+
+// Written to <data_dir>/candidates/<candidate_id>/manifest.pb. Sources live
+// beside it under src/, so they can be read and diffed without a tool.
+message CandidateManifest { Candidate candidate = 1; }

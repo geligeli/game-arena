@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package tournament_broker.proto;
+
+// Game-agnostic wire protocol for the tournament broker. Game states and
+// actions travel as opaque bytes: the serialized per-game protos from
+// mcts::GameSerializationTraits (e.g. risk_game.proto.RiskState for game
+// "risk2", tictactoe.proto.TicTacToeState for "tictactoe"). The broker proto
+// therefore stays stable when a game's state/action schema changes.
+
+service TournamentBroker {
+  // One bidirectional stream per player connection. The first client message
+  // must be `hello`; the server then drives a single game with `game_start`,
+  // repeated `your_turn` (answered by the client with `action`), and a final
+  // `game_over`, after which the server closes the stream.
+  rpc Play(stream ClientMessage) returns (stream ServerMessage);
+}
+
+message Hello {
+  string player_name = 1;  // identity, used for ELO and the leaderboard
+  string game = 2;         // game registry key, e.g. "risk2" or "tictactoe"
+  // "any" or empty: queue for the next human opponent on the same game.
+  // "builtin:<spec>": play a built-in strategy immediately (e.g.
+  // "builtin:random", "builtin:mcts", "builtin:minimax").
+  // "player:<name>": wait for that one named player, who must ask for this
+  // connection's player_name in return. Both sides are paired as soon as the
+  // second one arrives; seats alternate across a series. A partner that never
+  // shows up closes this stream after the server's rendezvous timeout.
+  string opponent = 3;
+}
+
+message ActionMsg {
+  bytes action = 1;  // serialized per-game action proto
+}
+
+message ClientMessage {
+  oneof msg {
+    Hello hello = 1;
+    ActionMsg action = 2;
+  }
+}
+
+message GameStart {
+  string game_id = 1;
+  int32 seat = 2;  // this connection's player index (0 or 1)
+  string opponent_name = 3;
+  bytes initial_state = 4;  // serialized game state proto
+}
+
+message YourTurn {
+  bytes state = 1;  // serialized game state proto; it is your seat's move
+  uint64 move_number = 2;
+  int64 deadline_unix_ms = 3;  // server-side wall-clock turn deadline
+}
+
+message GameOver {
+  enum Result {
+    WIN = 0;   // from this connection's perspective
+    LOSS = 1;
+    DRAW = 2;
+  }
+  Result result = 1;
+  // "normal" | "timeout" | "time_budget" | "opponent_disconnect" |
+  // "illegal_action" | "max_moves"
+  string reason = 2;
+  double new_elo = 3;  // this player's rating after the game
+}
+
+message ServerMessage {
+  oneof msg {
+    GameStart game_start = 1;
+    YourTurn your_turn = 2;
+    GameOver game_over = 3;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Persistence (not part of the RPC surface)
+// ---------------------------------------------------------------------------
+
+// One completed game, written to <data_dir>/games/<game_id>.pb.
+message GameRecord {
+  string game_id = 1;
+  string game = 2;
+  repeated string player_names = 3;  // indexed by seat
+  bytes initial_state = 4;
+
+  message Step {
+    int32 player = 1;    // deciding player; -1 for chance resolutions
+    bytes action = 2;    // serialized per-game action proto
+    int64 unix_ms = 3;
+  }
+  repeated Step steps = 5;
+
+  enum Result {
+    ONGOING = 0;
+    DRAW = 1;
+    WIN = 2;
+  }
+  Result result = 6;
+  int32 winning_player = 7;  // meaningful iff result == WIN
+  string termination_reason = 8;  // same vocabulary as GameOver.reason
+  int64 started_unix_ms = 9;
+  int64 finished_unix_ms = 10;
+}
+
+// Persistent ELO store, written to <data_dir>/ratings.pb. Ratings are tracked
+// per (game, player name) pair.
+message RatingStore {
+  map<string, Rating> ratings = 1;  // key: game + "\t" + player_name
+}
+
+message Rating {
+  double elo = 1;
+  int32 wins = 2;
+  int32 draws = 3;
+  int32 losses = 4;
+}

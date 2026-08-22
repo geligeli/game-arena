@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package benchgame.proto;
+
+// benchgame::BenchGame: a ply counter and the player to move. Deliberately the
+// smallest state that still round-trips, so a load test measures the broker
+// rather than the game.
+message BenchState {
+  int32 ply = 1;
+  int32 current_player = 2;
+}
+
+// benchgame::BenchGame::action_t. The value is ignored -- every action is
+// legal in every state, which is what lets a load generator replay one
+// pre-serialized action forever.
+message BenchAction {
+  int32 value = 1;
+}
