@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package tournament_broker.proto;
+
+message RunSandboxRequest {
+  string bazel_target = 1;
+  repeated string args = 2;
+  map<string, bytes> patches = 3;
+  string identifier = 4;
+}
+
+message RunSandboxResponse {
+  string stdout = 1; 
+  string stderr = 2;
+  int32 exit_code = 3;
+}
+
+message KillRequest {
+  string identifier = 1;
+}
+
+message KillResponse {}
+
+service SandboxService {
+  rpc Run(RunSandboxRequest) returns (RunSandboxResponse);
+  rpc Kill(KillRequest) returns (KillResponse);
+}

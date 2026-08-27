@@ -43,6 +43,23 @@ cc_grpc_library(
     deps = [":arena_cc_proto"],
 )
 
+proto_library(
+    name = "sandbox_runner_proto",
+    srcs = ["sandbox_runner.proto"],
+)
+
+cc_proto_library(
+    name = "sandbox_runner_cc_proto",
+    deps = [":sandbox_runner_proto"],
+)
+
+cc_grpc_library(
+    name = "sandbox_runner_cc_grpc",
+    srcs = [":sandbox_runner_proto"],
+    grpc_only = True,
+    deps = [":sandbox_runner_cc_proto"],
+)
+
 # Persistent registry of submitted strategies: manifests plus their sources on
 # disk, and the validation gate every submission passes through.
 cc_library(
