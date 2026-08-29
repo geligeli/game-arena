@@ -35,6 +35,23 @@ cc_binary(
     ],
 )
 
+# Hand-driven client for a running sandbox_runner: one Run (or Kill) per
+# invocation, with the target's output replayed locally. Testing only -- the
+# tournament server talks to the same service programmatically.
+cc_binary(
+    name = "sandbox_cli",
+    srcs = ["sandbox_cli.cc"],
+    deps = [
+        "//game_mcts/tournament_server:sandbox_runner_cc_grpc",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/flags:parse",
+        "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/log:globals",
+        "@abseil-cpp//absl/log:initialize",
+        "@grpc//:grpc++",
+    ],
+)
+
 # End-to-end against a fake `docker` script -- no daemon needed. Covers the
 # docker argv, the entrypoint script, exit-code propagation, timeout kills and
 # the Kill RPC.
