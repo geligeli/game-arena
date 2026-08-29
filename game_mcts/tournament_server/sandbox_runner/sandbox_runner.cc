@@ -25,6 +25,17 @@ constexpr char kScratch[] = "/sandbox";         // overlay upper/work, HOME
 // convention `timeout(1)` uses.
 constexpr int kTimeoutExitCode = 124;
 
+// A read-only bind mount in `docker run --mount` syntax. The long form is
+// deliberate: `-v` creates |source| as an empty directory when it does not
+// exist, which under docker-outside-of-docker turns a mistyped host path into
+// an empty repository or a run that silently drops every patch. --mount fails
+// the run instead.
+auto ReadOnlyBindMount(const std::filesystem::path &source,
+                       const std::string &target) -> std::string {
+  return "type=bind,source=" + source.string() + ",target=" + target +
+         ",readonly";
+}
+
 auto ReadFile(const std::filesystem::path &path) -> std::string {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
@@ -185,6 +196,9 @@ auto SandboxRunnerService::Run(grpc::ServerContext * /*context*/,
 
   const std::filesystem::path scratch = config_.work_dir / container;
   const std::filesystem::path patch_dir = scratch / "patches";
+  // Same directory, named as the docker daemon sees it.
+  const std::filesystem::path mount_patch_dir =
+      config_.MountWorkDir() / container / "patches";
   std::error_code ec;
   std::filesystem::remove_all(scratch, ec);
   std::filesystem::create_directories(patch_dir, ec);
@@ -203,11 +217,11 @@ auto SandboxRunnerService::Run(grpc::ServerContext * /*context*/,
       // The overlay mount inside the container needs this one capability;
       // nothing else is granted.
       "--cap-add", "SYS_ADMIN",
-      "-v", patch_dir.string() + ":" + kPatchMount + ":ro",
+      "--mount", ReadOnlyBindMount(mount_patch_dir, kPatchMount),
   };
   if (!config_.repo_dir.empty()) {
-    args.push_back("-v");
-    args.push_back(config_.repo_dir.string() + ":" + kLowerMount + ":ro");
+    args.push_back("--mount");
+    args.push_back(ReadOnlyBindMount(config_.MountRepoDir(), kLowerMount));
   }
   args.push_back("--entrypoint");
   args.push_back("/bin/sh");

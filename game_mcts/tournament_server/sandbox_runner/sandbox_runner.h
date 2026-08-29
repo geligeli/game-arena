@@ -12,6 +12,14 @@
 // touched. Patches from the request ([path, content] tuples) are written into
 // the merged tree, then `bazel run` executes at its root.
 //
+// Two filesystems are in play and the config keeps them apart. Paths this
+// process reads and writes (work_dir, and the patches under it) are resolved
+// here; bind-mount sources are resolved by whatever machine the docker daemon
+// runs on. They coincide in the ordinary case, but not when the runner is
+// itself containerized and driving the host's daemon over a mounted socket
+// (docker-outside-of-docker), where the same tree carries different paths on
+// either side. host_repo_dir/host_work_dir supply the daemon's view.
+//
 // Run blocks until the container exits, the server-side timeout fires, or a
 // Kill RPC with the same identifier stops the container mid-flight.
 
@@ -35,11 +43,28 @@ struct SandboxRunnerConfig {
   // Mounted read-only as the overlay's lower dir. Empty: /workspace is plain
   // container filesystem, so the image must carry the repository itself.
   std::filesystem::path repo_dir;
-  // Host-side scratch for the patch files and captured output of each run.
+  // Scratch for the patch files and captured output of each run, as *this*
+  // process resolves it: the patches are written here.
   std::filesystem::path work_dir = "/tmp/sandbox_runner";
+  // The same two directories as the *docker daemon* resolves them, for the
+  // bind mounts. Empty (the ordinary case): the daemon shares our filesystem
+  // and repo_dir/work_dir are handed to it verbatim. Under
+  // docker-outside-of-docker they differ, and only these reach docker.
+  std::filesystem::path host_repo_dir;
+  std::filesystem::path host_work_dir;
   // Wall-clock limit per run; the container is killed when it fires.
   // Zero disables the limit.
   std::chrono::seconds timeout{1800};
+
+  // The bind-mount sources docker is given. Never open these locally: under
+  // docker-outside-of-docker they name paths in a filesystem this process
+  // cannot see.
+  auto MountRepoDir() const -> const std::filesystem::path & {
+    return host_repo_dir.empty() ? repo_dir : host_repo_dir;
+  }
+  auto MountWorkDir() const -> const std::filesystem::path & {
+    return host_work_dir.empty() ? work_dir : host_work_dir;
+  }
 };
 
 // True when |path| is relative and free of '.'/'..' components, so it can be
