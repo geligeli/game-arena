@@ -1,7 +1,7 @@
 // A sandbox fleet worker: builds submitted candidates and plays their games.
 //
 //   bazel run //game_mcts/tournament_server/sandbox_worker:sandbox_worker --
-//       --server=localhost:50051 --repo=/large_nfs/risk-game-ai --slots=2
+//       --server=localhost:50051 --repo=/large_nfs/game-mcts --slots=2
 //
 // The worker dials the arena, so a fleet can be attached from any host that
 // has the repo, bazel and a route to the broker -- no inbound port, no

@@ -31,7 +31,7 @@ bazel run //game_mcts/tournament_server:tournament_server -- \
 
 # 2. One or more workers, here or on any other host with the repo and bazel.
 bazel run //game_mcts/tournament_server/sandbox_worker:sandbox_worker -- \
-    --server=<arena-host>:50051 --repo=/large_nfs/risk-game-ai --slots=2
+    --server=<arena-host>:50051 --repo=/large_nfs/game-mcts --slots=2
 ```
 
 `--broker_advertise` matters as soon as a worker is not on the arena's host: it
