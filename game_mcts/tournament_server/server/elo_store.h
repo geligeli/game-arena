@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_TOURNAMENT_SERVER_ELO_STORE_H
-#define RISK_GAME_AI_CPP_TOURNAMENT_SERVER_ELO_STORE_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_ELO_STORE_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_ELO_STORE_H
 
 // Persistent per-(game, player) ELO ratings. Loaded from disk at startup,
 // updated online after each finished game (standard E = 1/(1+10^((Rb-Ra)/400)),
@@ -59,4 +59,4 @@ class EloStore {
 
 }  // namespace tournament_broker
 
-#endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_ELO_STORE_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_ELO_STORE_H

@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_TOURNAMENT_SERVER_REMOTE_CLIENT_H
-#define RISK_GAME_AI_CPP_TOURNAMENT_SERVER_REMOTE_CLIENT_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_CLIENT_REMOTE_CLIENT_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_CLIENT_REMOTE_CLIENT_H
 
 // Client-side counterpart of the broker: wraps any typed strategy
 // (mcts::tournament::TournamentPolicy<G>) so it can join a tournament server.
@@ -114,4 +114,4 @@ auto PlayRemoteGames(proto::TournamentBroker::Stub *stub,
 
 }  // namespace tournament_broker
 
-#endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_REMOTE_CLIENT_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_CLIENT_REMOTE_CLIENT_H

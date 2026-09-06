@@ -1,5 +1,5 @@
-#ifndef GAME_MCTS_TOURNAMENT_SERVER_SANDBOX_RUNNER_SANDBOX_RUNNER_H
-#define GAME_MCTS_TOURNAMENT_SERVER_SANDBOX_RUNNER_SANDBOX_RUNNER_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SANDBOX_RUNNER_SANDBOX_RUNNER_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SANDBOX_RUNNER_SANDBOX_RUNNER_H
 
 // Standalone sandbox runner: executes `bazel run //<target>` inside a
 // throwaway docker container, behind the SandboxService interface from
@@ -105,4 +105,4 @@ class SandboxRunnerService final
 
 }  // namespace sandbox_runner
 
-#endif  // GAME_MCTS_TOURNAMENT_SERVER_SANDBOX_RUNNER_SANDBOX_RUNNER_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SANDBOX_RUNNER_SANDBOX_RUNNER_H

@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_BENCHGAME_BENCH_GAME_H
-#define RISK_GAME_AI_CPP_BENCHGAME_BENCH_GAME_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_BENCHGAME_BENCH_GAME_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_BENCHGAME_BENCH_GAME_H
 
 // A game that is deliberately not a game: two players alternate, every action
 // is legal, and nothing is ever computed.
@@ -67,4 +67,4 @@ static_assert(mcts::InPlaceGame<BenchGame>);
 
 }  // namespace benchgame
 
-#endif  // RISK_GAME_AI_CPP_BENCHGAME_BENCH_GAME_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_BENCHGAME_BENCH_GAME_H

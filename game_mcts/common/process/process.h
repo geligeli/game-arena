@@ -1,5 +1,5 @@
-#ifndef GAME_MCTS_GAME_MCTS_CPP_PROCESS_PROCESS_H
-#define GAME_MCTS_GAME_MCTS_CPP_PROCESS_PROCESS_H
+#ifndef GAME_MCTS_GAME_MCTS_COMMON_PROCESS_PROCESS_H
+#define GAME_MCTS_GAME_MCTS_COMMON_PROCESS_PROCESS_H
 #include <sys/types.h>
 
 #include <chrono>
@@ -89,4 +89,4 @@ auto ResolveExecutable(const std::string& name) -> std::string;
 
 }  // namespace process
 
-#endif  // GAME_MCTS_GAME_MCTS_CPP_PROCESS_PROCESS_H
+#endif  // GAME_MCTS_GAME_MCTS_COMMON_PROCESS_PROCESS_H

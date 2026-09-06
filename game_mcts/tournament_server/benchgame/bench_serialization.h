@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_BENCHGAME_BENCH_SERIALIZATION_H
-#define RISK_GAME_AI_CPP_BENCHGAME_BENCH_SERIALIZATION_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_BENCHGAME_BENCH_SERIALIZATION_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_BENCHGAME_BENCH_SERIALIZATION_H
 
 #include "game_mcts/tournament_server/benchgame/bench.pb.h"
 #include "game_mcts/tournament_server/benchgame/bench_game.h"
@@ -42,4 +42,4 @@ static_assert(SerializableGame<benchgame::BenchGame>);
 
 }  // namespace mcts
 
-#endif  // RISK_GAME_AI_CPP_BENCHGAME_BENCH_SERIALIZATION_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_BENCHGAME_BENCH_SERIALIZATION_H

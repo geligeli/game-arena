@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATES_DEV_STRATEGY_H
-#define RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATES_DEV_STRATEGY_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_CANDIDATES_DEV_STRATEGY_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_CANDIDATES_DEV_STRATEGY_H
 
 // The worked example every candidate starts from, and the scratch strategy the
 // dev_bot target builds. Copy this directory, edit, iterate against a live
@@ -69,4 +69,4 @@ inline auto MakePolicy(const candidate::Params &params) -> candidate::policy_t {
 //    games take minutes and finish as draws (game_mcts/games/risk/tuning_result.md).
 //    Always sanity-check against builtin:random before submitting.
 
-#endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATES_DEV_STRATEGY_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_CANDIDATES_DEV_STRATEGY_H

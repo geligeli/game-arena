@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_TOURNAMENT_SERVER_ARENA_SERVICE_H
-#define RISK_GAME_AI_CPP_TOURNAMENT_SERVER_ARENA_SERVICE_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_ARENA_SERVICE_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_ARENA_SERVICE_H
 
 // The agent-facing gRPC surface, consumed by the arena MCP server.
 //
@@ -95,4 +95,4 @@ class ArenaService final : public proto::Arena::Service {
 
 }  // namespace tournament_arena
 
-#endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_ARENA_SERVICE_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_ARENA_SERVICE_H

@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATE_CANDIDATE_API_H
-#define RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATE_CANDIDATE_API_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_CANDIDATE_API_CANDIDATE_API_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_CANDIDATE_API_CANDIDATE_API_H
 
 // The contract between an arena candidate and the harness that runs it.
 //
@@ -64,4 +64,4 @@ using policy_t = mcts::tournament::AnyPolicy<game_t>;
 // safe to call repeatedly.
 auto MakePolicy(const candidate::Params &params) -> candidate::policy_t;
 
-#endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATE_CANDIDATE_API_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_CANDIDATE_API_CANDIDATE_API_H

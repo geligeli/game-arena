@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_TOURNAMENT_SERVER_GAME_HISTORY_H
-#define RISK_GAME_AI_CPP_TOURNAMENT_SERVER_GAME_HISTORY_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_GAME_HISTORY_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_GAME_HISTORY_H
 
 // Persists completed games: one binary GameRecord proto per game under
 // <dir>/games/<game_id>.pb, plus one JSON line per game appended to
@@ -45,4 +45,4 @@ class GameHistory {
 
 }  // namespace tournament_broker
 
-#endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_GAME_HISTORY_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_GAME_HISTORY_H

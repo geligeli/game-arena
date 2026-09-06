@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_TOURNAMENT_SERVER_FLEET_SERVICE_H
-#define RISK_GAME_AI_CPP_TOURNAMENT_SERVER_FLEET_SERVICE_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_FLEET_SERVICE_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_FLEET_SERVICE_H
 
 // The sandbox fleet's gRPC surface: one long-lived Attach stream per worker.
 //
@@ -78,4 +78,4 @@ class FleetService final : public proto::SandboxFleet::Service {
 
 }  // namespace tournament_arena
 
-#endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_FLEET_SERVICE_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SERVER_FLEET_SERVICE_H

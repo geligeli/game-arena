@@ -1,5 +1,5 @@
-#ifndef RISK_GAME_AI_CPP_TOURNAMENT_SERVER_SANDBOX_WORKER_BUILD_LOG_H
-#define RISK_GAME_AI_CPP_TOURNAMENT_SERVER_SANDBOX_WORKER_BUILD_LOG_H
+#ifndef GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SANDBOX_WORKER_BUILD_LOG_H
+#define GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SANDBOX_WORKER_BUILD_LOG_H
 
 // Turns a bazel build log into something worth sending to an agent.
 //
@@ -47,4 +47,4 @@ auto ParseResultLine(const std::string &output, RunTally *tally) -> bool;
 
 }  // namespace tournament_arena
 
-#endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_SANDBOX_WORKER_BUILD_LOG_H
+#endif  // GAME_MCTS_GAME_MCTS_TOURNAMENT_SERVER_SANDBOX_WORKER_BUILD_LOG_H
