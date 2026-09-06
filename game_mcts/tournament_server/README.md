@@ -8,7 +8,7 @@ disk, and serves a leaderboard over HTTP.
 ## Running
 
 ```
-bazel run //game_mcts/tournament_server/referee:broker_server -- \
+bazel run //game_mcts/arena:broker_server -- \
     --grpc_port=50051 --http_port=8080 --data_dir=tournament_data \
     --turn_timeout_ms=10000 --game_time_budget_ms=0 \
     --rendezvous_timeout_ms=60000 --max_moves_per_game=50000 \
@@ -117,7 +117,7 @@ require client input.
 valid moves):
 
 ```
-bazel run //game_mcts/tournament_server/client:random_client -- \
+bazel run //game_mcts/arena:random_client -- \
     --name=my-bot --game=tictactoe --opponent=builtin:minimax
 ```
 
@@ -167,7 +167,7 @@ unchanged around your header. Start from
 commented proposer skeleton, and iterate against a live broker:
 
 ```
-bazel run //game_mcts/tournament_server/candidate_api:dev_bot -- \
+bazel run //game_mcts/arena/candidate_api:dev_bot -- \
     --name=me-dev --server=localhost:50051 --opponent=builtin:mcts \
     --games=5 --params=iterations=800
 ```

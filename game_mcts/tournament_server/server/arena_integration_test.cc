@@ -43,9 +43,15 @@ class ArenaIntegrationTest : public ::testing::Test {
     std::filesystem::remove_all(dir_);
 
     SubmissionRules rules;
-    rules.files_submit_dir = "game_mcts/tournament_server/candidates";
-    rules.game = "risk2";
-    rules.policy.add_allow_paths("game_mcts/tournament_server/candidates/**");
+    rules.files_submit_dir = "game_mcts/arena/candidates";
+    rules.policy.add_allowed_dep_prefixes("//problem/lib:");
+    rules.policy.add_allowed_dep_prefixes("//game_mcts/core/mcts:");
+    rules.policy.add_allowed_dep_prefixes("//game_mcts/games/risk:");
+    rules.policy.add_allowed_dep_prefixes("//game_mcts/games/risk/strategies:");
+    rules.policy.add_allowed_dep_prefixes("@abseil-cpp//");
+    rules.harness.set_api_dep("//problem/harness:api");
+    rules.harness.set_main_src("//problem/harness:main.cc");
+    rules.policy.add_allow_paths("game_mcts/arena/candidates/**");
     store_ = std::make_unique<CandidateStore>(dir_ / "candidates",
                                               CandidateLimits{}, rules);
     elo_ = std::make_unique<tournament_broker::EloStore>(dir_ / "ratings.pb",
@@ -55,10 +61,8 @@ class ArenaIntegrationTest : public ::testing::Test {
     config.placement_games = 2;
     config.referee_target =
         "//game_mcts/tournament_server/referee:match_referee";
-    config.build_targets = {
-        "//game_mcts/tournament_server/candidates/{submission_id}:bot"};
-    config.bot_target =
-        "//game_mcts/tournament_server/candidates/{submission_id}:bot";
+    config.build_targets = {"//game_mcts/arena/candidates/{submission_id}:bot"};
+    config.bot_target = "//game_mcts/arena/candidates/{submission_id}:bot";
     standings_ =
         std::make_unique<EloStandings>(elo_.get(), store_.get(), "risk2");
     scheduler_ = std::make_unique<Scheduler>(config, store_.get(), elo_.get(),
@@ -208,9 +212,9 @@ TEST_F(ArenaIntegrationTest, SubmitReachesAWorkerAndComesBackRated) {
             std::string::npos)
       << order.candidate().patch();
   EXPECT_NE(order.candidate().patch().find("/BUILD"), std::string::npos);
-  EXPECT_EQ(order.candidate().bot_target(),
-            "//game_mcts/tournament_server/candidates/" +
-                submitted.candidate_id() + ":bot");
+  EXPECT_EQ(
+      order.candidate().bot_target(),
+      "//game_mcts/arena/candidates/" + submitted.candidate_id() + ":bot");
 
   ReportSuccess(worker.get(), order.order_id(), /*wins=*/2, /*losses=*/0,
                 /*elo=*/1532.0);
@@ -242,8 +246,8 @@ TEST_F(ArenaIntegrationTest, AnyAgentCanReadAnyCandidatesSource) {
   request.set_candidate_id(submitted.candidate_id());
   // Paths are repo-relative now: a submission is a patch, and a patch touches
   // repo paths. GetCandidate lists them, so an agent never has to guess.
-  request.set_path("game_mcts/tournament_server/candidates/" +
-                   submitted.candidate_id() + "/strategy.h");
+  request.set_path("game_mcts/arena/candidates/" + submitted.candidate_id() +
+                   "/strategy.h");
   proto::SourceFile file;
   ASSERT_TRUE(arena_stub_->GetSource(&context, request, &file).ok());
   EXPECT_EQ(file.content(), "// the secret sauce\n");

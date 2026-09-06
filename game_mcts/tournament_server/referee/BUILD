@@ -1,4 +1,3 @@
-load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
@@ -6,59 +5,36 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-# The referee: the game rules, the match loop, and the broker protocol the two
-# sides of a match speak.
+# The referee: the match loop and the broker protocol the two sides of a match
+# speak. Everything here is game-agnostic -- it only ever sees serialized
+# states and actions as byte strings.
 #
-# Every problem-specific dependency in the tournament system lives here --
-# game_registry alone pulls in risk, tictactoe and benchgame. This package is
-# deliberately NOT a dependency of //game_mcts/tournament_server/server, which
-# is a pure coordinator; that package's no_problem_code_test enforces it.
-# Matches run here, in the sandbox, on a worker.
+# The rules themselves arrive through :game_registry, which is a DECLARATION
+# with no definition in this repo. A referee binary is assembled downstream as
+# "a registry + :referee_main"; see //game_mcts/tournament_server/testgame for
+# the reference assembly and //game_mcts/arena for the game_mcts one. That is
+# the seam that lets one arena host different problems with different referees
+# compiled in.
+#
+# This package is deliberately NOT a dependency of
+# //game_mcts/tournament_server/server, which is a pure coordinator; that
+# package's no_problem_code_test enforces it. Matches run here, in the sandbox,
+# on a worker.
 
-# Type-erased game engine: adapts any mcts::SerializableGame to a byte-level
-# interface the broker core can drive.
+# The type-erased contract between the arena and a problem: implement
+# GameSession, hand back a GameDescriptor. No dependency on any game framework.
 cc_library(
     name = "game_session",
     srcs = ["game_session.cc"],
     hdrs = ["game_session.h"],
-    deps = [
-        "//game_mcts/core/mcts:game_traits",
-        "//game_mcts/core/mcts:serialization",
-        "//game_mcts/tournament_server/proto:tournament_broker_cc_proto",
-        "@abseil-cpp//absl/log:check",
-    ],
 )
 
-# Game-generic built-in strategies (random, minimax).
-cc_library(
-    name = "builtins",
-    hdrs = ["builtins.h"],
-    deps = [
-        ":game_session",
-        "//game_mcts/core/mcts:game_traits",
-        "//game_mcts/core/mcts:minimax",
-        "//game_mcts/core/mcts:serialization",
-    ],
-)
-
+# The registry interface: name -> GameDescriptor. Header only, on purpose --
+# GameRegistry() is defined by whichever registry the final binary links.
 cc_library(
     name = "game_registry",
-    srcs = ["game_registry.cc"],
     hdrs = ["game_registry.h"],
-    deps = [
-        ":builtins",
-        ":game_session",
-        "//game_mcts/core/mcts:game_traits",
-        "//game_mcts/core/mcts:mcts",
-        "//game_mcts/games/risk:risk_game",
-        "//game_mcts/games/risk:risk_serialization",
-        "//game_mcts/games/risk/strategies:risk_proposer",
-        "//game_mcts/games/risk/strategies:risk_rollout_shortcuts",
-        "//game_mcts/games/tictactoe:tictactoe",
-        "//game_mcts/games/tictactoe:tictactoe_serialization",
-        "//game_mcts/tournament_server/benchgame:bench_game",
-        "//game_mcts/tournament_server/benchgame:bench_serialization",
-    ],
+    deps = [":game_session"],
 )
 
 cc_library(
@@ -84,11 +60,11 @@ cc_library(
     hdrs = ["game_run.h"],
     deps = [
         ":client_handle",
-        "//game_mcts/tournament_server/server:elo_store",
-        "//game_mcts/tournament_server/server:game_history",
         ":game_session",
         ":worker_pool",
         "//game_mcts/tournament_server/proto:tournament_broker_cc_proto",
+        "//game_mcts/tournament_server/server:elo_store",
+        "//game_mcts/tournament_server/server:game_history",
         "@abseil-cpp//absl/log",
     ],
 )
@@ -99,13 +75,13 @@ cc_library(
     hdrs = ["matchmaker.h"],
     deps = [
         ":client_handle",
-        "//game_mcts/tournament_server/server:elo_store",
-        "//game_mcts/tournament_server/server:game_history",
         ":game_registry",
         ":game_run",
         ":game_session",
         ":worker_pool",
         "//game_mcts/tournament_server/proto:tournament_broker_cc_proto",
+        "//game_mcts/tournament_server/server:elo_store",
+        "//game_mcts/tournament_server/server:game_history",
         "@abseil-cpp//absl/log",
     ],
 )
@@ -150,83 +126,15 @@ cc_library(
     ],
 )
 
-cc_test(
-    name = "player_connection_test",
-    srcs = ["player_connection_test.cc"],
-    deps = [
-        ":player_connection",
-        "@googletest//:gtest_main",
-        "@grpc//:grpc++",
-    ],
-)
-
-cc_test(
-    name = "worker_pool_test",
-    srcs = ["worker_pool_test.cc"],
-    deps = [
-        ":worker_pool",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "game_run_test",
-    srcs = ["game_run_test.cc"],
-    deps = [
-        ":client_handle",
-        "//game_mcts/tournament_server/server:elo_store",
-        "//game_mcts/tournament_server/server:game_history",
-        ":game_registry",
-        ":game_run",
-        ":worker_pool",
-        "//game_mcts/games/tictactoe:tictactoe",
-        "//game_mcts/games/tictactoe:tictactoe_cc_proto",
-        "//game_mcts/games/tictactoe:tictactoe_serialization",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "game_session_test",
-    srcs = ["game_session_test.cc"],
-    deps = [
-        ":game_registry",
-        ":game_session",
-        "//game_mcts/games/risk:risk_game",
-        "//game_mcts/games/risk:risk_serialization",
-        "//game_mcts/games/risk/strategies:risk_proposer",
-        "//game_mcts/games/tictactoe:tictactoe",
-        "//game_mcts/games/tictactoe:tictactoe_cc_proto",
-        "//game_mcts/games/tictactoe:tictactoe_serialization",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "broker_integration_test",
-    srcs = ["broker_integration_test.cc"],
-    deps = [
-        "//game_mcts/tournament_server/server:elo_standings",
-        ":broker_service",
-        ":client_handle",
-        "//game_mcts/tournament_server/server:elo_store",
-        "//game_mcts/tournament_server/server:game_history",
-        ":game_registry",
-        "//game_mcts/tournament_server/server:http_leaderboard",
-        ":matchmaker",
-        "//game_mcts/games/tictactoe:tictactoe",
-        "//game_mcts/games/tictactoe:tictactoe_serialization",
-        "//game_mcts/tournament_server/client:remote_client",
-        "//game_mcts/tournament_server/proto:tournament_broker_cc_grpc",
-        "@googletest//:gtest_main",
-        "@grpc//:grpc++",
-    ],
-)
-
 # One match, then exit. Started by a sandbox worker per order; see main.cc.
-cc_binary(
-    name = "match_referee",
+#
+# A library rather than a cc_binary because main() is game-agnostic but the
+# registry it drives is not: link this with a registry to get a referee.
+# alwayslink so main() survives the archive.
+cc_library(
+    name = "referee_main",
     srcs = ["main.cc"],
+    alwayslink = 1,
     deps = [
         ":broker_service",
         ":game_registry",
@@ -245,10 +153,12 @@ cc_binary(
 
 # The long-running broker, for the local development loop: point dev_bot or
 # random_client at it and iterate without an arena or a container. Not on the
-# arena's evaluation path -- that is :match_referee, one match at a time.
-cc_binary(
-    name = "broker_server",
+# arena's evaluation path -- that is :referee_main, one match at a time.
+# Same registry-linking contract as :referee_main.
+cc_library(
+    name = "broker_server_main",
     srcs = ["broker_main.cc"],
+    alwayslink = 1,
     deps = [
         ":broker_service",
         ":game_registry",
@@ -263,5 +173,24 @@ cc_binary(
         "@abseil-cpp//absl/log:globals",
         "@abseil-cpp//absl/log:initialize",
         "@grpc//:grpc++",
+    ],
+)
+
+cc_test(
+    name = "player_connection_test",
+    srcs = ["player_connection_test.cc"],
+    deps = [
+        ":player_connection",
+        "@googletest//:gtest_main",
+        "@grpc//:grpc++",
+    ],
+)
+
+cc_test(
+    name = "worker_pool_test",
+    srcs = ["worker_pool_test.cc"],
+    deps = [
+        ":worker_pool",
+        "@googletest//:gtest_main",
     ],
 )

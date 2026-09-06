@@ -2,8 +2,13 @@
 // the chosen game. Doubles as a smoke test and as a reference for writing
 // clients in any language (the state/action bytes are the per-game protos).
 //
-//   bazel run //game_mcts/tournament_server/client:random_client
-//       -- --name=my-bot --game=tictactoe --opponent=builtin:minimax
+// Game-agnostic: it asks the linked registry for the game's "random" builtin
+// and never looks at the bytes itself. Which games it can play is decided by
+// which registry the binary links, so this file is a library and the binaries
+// live next to their registries.
+//
+//   bazel run //game_mcts/tournament_server/testgame:random_client
+//       -- --name=my-bot --game=nim --opponent=builtin:optimal
 
 #include <grpcpp/grpcpp.h>
 
@@ -19,7 +24,7 @@
 
 ABSL_FLAG(std::string, server, "localhost:50051", "host:port of the broker");
 ABSL_FLAG(std::string, name, "", "Player name (required)");
-ABSL_FLAG(std::string, game, "tictactoe", "Game to play (risk2 | tictactoe)");
+ABSL_FLAG(std::string, game, "", "Registry key of the game to play (required)");
 ABSL_FLAG(std::string, opponent, "any",
           "any | builtin:random | builtin:mcts | builtin:minimax | ...");
 ABSL_FLAG(int, games, 1, "Number of games to play");

@@ -92,10 +92,10 @@ class DockerBackendIntegrationTest : public ::testing::Test {
            // diagnostics and a nonzero exit, like bazel would.
            "      *failbuild-1-build*)\n"
            "        echo "
-           "\"game_mcts/tournament_server/candidates/failbuild-1/"
+           "\"solutions/failbuild-1/"
            "strategy.h:3:5: error: expected ';' before '}' token\"\n"
            "        echo \"Target "
-           "//game_mcts/tournament_server/candidates/failbuild-1:bot failed to "
+           "//solutions/failbuild-1:bot failed to "
            "build\"\n"
            "        exit 1;;\n"
            // A bot that never finishes: runs until the server-side timeout
@@ -188,30 +188,27 @@ class DockerBackendIntegrationTest : public ::testing::Test {
                         const std::string &candidate) -> proto::WorkOrder {
     proto::WorkOrder order;
     order.set_order_id(id);
-    order.set_game("risk2");
+    order.set_game("nim");
     order.set_base_commit(kFakeCommit);
     order.set_referee_target(
-        "//game_mcts/tournament_server/referee:match_referee");
+        "//game_mcts/tournament_server/testgame:match_referee");
     order.set_opponent_spec("builtin:random");
     order.set_num_games(2);
 
     proto::Side *side = order.mutable_candidate();
     side->set_candidate_id(candidate);
-    side->set_patch(
-        "diff --git a/game_mcts/tournament_server/candidates/" + candidate +
-        "/strategy.h b/game_mcts/tournament_server/candidates/" + candidate +
-        "/strategy.h\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/game_mcts/tournament_server/candidates/" +
-        candidate +
-        "/strategy.h\n"
-        "@@ -0,0 +1,1 @@\n"
-        "+#pragma once\n");
-    side->add_build_targets("//game_mcts/tournament_server/candidates/" +
-                            candidate + ":bot");
-    side->set_bot_target("//game_mcts/tournament_server/candidates/" +
-                         candidate + ":bot");
+    side->set_patch("diff --git a/solutions/" + candidate +
+                    "/strategy.h b/solutions/" + candidate +
+                    "/strategy.h\n"
+                    "new file mode 100644\n"
+                    "--- /dev/null\n"
+                    "+++ b/solutions/" +
+                    candidate +
+                    "/strategy.h\n"
+                    "@@ -0,0 +1,1 @@\n"
+                    "+#pragma once\n");
+    side->add_build_targets("//solutions/" + candidate + ":bot");
+    side->set_bot_target("//solutions/" + candidate + ":bot");
     (*side->mutable_params())["iterations"] = "100";
     return order;
   }
@@ -315,7 +312,7 @@ TEST_F(DockerBackendIntegrationTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log,
                     "exec bazel --output_base=/output_base "
                     "--disk_cache=/disk_cache "
-                    "build '//game_mcts/tournament_server/candidates/"
+                    "build '//solutions/"
                     "c-ok:bot'");
 
   // The match runs on its own egress-free network, torn down afterwards.
@@ -326,8 +323,8 @@ TEST_F(DockerBackendIntegrationTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log, "--name saw-0-ok-1-referee");
   ExpectLogContains(log, "--network saw-0-ok-1-net");
   ExpectLogContains(log,
-                    "exec 'game_mcts/tournament_server/referee/"
-                    "match_referee' '--port=50051' '--game=risk2' "
+                    "exec 'game_mcts/tournament_server/testgame/"
+                    "match_referee' '--port=50051' '--game=nim' "
                     "'--games=2' '--player_a=c-ok' "
                     "'--player_b=builtin:random'");
 
@@ -336,8 +333,7 @@ TEST_F(DockerBackendIntegrationTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log, "--name saw-0-ok-1-bot");
   ExpectLogContains(log, "--memory 4096m");
   ExpectLogContains(log,
-                    "exec './bazel-bin/game_mcts/tournament_server/"
-                    "candidates/c-ok/bot' '--name=c-ok' "
+                    "exec './bazel-bin/solutions/c-ok/bot' '--name=c-ok' "
                     "'--server=saw-0-ok-1-referee:50051' "
                     "'--opponent=builtin:random' '--games=2' "
                     "'--params=iterations=100'");

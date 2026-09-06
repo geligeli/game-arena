@@ -1,118 +1,132 @@
-# Splitting the arena out of game-mcts — agent instructions
+# Splitting the arena out of game-mcts — status and remaining steps
 
-You are extracting `game_mcts/tournament_server/` (the arena: per-problem
-coordinator + sandbox fleet + referee) out of the `game-mcts` repo into its
-own repository. **Do this outside the devcontainer**: you need to create and
-push to a new GitHub repo, and the devcontainer is not provisioned for that.
+The arena (`game_mcts/tournament_server/`) is being extracted into its own
+repository. **Phase 1 is done and is what you are looking at**; phases 2 and 3
+remain. This file replaces the original handoff instructions, which had the
+dependency edge backwards — see "What changed and why" below.
 
-This document is self-contained. It was written after verifying the coupling
-in the source tree (commit `9bca41c`, 2026-09-06); re-verify the "verified
-facts" if the tree has moved since.
+## The shape
 
-## What the arena is
-
-- `server/` — the coordinator: gRPC + HTTP leaderboard, candidate store,
-  scheduler, fleet service, tokens/quotas, standings (ELO + metric). Links
-  **no** game code; `server:no_problem_code_test` enforces it by nm-scanning
-  the linked `problem_server` binary for game symbols.
-- `sandbox/` — `common/` (docker mechanics shared by the two below),
-  `worker/` (fleet worker: `local` and `docker` backends running
-  `WorkOrder`s), `runner/` (standalone gRPC `SandboxService`, a dev tool).
-- `referee/` — the one place game code lives: `GameRegistry` maps a name
-  (`"risk2"`, `"tictactoe"`, `"bench"`) to a type-erased `GameSession`
-  (serialized states/actions as byte strings) plus builtin opponents.
-- `client/`, `candidate_api/`, `candidates/` — reference bots and the
-  submission API; game-coupled like the referee.
-- `proto/` — wire protocols (arena, sandbox_runner, tournament_broker,
-  problem, clients). Zero deps on the rest of game-mcts.
-- `benchgame/` — a load-test game, self-contained.
-- `problems/` — textproto problem definitions (data).
-- `tools/arena_admin` — admin CLI.
-- Plus two things outside that subtree that belong to the arena:
-  - `game_mcts/tools/bench/throughput_benchmark.cc` — depends on
-    `referee`/`benchgame`/`server` libs (the only reverse edge in the repo).
-  - `mcp_servers/arena_mcp/` — the arena's MCP server (Python).
-
-## Verified facts (why this is a packaging exercise, not an untangling)
-
-- Every `#include` under `server/`, `sandbox/`, `proto/`, `problems/`,
-  `tools/` that leaves `tournament_server` resolves to exactly one header:
-  `game_mcts/common/process/process.h`.
-- `referee/`, `client/`, `candidate_api/`, `candidates/` additionally depend
-  on `core/mcts:{game_traits,mcts,minimax,serialization,tournament}` and
-  `games/{risk,tictactoe}` — by design; that is the GameRegistry seam.
-- Nothing outside the arena subtree depends on it except
-  `tools/bench:throughput_benchmark`.
-- `common/process` is also used by `core/mcts` in game-mcts, so it **stays**
-  in game-mcts; the arena consumes it through the module dep like everything
-  else.
-
-## Target layout
-
-New repo (suggested name `game-arena`, module name `game_arena`), **keeping
-paths byte-identical** to today:
+The arena is a general problem-running framework: a coordinator, a sandbox
+fleet, and a referee harness. It hosts *problems*, of which "play Risk" is one
+and "make this benchmark faster" is another. It must therefore depend on **no**
+game code, and it now doesn't.
 
 ```
-game_arena/
-  MODULE.bazel            # new, see below
-  .bazelrc                # copied verbatim
-  .clang-format           # copied verbatim
-  .pre-commit-config.yaml # copied verbatim
-  scripts/fix_guards.py   # copied verbatim
-  mcp_servers/            # arena_mcp only (BUILD, requirements.txt, README
-                          # trimmed to the arena parts)
-  game_mcts/tournament_server/...   # the whole subtree, unchanged
-  game_mcts/tools/bench/throughput_benchmark.cc + its own BUILD
+game_mcts/tournament_server/     the arena. Depends on nothing else in this repo.
+  proto/        wire protocols (arena, sandbox_runner, tournament_broker, problem)
+  server/       coordinator: submissions, scheduling, ELO/metric standings, HTTP
+  sandbox/      common/ (docker mechanics), worker/ (fleet), runner/ (dev tool)
+  referee/      match loop + broker protocol, entry points as linkable libraries
+  client/       random_client_main: the generic reference client
+  testgame/     Nim: the arena's own game, plus the reference registry
+  problems/     nim.textproto, the reference problem
+  tools/        arena_admin
+  common/process/  -- lives at game_mcts/common/process until phase 2
+
+game_mcts/arena/                 what binds THIS repo to the arena.
+  game_session_impl.h   any mcts::SerializableGame as an arena GameSession
+  builtins.h            random/minimax builtins over the mcts concepts
+  game_registry.cc      the risk2 / tictactoe / bench registry
+  BUILD                 match_referee, broker_server, random_client
+  client/ candidate_api/ candidates/ benchgame/ problems/
 ```
 
-Keeping the `game_mcts/...` prefix means **zero `#include` and zero label
-changes inside the moved tree**, and header guards (which encode the path)
-stay valid. Stripping the prefix is a possible later cleanup; do not mix it
-into this pass.
+### The seam
 
-The arena repo depends on game-mcts as a Bazel module. In the moved BUILD
-files, only the files that reference targets *outside* `tournament_server`
-change — `//game_mcts/core/...`, `//game_mcts/games/...`,
-`//game_mcts/common/process` become `@game_mcts//game_mcts/...`. The complete
-list (verified): `referee/BUILD`, `client/BUILD`, `candidate_api/BUILD`,
-`candidates/**/BUILD`, `sandbox/common/BUILD`, `sandbox/worker/BUILD`,
-`sandbox/runner/BUILD`, and the new `tools/bench/BUILD`. Everything else is
-untouched.
+`referee/game_registry.h` **declares** `GameRegistry()` and defines it nowhere.
+Binaries are assembled as *a registry plus a game-agnostic entry-point library*:
 
-`#include "game_mcts/core/mcts/mcts.h"` in an arena file resolves against the
-external repo: Bazel puts each direct dep's external-repo root on the quote
-include path, the same mechanism that makes `#include "gtest/gtest.h"` work
-against `@googletest`. No changes in game-mcts are needed for this. If it
-fails, that mechanism is the thing to debug (check the dep is direct, not
-transitive-only).
+```python
+cc_binary(
+    name = "match_referee",
+    deps = [":game_registry", "//game_mcts/tournament_server/referee:referee_main"],
+)
+```
 
-### New MODULE.bazel
+`referee:referee_main`, `referee:broker_server_main` and
+`client:random_client_main` are `cc_library(alwayslink = 1)` targets holding
+`main()`. Registry libraries also need `alwayslink = 1`: nothing depends on them
+by label, so the linker would otherwise skip the archive member.
 
-game-mcts' own `MODULE.bazel` contains a commented-out sketch of exactly this
-consumer module — use it. Required:
+Everything else problem-specific is configuration, not code:
+`match.referee_target` names the referee to build, `submission.harness` carries
+the labels a generated candidate BUILD is written against, and
+`submission.allowed_dep_prefixes` the deps a solution may name.
+
+## Verified facts (re-verified at each phase)
+
+Proven by `bazel query`, not by reading:
+
+```sh
+# Empty. The arena depends on no game code.
+bazel query 'filter("^//game_mcts/(core|games|arena)", deps(//game_mcts/tournament_server/...))'
+
+# Empty. The coordinator links no registry.
+bazel query 'filter("game_registry|testgame|^//game_mcts/arena", deps(//game_mcts/tournament_server/server:problem_server))'
+
+# Only the arena's sandbox. common/process moves with the arena in phase 2.
+bazel query 'rdeps(//game_mcts/tournament_server/... + //game_mcts/core/... + //game_mcts/games/... + //game_mcts/arena/..., //game_mcts/common/process, 1)'
+```
+
+`server:no_problem_code_test` nm-scans the linked `problem_server` for
+`tournament_broker::GameRegistry`, `tournament_broker::GameSession` and
+`arena_testgame::`. It names the registry and the session rather than a list of
+games precisely because the arena cannot enumerate the games that exist.
+
+## Phase 2 — extract into `game-arena`
+
+`git filter-repo` is not installed on the host; `pip install --user
+git-filter-repo` first. Run outside the devcontainer (it is not provisioned for
+pushing to GitHub); bazel is available inside it via `docker exec`.
+
+```sh
+git clone /large_nfs/game-mcts game-arena && cd game-arena
+git filter-repo --path game_mcts/tournament_server \
+                --path game_mcts/common/process \
+                --path mcp_servers/arena_mcp \
+                --path scripts/fix_guards.py \
+                --path .bazelrc --path .bazelversion --path .clang-format \
+                --path .pre-commit-config.yaml --path .gitignore \
+                --path BUILD \
+                --path protobuf_python_dist_build.patch \
+                --path protobuf_python_dist_bzl.patch
+```
+
+The empty root `BUILD` is needed so `//:protobuf_python_dist_*.patch` resolves
+in `single_version_override`.
+
+Then reprefix `game_mcts/tournament_server/<x>` -> `game_arena/<x>` and
+`game_mcts/common/process` -> `game_arena/common/process`. Mostly includes,
+labels and header guards, but three places encode the path as a *string*:
+
+- `proto/BUILD` — `-Igame_mcts/tournament_server/proto` in `arena_grpc_py_gen`.
+- `mcp_servers/arena_mcp/make_stubs.sh` and `server.py` — the
+  `game_mcts.tournament_server.proto` import path.
+- `server/no_problem_code_test.sh` — `BINARY=` is runfiles-relative.
+
+Guards come from `scripts/fix_guards.py`: `basename(git_root) + "_" + rel_path`,
+so sources under `game_arena/` in a repo cloned as `game-arena` get
+`GAME_ARENA_GAME_ARENA_...`, matching this repo's own doubled convention.
+Namespaces (`tournament_broker`, `tournament_arena`, `sandbox_common`,
+`arena_testgame`) carry no repo name and do not change.
+
+### New MODULE.bazel — no `game_mcts` dep
 
 ```python
 module(name = "game_arena", version = "0.1.0")
 
-bazel_dep(name = "game_mcts", version = "0.1.0")
-local_path_override(module_name = "game_mcts",
-                    path = "/path/to/sibling/game-mcts")  # dev; CI: git_override pinned to a commit
-
 bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "rules_python", version = "1.6.3")   # arena_mcp py_binary + py_proto_library
+bazel_dep(name = "rules_python", version = "1.6.3")   # arena_mcp + py_proto
 bazel_dep(name = "rules_cc", version = "0.2.14")
-bazel_dep(name = "rules_shell", version = "0.7.1")    # server:no_problem_code_test is an sh_test
+bazel_dep(name = "rules_shell", version = "0.7.1")    # no_problem_code_test
 bazel_dep(name = "googletest", version = "1.17.0")
 bazel_dep(name = "re2", version = "2025-11-05.bcr.1") # sandbox/worker:build_log
 bazel_dep(name = "abseil-cpp", version = "20250814.1")
 bazel_dep(name = "protobuf", version = "32.1")
 bazel_dep(name = "grpc", version = "1.74.1")
-# Token hashing in server/client_registry; version matched to grpc's resolve.
-bazel_dep(name = "boringssl", version = "0.20241024.0")
+bazel_dep(name = "boringssl", version = "0.20241024.0")  # server/client_registry
 
-# Still needed: protobuf is not the root module here either. Copy
-# protobuf_python_dist_build.patch / protobuf_python_dist_bzl.patch from
-# game-mcts.
 single_version_override(
     module_name = "protobuf",
     patches = ["//:protobuf_python_dist_build.patch",
@@ -128,74 +142,83 @@ pip.parse(hub_name = "mcp_pip_deps", python_version = "3.12",
 use_repo(pip, "mcp_pip_deps")
 ```
 
-Not needed (game-side only): `pybind11_bazel`, `google_benchmark`,
-`boost.*`. Do not copy `MODULE.bazel.lock` — let Bazel regenerate it, then
-commit the regenerated lock.
+No `local_path_override`, no sibling checkout. This matters operationally, not
+just aesthetically: sandbox workers `git clone --local` the repo
+(`sandbox/worker/checkout.cc`) and build it in a **closed-network** container
+(see ARENA.md), where an override pointing at a host path would not resolve.
 
-## Steps
+Do not copy `MODULE.bazel.lock`; regenerate and commit it.
 
-1. **Extract with history.** Use `git filter-repo` (install it if missing):
-   ```sh
-   git clone /path/to/game-mcts game-arena && cd game-arena
-   git filter-repo --path game_mcts/tournament_server \
-                   --path game_mcts/tools/bench/throughput_benchmark.cc \
-                   --path mcp_servers/arena_mcp \
-                   --path scripts/fix_guards.py \
-                   --path .bazelrc --path .clang-format \
-                   --path .pre-commit-config.yaml \
-                   --path protobuf_python_dist_build.patch \
-                   --path protobuf_python_dist_bzl.patch
-   ```
-   `throughput_benchmark.cc` lands at its old path; give it its own
-   `game_mcts/tools/bench/BUILD` with just that `cc_binary`, its
-   `tournament_server` deps unchanged, and framework deps switched to
-   `@game_mcts//...` (it has none — it only uses arena + grpc + abseil).
-2. Write the new `MODULE.bazel` (above), point `local_path_override` at the
-   sibling game-mcts checkout.
-3. Fix the listed BUILD files: `//game_mcts/{core,games,common}` →
-   `@game_mcts//game_mcts/{...}`.
-4. **Verify, in this order** (each gates the next):
-   - `bazel build //game_mcts/tournament_server/proto/...` — self-contained.
-   - `bazel build //game_mcts/tournament_server/server:problem_server` —
-     the pure coordinator; must build with only proto/grpc/abseil/boringssl.
-   - `bazel test //game_mcts/tournament_server/sandbox/...` — sandbox tests
-     use fake docker/git scripts, no daemon needed. Must pass unmodified.
-   - `bazel build //game_mcts/tournament_server/referee/...` — the first
-     target that crosses into `@game_mcts`. This is where include-path
-     issues would surface.
-   - `bazel build //... && bazel test //...` — expect the same 20+ arena
-     tests to pass, including `no_problem_code_test`.
-   - `bazel test --config=asan //game_mcts/tournament_server/...`
-5. Trim `mcp_servers/` to `arena_mcp`: split `mcp_servers/BUILD`,
-   `requirements.txt`, `README.md`; keep `arena_mcp/make_stubs.sh` paths
-   working (it references `game_mcts/tournament_server/proto/arena.proto`
-   relative to the repo root — unchanged under the kept prefix).
-6. Create `github.com/geligeli/game-arena` (or the name the user gives) and
-   push. Then in the game-mcts repo, open the removal PR: delete
-   `game_mcts/tournament_server/`, `mcp_servers/arena_mcp`,
-   `tools/bench/throughput_benchmark.cc`, the `boringssl` bazel_dep (only the
-   arena's token registry uses it — re-grep to confirm), and the commented
-   consumer-module sketch in `MODULE.bazel` (it now lives here for real).
-   Do **not** push or merge the removal yourself — that is a review step.
-7. Update both AGENTS.md files: game-mcts' loses the tournament-server
-   section; this repo gains one (start from that section plus this file's
-   "Verified facts").
+Trim `mcp_servers/` to `arena_mcp`: drop `smoke_test` (it drives both servers),
+keep the arena half of `README.md`, and keep `mcp` + `grpcio` in
+`requirements.txt`.
+
+### Verify, in order
+
+1. `bazel build //game_arena/proto/...`
+2. `bazel build //game_arena/common/process/... //game_arena/server:problem_server`
+3. `bazel test //game_arena/sandbox/...` — fake docker/git scripts, no daemon.
+4. `bazel build //game_arena/referee/... //game_arena/testgame/...`
+5. `bazel build //... && bazel test //...` — 29 tests, `no_problem_code_test`
+   included.
+6. `bazel test --config=asan //...`
+
+## Phase 3 — game-mcts consumes game-arena
+
+1. `bazel_dep(name = "game_arena", version = "0.1.0")` plus a
+   `local_path_override` to the sibling checkout, with the `git_override` form
+   commented beside it for CI.
+2. Delete `game_mcts/tournament_server/` and `game_mcts/common/process`, and
+   the commented consumer-module sketch at the bottom of `MODULE.bazel`.
+3. Repoint `game_mcts/arena/**/BUILD` and `game_mcts/tools/bench/BUILD` at
+   `@game_arena//game_arena/...`, and the labels inside
+   `game_mcts/arena/problems/*.textproto`.
+4. `boringssl`, `re2` and `rules_shell` then have no users left in game-mcts
+   (their only references are in the arena). `grpc` survives via
+   `arena/client:remote_client` and `tools/bench:throughput_benchmark`. Drop
+   the three in a separate commit so the removal stays mechanical.
+5. `bazel build //... && bazel test //...`.
+
+**Do not push or merge the game-mcts removal** — that is a review step.
 
 ## Guardrails
 
-- Do not "improve" anything while moving. The split changes no C++.
-- The sandbox integration tests assert exact docker argv/scripts from
-  fake-docker logs; if one fails, you changed behavior — stop and find it.
-- `no_problem_code_test` must keep passing in the new repo; it is the proof
-  the coordinator still links no game code.
-- The coordinator's contract is the protos in `proto/`; do not bump field
-  numbers or "fix" them during the split.
+- Nothing under `game_mcts/tournament_server/` may name `core/`, `games/` or
+  `arena/`, as an include, a label, or a **string**. The two couplings that
+  survived the longest were strings: a hardcoded candidate-harness label in
+  `server/generated_build.cc` and a hardcoded dependency allowlist in
+  `server/candidate_store.cc`. Both are problem config now.
+- The sandbox integration tests assert exact docker argv from fake-docker logs.
+  If one fails, behaviour changed — stop and find it.
+- Do not bump proto field numbers. The coordinator's contract is `proto/`.
+
+## What changed and why
+
+The original version of this document proposed moving the arena out **with a
+dependency on `@game_mcts`**, on the grounds that `referee/`, `client/`,
+`candidate_api/` and `candidates/` are game-coupled and had to travel with it.
+They are game-coupled — but they are the *instantiation* of the arena for these
+games, not the arena, and keeping them was the only thing creating the edge.
+
+Two of that document's load-bearing facts were also wrong:
+
+- "`common/process` is also used by `core/mcts`, so it stays in game-mcts." It
+  wasn't. `core/mcts/BUILD` declared the dep on `mcts_test`, but no source
+  under `core/`, `games/` or `common/` included `process.h`. The stale line is
+  gone and the library moves with the arena.
+- "`referee/` is the one place game code lives." Nine of its twelve libraries
+  had no external includes at all. Only `game_session.h` (which bundled the
+  abstract interface with the `mcts::` adapter), `builtins.h` and
+  `game_registry.cc` were coupled.
 
 ## Follow-ups (not part of the split)
 
-- Per-problem sandbox limits (memory/cpus/user) currently come from worker
-  flags; `SandboxSpec` defines them but only `require_container` rides on the
-  `WorkOrder`. Deliberately deferred.
-- Optional path-prefix strip (`game_mcts/tournament_server/` →
-  `tournament_server/`): mechanical include/label/guard sweep, only after
-  the split lands and is green.
+- `SetDefaultMctsIterations` in `referee/game_registry.h` names a search
+  algorithm in an interface that should not know about one. Generalise it to an
+  opaque per-registry options blob; every registry currently has to define it,
+  and `testgame`'s is a no-op.
+- Per-problem sandbox limits (memory/cpus/user) still come from worker flags;
+  `SandboxSpec` defines them but only `require_container` rides on the
+  `WorkOrder`.
+- `arena/candidate_api` selects its game with `CANDIDATE_GAME_*` local_defines;
+  a data-driven form would let one harness serve more problems.

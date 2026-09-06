@@ -1,0 +1,58 @@
+# The arena's own problem, on the arena's own game.
+#
+# It ships for two reasons: shipped_problems_test needs a config to prove the
+# parser still works, and a new problem needs a worked example that does not
+# assume a game framework. Everything here is arena-local -- no label in this
+# file points outside //game_mcts/tournament_server.
+#
+#   bazel run //game_mcts/tournament_server/server:problem_server -- \
+#       --problem_config=$PWD/game_mcts/tournament_server/problems/nim.textproto \
+#       --data_dir=$PWD/tournament_data --clients=$PWD/clients.textproto
+
+problem_id: "nim"
+display_name: "Nim (21 stones)"
+description:
+  "Take 1 to 3 stones a turn; whoever takes the last stone wins.\n"
+  "\n"
+  "The arena's reference problem. Nim is solved, so this is not a strategy "
+  "competition -- it exists so the arena can be run end to end without a game "
+  "framework in the build.\n"
+
+repo {
+  url: "/large_nfs/game-mcts"
+  base_commit: "HEAD"
+}
+
+submission {
+  max_patch_bytes: 262144
+  max_files: 32
+  # Patch-only: the reference problem has no candidate harness to compile
+  # submissions against, which is exactly what an unset `harness` means.
+  allow_paths: "game_mcts/tournament_server/candidates/**"
+}
+
+build {
+  targets: "//game_mcts/tournament_server/testgame:match_referee"
+  timeout_s: 600
+}
+
+sandbox {
+  image: "takumi.city/jax-cpu-training:latest"
+  memory_limit_mb: 2048
+  network: NETWORK_INTERNAL_BRIDGE
+  require_container: true
+}
+
+match {
+  game: "nim"
+  referee_target: "//game_mcts/tournament_server/testgame:match_referee"
+  games_per_order: 10
+  placement_opponents: "builtin:random"
+  placement_opponents: "builtin:optimal"
+  turn_timeout_ms: 5000
+  game_time_budget_ms: 60000
+  max_moves_per_game: 100
+  timeout_s: 600
+}
+
+ranking { kind: ELO }

@@ -24,12 +24,12 @@ The coordinator stores submissions, schedules them, and publishes standings.
 It runs nothing: **a candidate's id is its player name**, so the arena's
 standings *are* the ELO store, and there is no second scoreboard to keep in
 sync -- but the matches those ratings come from are refereed on a worker, by
-`//game_mcts/tournament_server/referee:match_referee`, one process per order.
+`//game_mcts/arena:match_referee`, one process per order.
 
 That split is enforced, not merely intended: `problem_server` links no game
 code, and `no_problem_code_test` inspects the linked binary's symbols to keep
 it that way. A long-running broker still exists for the local development loop
-(`referee:broker_server`), but nothing rated goes through it.
+(`//game_mcts/arena:broker_server`), but nothing rated goes through it.
 
 The fleet is separate and pull-based. A worker dials the arena, so adding
 capacity is starting another worker on another host — no inbound port, no
@@ -40,7 +40,7 @@ registration, nothing to configure on the server.
 ```sh
 # 1. The coordinator. One server per problem; --problem_config says which.
 bazel run //game_mcts/tournament_server/server:problem_server -- \
-    --problem_config=game_mcts/tournament_server/problems/risk2.textproto \
+    --problem_config=game_mcts/arena/problems/risk2.textproto \
     --data_dir=tournament_data --base_commit=$(git rev-parse HEAD)
 
 # 2. One or more workers, here or on any other host with the repo and bazel.
@@ -72,8 +72,8 @@ One header, one function — see the "Writing a candidate" section of
 loop needs nothing from the arena:
 
 ```sh
-# Against a local broker (referee:broker_server), not the arena.
-bazel run //game_mcts/tournament_server/candidate_api:dev_bot -- \
+# Against a local broker (//game_mcts/arena:broker_server), not the arena.
+bazel run //game_mcts/arena/candidate_api:dev_bot -- \
     --name=me-dev --server=localhost:50051 --opponent=builtin:mcts --games=5
 ```
 

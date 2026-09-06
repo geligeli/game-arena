@@ -1,9 +1,9 @@
 // The match referee: plays a fixed number of games between two named players
 // and prints the tally.
 /*
-bazel run //game_mcts/tournament_server/referee:match_referee -- \
-    --port=50051 --game=risk2 --games=10 \
-    --player_a=fast-a1b2c3 --player_b=builtin:mcts
+bazel run //game_mcts/tournament_server/testgame:match_referee -- \
+    --port=50051 --game=nim --games=10 \
+    --player_a=fast-a1b2c3 --player_b=builtin:optimal
 */
 //
 // This is the broker, scoped to one match and given a reason to exit. The
@@ -52,7 +52,7 @@ bazel run //game_mcts/tournament_server/referee:match_referee -- \
 #include "game_mcts/tournament_server/server/game_history.h"
 
 ABSL_FLAG(int, port, 50051, "Port the two sides dial");
-ABSL_FLAG(std::string, game, "", "Game registry key, e.g. risk2 (required)");
+ABSL_FLAG(std::string, game, "", "Game registry key (required)");
 ABSL_FLAG(int, games, 1, "Games to play before reporting and exiting");
 ABSL_FLAG(std::string, player_a, "",
           "Player the tally is counted from (required)");

@@ -61,7 +61,13 @@ class EloStandingsTest : public ::testing::Test {
                                                          32.0);
     SubmissionRules rules;
     rules.files_submit_dir = "solutions";
-    rules.game = "risk2";
+    rules.policy.add_allowed_dep_prefixes("//problem/lib:");
+    rules.policy.add_allowed_dep_prefixes("//game_mcts/core/mcts:");
+    rules.policy.add_allowed_dep_prefixes("//game_mcts/games/risk:");
+    rules.policy.add_allowed_dep_prefixes("//game_mcts/games/risk/strategies:");
+    rules.policy.add_allowed_dep_prefixes("@abseil-cpp//");
+    rules.harness.set_api_dep("//problem/harness:api");
+    rules.harness.set_main_src("//problem/harness:main.cc");
     store_ = std::make_unique<CandidateStore>(dir_ / "candidates",
                                               CandidateLimits{}, rules);
     standings_ =

@@ -3,20 +3,22 @@
 
 // Type-erased game engine for the tournament broker. The broker core
 // (matchmaker, gRPC service, HTTP leaderboard) is game-agnostic: it only ever
-// sees serialized states/actions as byte strings. One templated
-// GameSessionImpl adapts any mcts::SerializableGame to the interface.
+// sees serialized states/actions as byte strings.
+//
+// This header is the whole contract between the arena and a problem: implement
+// GameSession, hand back a GameDescriptor, and the broker can run it. Nothing
+// here knows what a game is made of, which is what lets one arena host chess,
+// a coding challenge and a benchmark. Adapters that lift an existing game
+// framework onto this interface live with that framework, not here.
 
+#include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <random>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
-
-#include "absl/log/check.h"
-#include "game_mcts/core/mcts/game_traits.h"
-#include "game_mcts/core/mcts/serialization.h"
 
 namespace tournament_broker {
 
@@ -70,73 +72,6 @@ class GameSession {
 
  private:
   std::vector<RecordedStep> steps_;
-};
-
-template <mcts::SerializableGame G>
-class GameSessionImpl final : public GameSession {
- public:
-  using traits = mcts::GameSerializationTraits<G>;
-
-  explicit GameSessionImpl(G initial = G{}) : state_(std::move(initial)) {}
-
-  auto SerializeState() const -> std::string override {
-    return traits::StateToProto(state_).SerializeAsString();
-  }
-
-  auto CurrentPlayer() const -> int override { return state_.current_player(); }
-
-  auto IsChanceNode() const -> bool override {
-    if constexpr (mcts::ChanceGame<G>) {
-      return state_.is_chance_node();
-    } else {
-      return false;
-    }
-  }
-
-  void ApplyChanceAction(std::mt19937 &gen) override {
-    if constexpr (mcts::ChanceGame<G>) {
-      const typename G::action_t action = state_.sample_chance_action(gen);
-      RecordStep(-1, traits::ActionToProto(action).SerializeAsString());
-      state_ = state_.apply_action(action);
-    } else {
-      CHECK(false) << "ApplyChanceAction on a game without chance nodes";
-    }
-  }
-
-  auto ApplySerializedAction(std::string_view bytes,
-                             std::string *error) -> bool override {
-    typename traits::action_proto_t action_proto;
-    if (!action_proto.ParseFromArray(bytes.data(),
-                                     static_cast<int>(bytes.size()))) {
-      *error = "action bytes do not parse";
-      return false;
-    }
-    const typename G::action_t action = traits::ActionFromProto(action_proto);
-    if (!state_.is_valid_action(action, *error)) {
-      return false;
-    }
-    RecordStep(state_.current_player(), std::string(bytes));
-    state_ = state_.apply_action(action);
-    return true;
-  }
-
-  auto Outcome() const -> std::optional<GameOutcome> override {
-    const mcts::game_state_t state = state_.current_state();
-    if (const auto *win = std::get_if<mcts::win_t>(&state)) {
-      return GameOutcome{.is_draw = false,
-                         .winning_player = win->winning_player};
-    }
-    if (std::get_if<mcts::draw_t>(&state) != nullptr) {
-      return GameOutcome{.is_draw = true};
-    }
-    return std::nullopt;
-  }
-
-  // Typed access for game-specific code (tests, registry setup).
-  auto state() const -> const G & { return state_; }
-
- private:
-  G state_;
 };
 
 // One entry of the game registry: how to start a session and how to build

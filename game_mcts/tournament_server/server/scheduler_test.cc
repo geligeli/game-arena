@@ -61,9 +61,15 @@ class SchedulerTest : public ::testing::Test {
             std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
     std::filesystem::remove_all(dir_);
     SubmissionRules rules;
-    rules.files_submit_dir = "game_mcts/tournament_server/candidates";
-    rules.game = "risk2";
-    rules.policy.add_allow_paths("game_mcts/tournament_server/candidates/**");
+    rules.files_submit_dir = "game_mcts/arena/candidates";
+    rules.policy.add_allowed_dep_prefixes("//problem/lib:");
+    rules.policy.add_allowed_dep_prefixes("//game_mcts/core/mcts:");
+    rules.policy.add_allowed_dep_prefixes("//game_mcts/games/risk:");
+    rules.policy.add_allowed_dep_prefixes("//game_mcts/games/risk/strategies:");
+    rules.policy.add_allowed_dep_prefixes("@abseil-cpp//");
+    rules.harness.set_api_dep("//problem/harness:api");
+    rules.harness.set_main_src("//problem/harness:main.cc");
+    rules.policy.add_allow_paths("game_mcts/arena/candidates/**");
     store_ = std::make_unique<CandidateStore>(dir_ / "candidates",
                                               CandidateLimits{}, rules);
     elo_ = std::make_unique<tournament_broker::EloStore>(dir_ / "ratings.pb",
@@ -71,10 +77,8 @@ class SchedulerTest : public ::testing::Test {
     SchedulerConfig config;
     config.placement_opponents = {"builtin:random"};
     config.placement_games = 2;
-    config.build_targets = {
-        "//game_mcts/tournament_server/candidates/{submission_id}:bot"};
-    config.bot_target =
-        "//game_mcts/tournament_server/candidates/{submission_id}:bot";
+    config.build_targets = {"//game_mcts/arena/candidates/{submission_id}:bot"};
+    config.bot_target = "//game_mcts/arena/candidates/{submission_id}:bot";
     standings_ =
         std::make_unique<EloStandings>(elo_.get(), store_.get(), "risk2");
     scheduler_ = std::make_unique<Scheduler>(config, store_.get(), elo_.get(),
@@ -153,9 +157,9 @@ TEST_F(SchedulerTest, PlacementDispatchesOneOrderPerBuiltin) {
       << order.candidate().patch();
   // Templates are expanded here; the worker never sees "{submission_id}".
   ASSERT_EQ(order.candidate().build_targets_size(), 1);
-  EXPECT_EQ(order.candidate().build_targets(0),
-            "//game_mcts/tournament_server/candidates/" +
-                candidate.candidate_id() + ":bot");
+  EXPECT_EQ(
+      order.candidate().build_targets(0),
+      "//game_mcts/arena/candidates/" + candidate.candidate_id() + ":bot");
   EXPECT_EQ(order.candidate().bot_target(), order.candidate().build_targets(0));
 
   scheduler_->OnResult("w1", Result(order.order_id(), true, 2, 0));
@@ -193,8 +197,7 @@ TEST_F(SchedulerTest, CandidateMatchDispatchesBothSidesNamingEachOther) {
   EXPECT_EQ(order.opponent().candidate_id(), beta.candidate_id());
   EXPECT_FALSE(order.opponent().patch().empty());
   EXPECT_EQ(order.opponent().bot_target(),
-            "//game_mcts/tournament_server/candidates/" + beta.candidate_id() +
-                ":bot");
+            "//game_mcts/arena/candidates/" + beta.candidate_id() + ":bot");
   // Disjoint paths, which is what lets both patches apply to one checkout.
   EXPECT_NE(order.candidate().patch(), order.opponent().patch());
 

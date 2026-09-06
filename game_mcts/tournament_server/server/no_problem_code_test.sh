@@ -23,16 +23,19 @@ if ! command -v nm >/dev/null 2>&1; then
   exit 0
 fi
 
-# Namespaces that only exist in problem code. GameRegistry is the door all of
-# them come through, so it is named directly too.
-FORBIDDEN='risk_game::|tictactoe::|bench_game::|tournament_broker::GameRegistry|tournament_broker::GameSession'
+# The door all problem code comes through. Naming the registry and the session
+# rather than a list of games is the point: the arena does not know which games
+# exist, so it cannot enumerate them -- but nothing can reach a game without
+# one of these two. arena_testgame:: is this repo's own game, which has no more
+# business in the coordinator than anyone else's.
+FORBIDDEN='tournament_broker::GameRegistry|tournament_broker::GameSession|arena_testgame::'
 
 FOUND="$(nm -C --defined-only "${BINARY}" 2>/dev/null | grep -E "${FORBIDDEN}" | head -20)"
 if [[ -n "${FOUND}" ]]; then
   echo "FAIL: the coordinator links problem code. Offending symbols:" >&2
   echo "${FOUND}" >&2
   echo >&2
-  echo "Game rules belong in //game_mcts/tournament_server/referee, which runs" >&2
+  echo "Game rules belong in a registry linked into the referee, which runs" >&2
   echo "on a sandbox worker. The coordinator only schedules and publishes." >&2
   exit 1
 fi

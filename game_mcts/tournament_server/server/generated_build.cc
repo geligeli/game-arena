@@ -1,7 +1,6 @@
 #include "game_mcts/tournament_server/server/generated_build.h"
 
 #include <algorithm>
-#include <map>
 #include <sstream>
 
 namespace tournament_arena {
@@ -19,6 +18,16 @@ auto IsCompiledSource(const std::string &path) -> bool {
   return ext == ".cc" || ext == ".cpp";
 }
 
+// Sorts and de-duplicates everything after the first entry, which is the
+// harness dep and stays pinned at the top where a reader expects it.
+void NormalizeDeps(std::vector<std::string> *deps) {
+  if (deps->size() < 2) {
+    return;
+  }
+  std::sort(deps->begin() + 1, deps->end());
+  deps->erase(std::unique(deps->begin(), deps->end()), deps->end());
+}
+
 }  // namespace
 
 auto CandidateTarget(const std::string &dir,
@@ -26,20 +35,10 @@ auto CandidateTarget(const std::string &dir,
   return "//" + dir + "/" + candidate_id + ":bot";
 }
 
-auto CandidateGameDefine(const std::string &game) -> std::string {
-  if (game == "risk2") {
-    return "CANDIDATE_GAME_RISK2";
-  }
-  if (game == "tictactoe") {
-    return "CANDIDATE_GAME_TICTACTOE";
-  }
-  return {};
-}
-
 auto GenerateCandidateBuild(
     const std::string &dir, const std::string &candidate_id,
-    const std::string &game, const std::vector<std::string> &file_paths,
-    const std::string &entry_header,
+    const proto::CandidateHarness &harness,
+    const std::vector<std::string> &file_paths, const std::string &entry_header,
     const std::vector<std::string> &extra_deps) -> std::string {
   if (file_paths.empty() || entry_header.empty()) {
     return {};
@@ -48,10 +47,13 @@ auto GenerateCandidateBuild(
       file_paths.end()) {
     return {};
   }
-  const std::string game_define = CandidateGameDefine(game);
-  if (game_define.empty()) {
+  // Without these there is nothing to compile a submission against. That is a
+  // misconfigured problem rather than a bad submission, but the answer is the
+  // same: do not emit a BUILD that cannot work.
+  if (harness.api_dep().empty() || harness.main_src().empty()) {
     return {};
   }
+  const std::string &game_define = harness.game_define();
 
   std::vector<std::string> headers;
   std::vector<std::string> sources;
@@ -61,13 +63,17 @@ auto GenerateCandidateBuild(
   std::sort(headers.begin(), headers.end());
   std::sort(sources.begin(), sources.end());
 
-  std::vector<std::string> deps = {
-      "//game_mcts/tournament_server/candidate_api:candidate_api"};
+  std::vector<std::string> strategy_deps = {harness.api_dep()};
   for (const std::string &dep : extra_deps) {
-    deps.push_back(dep);
+    strategy_deps.push_back(dep);
   }
-  std::sort(deps.begin() + 1, deps.end());
-  deps.erase(std::unique(deps.begin(), deps.end()), deps.end());
+  NormalizeDeps(&strategy_deps);
+
+  std::vector<std::string> bot_deps = {":strategy", harness.api_dep()};
+  for (const std::string &dep : harness.bot_deps()) {
+    bot_deps.push_back(dep);
+  }
+  NormalizeDeps(&bot_deps);
 
   const std::string entry_path = dir + "/" + candidate_id + "/" + entry_header;
 
@@ -94,40 +100,33 @@ auto GenerateCandidateBuild(
     build << "    ],\n";
   }
   build << "    deps = [\n";
-  for (const std::string &dep : deps) {
+  for (const std::string &dep : strategy_deps) {
+    build << "        \"" << dep << "\",\n";
+  }
+  build << "    ],\n";
+  if (!game_define.empty()) {
+    build << "    local_defines = [\"" << game_define << "\"],\n";
+  }
+  build << ")\n\n";
+
+  // The harness main is compiled here rather than depended on: the game and
+  // the entry header are local_defines, and those do not reach a prebuilt
+  // library.
+  build << "cc_binary(\n"
+           "    name = \"bot\",\n"
+        << "    srcs = [\"" << harness.main_src() << "\"],\n"
+        << "    local_defines = [\n"
+        << "        r'CANDIDATE_ENTRY_HEADER=\\\"" << entry_path << "\\\"',\n";
+  if (!game_define.empty()) {
+    build << "        \"" << game_define << "\",\n";
+  }
+  build << "    ],\n"
+           "    deps = [\n";
+  for (const std::string &dep : bot_deps) {
     build << "        \"" << dep << "\",\n";
   }
   build << "    ],\n"
-        << "    local_defines = [\"" << game_define << "\"],\n"
-        << ")\n\n";
-
-  // candidate_main.cc is compiled here rather than depended on: the game and
-  // the entry header are local_defines, and those do not reach a prebuilt
-  // library.
-  build
-      << "cc_binary(\n"
-         "    name = \"bot\",\n"
-         "    srcs = "
-         "[\"//game_mcts/tournament_server/"
-         "candidate_api:candidate_main.cc\"],\n"
-      << "    local_defines = [\n"
-      << "        r'CANDIDATE_ENTRY_HEADER=\\\"" << entry_path << "\\\"',\n"
-      << "        \"" << game_define << "\",\n"
-      << "    ],\n"
-         "    deps = [\n"
-         "        \":strategy\",\n"
-         "        "
-         "\"//game_mcts/tournament_server/candidate_api:candidate_api\",\n"
-         "        \"//game_mcts/tournament_server/client:remote_client\",\n"
-         "        "
-         "\"//game_mcts/tournament_server/proto:tournament_broker_cc_grpc\",\n"
-         "        \"@abseil-cpp//absl/flags:flag\",\n"
-         "        \"@abseil-cpp//absl/flags:parse\",\n"
-         "        \"@abseil-cpp//absl/log\",\n"
-         "        \"@abseil-cpp//absl/log:initialize\",\n"
-         "        \"@grpc//:grpc++\",\n"
-         "    ],\n"
-         ")\n";
+           ")\n";
   return build.str();
 }
 

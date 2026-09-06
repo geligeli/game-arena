@@ -19,6 +19,7 @@ cc_library(
     name = "generated_build",
     srcs = ["generated_build.cc"],
     hdrs = ["generated_build.h"],
+    deps = ["//game_mcts/tournament_server/proto:problem_cc_proto"],
 )
 
 cc_test(

@@ -1,7 +1,7 @@
 // The problem server: one process per problem, and a pure coordinator.
 /*
 bazel run //game_mcts/tournament_server/server:problem_server -- \
-    --problem_config=game_mcts/tournament_server/problems/risk2.textproto \
+    --problem_config=game_mcts/tournament_server/problems/nim.textproto \
     --data_dir=tournament_data --base_commit=$(git rev-parse HEAD)
 */
 //
@@ -229,7 +229,7 @@ auto main(int argc, char **argv) -> int {
   tournament_arena::SubmissionRules rules;
   rules.policy = problem->submission();
   rules.files_submit_dir = problem->submission().files_submit_dir();
-  rules.game = problem->has_match() ? problem->match().game() : "";
+  rules.harness = problem->submission().harness();
   tournament_arena::CandidateStore candidates(
       data_dir / "candidates", tournament_arena::CandidateLimits{}, rules);
   candidates.Load();

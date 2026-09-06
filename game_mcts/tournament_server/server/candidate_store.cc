@@ -28,13 +28,6 @@ auto NowUnixMs() -> int64_t {
 constexpr std::array<std::string_view, 5> kAllowedExtensions = {
     ".h", ".hpp", ".cc", ".cpp", ".inl"};
 
-// Bazel labels a candidate may name in extra_deps. Anything outside this set
-// is refused: the arena is not a general build service, and a dep on an
-// arbitrary external repo is a way to run arbitrary code during the build.
-constexpr std::array<std::string_view, 4> kAllowedDepPrefixes = {
-    "//game_mcts/core/mcts:", "//game_mcts/games/risk:",
-    "//game_mcts/games/risk/strategies:", "@abseil-cpp//"};
-
 auto JsonEscape(const std::string &s) -> std::string {
   std::string out;
   out.reserve(s.size());
@@ -268,15 +261,20 @@ auto CandidateStore::Validate(const proto::SubmitRequest &request,
                "' is not among the submitted files";
       return false;
     }
+    const auto &allowed_prefixes = rules_.policy.allowed_dep_prefixes();
     for (const std::string &dep : request.extra_deps()) {
-      const bool allowed = std::any_of(
-          kAllowedDepPrefixes.begin(), kAllowedDepPrefixes.end(),
-          [&](std::string_view prefix) { return dep.rfind(prefix, 0) == 0; });
+      const bool allowed =
+          std::any_of(allowed_prefixes.begin(), allowed_prefixes.end(),
+                      [&](const std::string &prefix) {
+                        return !prefix.empty() && dep.rfind(prefix, 0) == 0;
+                      });
       if (!allowed) {
-        *error = "dependency '" + dep +
-                 "' is not allowed (permitted: //game_mcts/core/mcts:, "
-                 "//game_mcts/games/risk:, //game_mcts/games/risk/strategies:, "
-                 "@abseil-cpp//)";
+        std::string permitted;
+        for (const std::string &prefix : allowed_prefixes) {
+          permitted += (permitted.empty() ? "" : ", ") + prefix;
+        }
+        *error = "dependency '" + dep + "' is not allowed (permitted: " +
+                 (permitted.empty() ? "none" : permitted) + ")";
         return false;
       }
     }
@@ -350,16 +348,14 @@ auto CandidateStore::PatchForLocked(
   // The BUILD is generated, never submitted: a submitter who could write their
   // own could write a genrule, and a genrule runs arbitrary code at build time.
   const std::string build = GenerateCandidateBuild(
-      rules_.files_submit_dir, candidate_id,
-      rules_.game.empty() ? request.game() : rules_.game, paths,
+      rules_.files_submit_dir, candidate_id, rules_.harness, paths,
       request.entry_header(),
       {request.extra_deps().begin(), request.extra_deps().end()});
   if (build.empty()) {
     *error =
-        "cannot generate a BUILD file for this submission (unknown game '" +
-        request.game() +
-        "', or an entry header that is not one of the "
-        "submitted files)";
+        "cannot generate a BUILD file for this submission (an entry header "
+        "that is not one of the submitted files, or a problem with no "
+        "submission.harness configured)";
     return std::nullopt;
   }
   files.push_back({root + "/BUILD", build});

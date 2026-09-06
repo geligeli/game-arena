@@ -36,9 +36,15 @@ auto MakeRequest(const std::string &name = "My Bot") -> proto::SubmitRequest {
 // that admits that directory.
 auto MakeRules() -> SubmissionRules {
   SubmissionRules rules;
-  rules.files_submit_dir = "game_mcts/tournament_server/candidates";
-  rules.game = "risk2";
-  rules.policy.add_allow_paths("game_mcts/tournament_server/candidates/**");
+  rules.files_submit_dir = "game_mcts/arena/candidates";
+  rules.policy.add_allowed_dep_prefixes("//problem/lib:");
+  rules.policy.add_allowed_dep_prefixes("//game_mcts/core/mcts:");
+  rules.policy.add_allowed_dep_prefixes("//game_mcts/games/risk:");
+  rules.policy.add_allowed_dep_prefixes("//game_mcts/games/risk/strategies:");
+  rules.policy.add_allowed_dep_prefixes("@abseil-cpp//");
+  rules.harness.set_api_dep("//problem/harness:api");
+  rules.harness.set_main_src("//problem/harness:main.cc");
+  rules.policy.add_allow_paths("game_mcts/arena/candidates/**");
   return rules;
 }
 
@@ -77,7 +83,7 @@ TEST_F(CandidateStoreTest, StoresSourcesAsReadableFiles) {
       << "the submitted header and its generated BUILD";
   const std::filesystem::path source =
       dir_ / candidate->candidate_id() / "src" /
-      ("game_mcts/tournament_server/candidates/" + candidate->candidate_id() +
+      ("game_mcts/arena/candidates/" + candidate->candidate_id() +
        "/strategy.h");
   ASSERT_TRUE(std::filesystem::exists(source));
   std::ifstream in(source);
@@ -85,11 +91,10 @@ TEST_F(CandidateStoreTest, StoresSourcesAsReadableFiles) {
                             std::istreambuf_iterator<char>());
   EXPECT_EQ(content, "#pragma once\n// strategy\n");
 
-  const auto read_back =
-      store_->ReadSource(candidate->candidate_id(),
-                         "game_mcts/tournament_server/candidates/" +
-                             candidate->candidate_id() + "/strategy.h",
-                         &error);
+  const auto read_back = store_->ReadSource(
+      candidate->candidate_id(),
+      "game_mcts/arena/candidates/" + candidate->candidate_id() + "/strategy.h",
+      &error);
   ASSERT_TRUE(read_back.has_value()) << error;
   EXPECT_EQ(*read_back, content);
 
@@ -233,9 +238,8 @@ TEST_F(CandidateStoreTest, SynthesizedPatchAppliesWithGit) {
       << *patch;
 
   // Everything lands where the generated build targets say it will.
-  const std::filesystem::path root = repo /
-                                     "game_mcts/tournament_server/candidates" /
-                                     candidate->candidate_id();
+  const std::filesystem::path root =
+      repo / "game_mcts/arena/candidates" / candidate->candidate_id();
   EXPECT_TRUE(std::filesystem::is_regular_file(root / "strategy.h"));
   EXPECT_TRUE(std::filesystem::is_regular_file(root / "nested/helper.h"));
   EXPECT_TRUE(std::filesystem::is_regular_file(root / "BUILD"));
@@ -267,11 +271,10 @@ TEST_F(CandidateStoreTest, SurvivesRestart) {
   EXPECT_EQ(loaded->status(), proto::Candidate::READY);
   EXPECT_EQ(loaded->entry_header(), "strategy.h");
 
-  const auto source =
-      reopened.ReadSource(candidate->candidate_id(),
-                          "game_mcts/tournament_server/candidates/" +
-                              candidate->candidate_id() + "/strategy.h",
-                          &error);
+  const auto source = reopened.ReadSource(
+      candidate->candidate_id(),
+      "game_mcts/arena/candidates/" + candidate->candidate_id() + "/strategy.h",
+      &error);
   ASSERT_TRUE(source.has_value()) << error;
 }
 

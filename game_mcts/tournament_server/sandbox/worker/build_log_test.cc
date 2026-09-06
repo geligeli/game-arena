@@ -13,7 +13,7 @@ namespace {
 
 TEST(CompactBuildLogTest, KeepsCompilerErrorsAndDropsProgressNoise) {
   const std::string log = R"(
-INFO: Analyzed target //game_mcts/tournament_server/candidates/bot-abc123:bot
+INFO: Analyzed target //game_mcts/arena/candidates/bot-abc123:bot
 [1,234 / 5,678] Compiling cpp/risk/risk_game.cpp; 3s processwrapper-sandbox
 [2,345 / 5,678] Compiling cpp/mcts/mcts.cpp; 1s processwrapper-sandbox
 In file included from cpp/tournament_server/candidates/bot-abc123/strategy.h:5:
@@ -87,18 +87,17 @@ TEST(ParseResultLineTest, HandlesNegativeAndMissingResults) {
   // A partial line is not a result.
   EXPECT_FALSE(ParseResultLine("RESULT games=5 wins=3\n", &tally));
 
-  ASSERT_TRUE(
-      ParseResultLine("RESULT games=1 wins=0 draws=0 losses=1 elo=-3.5\n",
-                      &tally));
+  ASSERT_TRUE(ParseResultLine(
+      "RESULT games=1 wins=0 draws=0 losses=1 elo=-3.5\n", &tally));
   EXPECT_DOUBLE_EQ(tally.elo, -3.5);
 }
 
 TEST(ParseResultLineTest, LastResultWins) {
   RunTally tally;
-  ASSERT_TRUE(ParseResultLine(
-      "RESULT games=1 wins=1 draws=0 losses=0 elo=1500.0\n"
-      "RESULT games=2 wins=0 draws=0 losses=2 elo=1470.0\n",
-      &tally));
+  ASSERT_TRUE(
+      ParseResultLine("RESULT games=1 wins=1 draws=0 losses=0 elo=1500.0\n"
+                      "RESULT games=2 wins=0 draws=0 losses=2 elo=1470.0\n",
+                      &tally));
   EXPECT_EQ(tally.games, 2);
   EXPECT_DOUBLE_EQ(tally.elo, 1470.0);
 }

@@ -22,28 +22,26 @@
 #include <string>
 #include <vector>
 
-namespace tournament_arena {
+#include "game_mcts/tournament_server/proto/problem.pb.h"
 
-// Where a structured submission is patched into the repo, relative to the
-// workspace root. The generated target is //<dir>/<candidate_id>:bot.
-inline constexpr const char *kDefaultCandidateDir =
-    "game_mcts/tournament_server/candidates";
+namespace tournament_arena {
 
 // The bazel label of a structured submission's bot binary.
 auto CandidateTarget(const std::string &dir,
                      const std::string &candidate_id) -> std::string;
 
 // The BUILD file contents. Returns an empty string when the submission is
-// unusable: no files, an entry header that is not one of them, or a game the
-// candidate harness cannot be compiled for.
+// unusable: no files, an entry header that is not one of them, or a harness
+// that does not say what to compile against.
+//
+// |harness| supplies every label that ends up in the generated BUILD. It comes
+// from the problem config rather than from here on purpose: which library a
+// solution links is the problem's business, not the arena's.
 auto GenerateCandidateBuild(
     const std::string &dir, const std::string &candidate_id,
-    const std::string &game, const std::vector<std::string> &file_paths,
-    const std::string &entry_header,
+    const proto::CandidateHarness &harness,
+    const std::vector<std::string> &file_paths, const std::string &entry_header,
     const std::vector<std::string> &extra_deps) -> std::string;
-
-// The game-selection define for a registry key. Empty for an unknown game.
-auto CandidateGameDefine(const std::string &game) -> std::string;
 
 }  // namespace tournament_arena
 

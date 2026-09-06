@@ -8,18 +8,33 @@
 namespace tournament_arena {
 namespace {
 
-constexpr char kDir[] = "game_mcts/tournament_server/candidates";
+// Deliberately not this repo's labels. The coordinator generates a BUILD out
+// of whatever the problem config names; if these were game_mcts paths, a
+// regression that reintroduced a hardcoded one would still pass.
+constexpr char kDir[] = "solutions";
+constexpr char kApiDep[] = "//problem/harness:api";
+constexpr char kMainSrc[] = "//problem/harness:main.cc";
+
+auto Harness(const std::string &game_define = "PROBLEM_GAME_ALPHA")
+    -> proto::CandidateHarness {
+  proto::CandidateHarness harness;
+  harness.set_api_dep(kApiDep);
+  harness.set_main_src(kMainSrc);
+  harness.add_bot_deps("//problem/harness:client");
+  harness.set_game_define(game_define);
+  return harness;
+}
 
 auto Build(const std::vector<std::string> &files,
            const std::string &entry = "strategy.h",
            const std::vector<std::string> &deps = {},
-           const std::string &game = "risk2") -> std::string {
-  return GenerateCandidateBuild(kDir, "c-1", game, files, entry, deps);
+           const proto::CandidateHarness &harness = Harness()) -> std::string {
+  return GenerateCandidateBuild(kDir, "c-1", harness, files, entry, deps);
 }
 
 TEST(CandidateTargetTest, LabelsTheGeneratedBinary) {
   EXPECT_EQ(CandidateTarget(kDir, "my-bot-abc123"),
-            "//game_mcts/tournament_server/candidates/my-bot-abc123:bot");
+            "//solutions/my-bot-abc123:bot");
 }
 
 TEST(GenerateCandidateBuildTest, WiresTheEntryHeaderAndGameIntoTheBinary) {
@@ -28,11 +43,12 @@ TEST(GenerateCandidateBuildTest, WiresTheEntryHeaderAndGameIntoTheBinary) {
   EXPECT_NE(build.find("name = \"bot\""), std::string::npos) << build;
   // The harness reaches the submission through this define, not a dep: the game
   // and the entry header are local_defines, which do not reach a prebuilt lib.
-  EXPECT_NE(build.find("CANDIDATE_ENTRY_HEADER=\\\"game_mcts/tournament_server/"
-                       "candidates/c-1/strategy.h\\\""),
-            std::string::npos)
+  EXPECT_NE(
+      build.find("CANDIDATE_ENTRY_HEADER=\\\"solutions/c-1/strategy.h\\\""),
+      std::string::npos)
       << build;
-  EXPECT_NE(build.find("CANDIDATE_GAME_RISK2"), std::string::npos) << build;
+  EXPECT_NE(build.find("PROBLEM_GAME_ALPHA"), std::string::npos) << build;
+  EXPECT_NE(build.find(kMainSrc), std::string::npos) << build;
 }
 
 TEST(GenerateCandidateBuildTest, SeparatesHeadersFromCompiledSources) {
@@ -51,21 +67,39 @@ TEST(GenerateCandidateBuildTest, SeparatesHeadersFromCompiledSources) {
 
 TEST(GenerateCandidateBuildTest, IncludesAllowedExtraDeps) {
   const std::string build =
-      Build({"strategy.h"}, "strategy.h", {"//game_mcts/core/mcts:mcts"});
-  EXPECT_NE(build.find("//game_mcts/core/mcts:mcts"), std::string::npos)
-      << build;
+      Build({"strategy.h"}, "strategy.h", {"//problem/lib:extra"});
+  EXPECT_NE(build.find("//problem/lib:extra"), std::string::npos) << build;
   // The harness dep is always present and always first.
-  EXPECT_NE(build.find("//game_mcts/tournament_server/candidate_api:"
-                       "candidate_api"),
-            std::string::npos)
+  EXPECT_NE(build.find(kApiDep), std::string::npos) << build;
+}
+
+// The whole point of the harness config: which library a solution links is the
+// problem's business, and two problems may answer differently.
+TEST(GenerateCandidateBuildTest, TakesEveryLabelFromTheProblemConfig) {
+  proto::CandidateHarness other;
+  other.set_api_dep("//other/problem:sdk");
+  other.set_main_src("//other/problem:entry.cc");
+  other.add_bot_deps("//other/problem:runtime");
+  other.set_game_define("OTHER_GAME");
+
+  const std::string build = Build({"strategy.h"}, "strategy.h", {}, other);
+  EXPECT_NE(build.find("//other/problem:sdk"), std::string::npos) << build;
+  EXPECT_NE(build.find("//other/problem:entry.cc"), std::string::npos) << build;
+  EXPECT_NE(build.find("//other/problem:runtime"), std::string::npos) << build;
+  EXPECT_NE(build.find("OTHER_GAME"), std::string::npos) << build;
+  EXPECT_EQ(build.find(kApiDep), std::string::npos)
+      << "no label may survive from anywhere but the config:\n"
       << build;
 }
 
-TEST(GenerateCandidateBuildTest, SelectsTheGameByRegistryKey) {
+// A harness serving a single game needs no selection define, and emitting an
+// empty one would be a build error rather than a no-op.
+TEST(GenerateCandidateBuildTest, OmitsTheGameDefineWhenUnset) {
   const std::string build =
-      Build({"strategy.h"}, "strategy.h", {}, "tictactoe");
-  EXPECT_NE(build.find("CANDIDATE_GAME_TICTACTOE"), std::string::npos) << build;
-  EXPECT_EQ(build.find("CANDIDATE_GAME_RISK2"), std::string::npos) << build;
+      Build({"strategy.h"}, "strategy.h", {}, Harness(/*game_define=*/""));
+  ASSERT_FALSE(build.empty());
+  EXPECT_EQ(build.find("local_defines = [\"\"]"), std::string::npos) << build;
+  EXPECT_NE(build.find("CANDIDATE_ENTRY_HEADER"), std::string::npos) << build;
 }
 
 // Every one of these is also rejected at submit time; regenerating the check
@@ -76,8 +110,9 @@ TEST(GenerateCandidateBuildTest, RefusesUnusableSubmissions) {
   EXPECT_TRUE(Build({"strategy.h"}, "").empty()) << "no entry header";
   EXPECT_TRUE(Build({"strategy.h"}, "other.h").empty())
       << "entry header is not one of the files";
-  EXPECT_TRUE(Build({"strategy.h"}, "strategy.h", {}, "chess").empty())
-      << "unknown game";
+  EXPECT_TRUE(Build({"strategy.h"}, "strategy.h", {}, proto::CandidateHarness{})
+                  .empty())
+      << "a problem with no harness configured has no structured form";
 }
 
 TEST(GenerateCandidateBuildTest, IsStableAcrossFileOrder) {
@@ -87,13 +122,6 @@ TEST(GenerateCandidateBuildTest, IsStableAcrossFileOrder) {
             Build({"c.cc", "b.h", "a.h"}, "a.h"));
   EXPECT_EQ(Build({"a.h"}, "a.h", {"//x:y", "//p:q"}),
             Build({"a.h"}, "a.h", {"//p:q", "//x:y"}));
-}
-
-TEST(CandidateGameDefineTest, MapsKnownGamesOnly) {
-  EXPECT_EQ(CandidateGameDefine("risk2"), "CANDIDATE_GAME_RISK2");
-  EXPECT_EQ(CandidateGameDefine("tictactoe"), "CANDIDATE_GAME_TICTACTOE");
-  EXPECT_TRUE(CandidateGameDefine("chess").empty());
-  EXPECT_TRUE(CandidateGameDefine("").empty());
 }
 
 }  // namespace

@@ -37,11 +37,8 @@ TEST(ShippedProblemsTest, EveryConfigLoads) {
   }
 
   // A glob that silently matches nothing would make this test pass forever.
-  EXPECT_GE(loaded.size(), 2u)
-      << "expected the shipped match and grade problems";
-  EXPECT_NE(std::find(loaded.begin(), loaded.end(), "risk2"), loaded.end());
-  EXPECT_NE(std::find(loaded.begin(), loaded.end(), "mcts-bench"),
-            loaded.end());
+  EXPECT_GE(loaded.size(), 1u) << "expected the arena's reference problem";
+  EXPECT_NE(std::find(loaded.begin(), loaded.end(), "nim"), loaded.end());
 }
 
 }  // namespace

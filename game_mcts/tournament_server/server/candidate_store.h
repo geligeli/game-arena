@@ -58,9 +58,9 @@ struct SubmissionRules {
   // <files_submit_dir>/<candidate_id>/<path>. Empty rejects the structured
   // form, requiring every submission to arrive as a patch.
   std::string files_submit_dir;
-  // Game key the generated BUILD compiles the candidate harness for. Only used
-  // by the structured form.
-  std::string game;
+  // What the generated BUILD compiles a structured submission against. Comes
+  // from the problem config: the arena does not know what a solution links.
+  proto::CandidateHarness harness;
 };
 
 class CandidateStore {
