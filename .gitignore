@@ -4,7 +4,6 @@
 **/*_pb2_grpc.py
 **/.ipynb_checkpoints
 **/.nfs*
-**/MODULE.bazel.lock
 **/bazel-**
 .cache
 .ipynb_checkpoints
