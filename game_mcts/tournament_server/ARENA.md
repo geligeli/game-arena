@@ -26,17 +26,17 @@ registration, nothing to configure on the server.
 
 ```sh
 # 1. The server. --base_commit is the tree candidates are built against.
-bazel run //game_mcts/tournament_server:tournament_server -- \
+bazel run //game_mcts/tournament_server/server:tournament_server -- \
     --data_dir=tournament_data --base_commit=$(git rev-parse HEAD)
 
 # 2. One or more workers, here or on any other host with the repo and bazel.
-bazel run //game_mcts/tournament_server/sandbox_worker:sandbox_worker -- \
+bazel run //game_mcts/tournament_server/sandbox/worker:sandbox_worker -- \
     --server=<arena-host>:50051 --repo=/large_nfs/game-mcts --slots=2
 
 # Same worker, but each build and run happens in a throwaway container.
 # --repo is mounted into the containers, so it must be a local path; the image
 # must carry the bazel that matches the repo's MODULE.bazel.lock.
-bazel run //game_mcts/tournament_server/sandbox_worker:sandbox_worker -- \
+bazel run //game_mcts/tournament_server/sandbox/worker:sandbox_worker -- \
     --server=<arena-host>:50051 --repo=/large_nfs/game-mcts --slots=2 \
     --backend=docker --docker_image=<image-with-bazel>
 ```
@@ -52,7 +52,7 @@ One header, one function — see the "Writing a candidate" section of
 loop needs nothing from the arena:
 
 ```sh
-bazel run //game_mcts/tournament_server/candidate:dev_bot -- \
+bazel run //game_mcts/tournament_server/candidate_api:dev_bot -- \
     --name=me-dev --server=localhost:50051 --opponent=builtin:mcts --games=5
 ```
 
@@ -90,7 +90,7 @@ boundary**. What is enforced in both:
   `.h/.hpp/.cc/.cpp/.inl`; the generated BUILD refuses to name a file that was
   not submitted.
 - Bazel deps are restricted to an allowlist
-  (`//game_mcts/cpp/mcts:`, `//game_mcts/cpp/risk:`, `//game_mcts/cpp/risk/strategies:`,
+  (`//game_mcts/core/mcts:`, `//game_mcts/games/risk:`, `//game_mcts/games/risk/strategies:`,
   `@abseil-cpp//`). Without this, a candidate could depend on a target with a
   `genrule` and run arbitrary code at build time.
 - Size and count caps on a submission; wall-clock timeouts on the build and the
@@ -136,7 +136,7 @@ it are load-bearing for an agent loop that has to stay cheap:
 | `arena_source(id[, path])` | any rival's manifest or file — all source is readable |
 | `arena_challenge(...)` | more games vs a builtin, a candidate, `top` or `ladder` |
 
-Regenerate the Python stubs after changing `arena.proto`:
+Regenerate the Python stubs after changing `proto/arena.proto`:
 
 ```sh
 mcp_servers/arena_mcp/make_stubs.sh

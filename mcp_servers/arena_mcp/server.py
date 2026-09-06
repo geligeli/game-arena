@@ -24,7 +24,7 @@ import grpc
 from mcp.server.fastmcp import FastMCP
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "_pb"))
-from game_mcts.tournament_server import arena_pb2, arena_pb2_grpc  # noqa: E402
+from game_mcts.tournament_server.proto import arena_pb2, arena_pb2_grpc  # noqa: E402
 
 REPO_ROOT = Path(os.environ.get("ARENA_MCP_REPO_ROOT", Path(__file__).resolve().parents[2]))
 ARENA_TARGET = os.environ.get("ARENA_MCP_TARGET", "localhost:50051")
@@ -63,7 +63,7 @@ def _rpc_error(error: grpc.RpcError) -> str:
     if code == grpc.StatusCode.UNAVAILABLE:
         return (
             f"ERROR: no arena at {ARENA_TARGET}. Start it with:\n"
-            "  bazel run //game_mcts/tournament_server:tournament_server -- "
+            "  bazel run //game_mcts/tournament_server/server:tournament_server -- "
             "--data_dir=tournament_data"
         )
     return f"ERROR: {error.details()}"
@@ -119,7 +119,7 @@ START FROM
   It is the stock Risk MCTS bot plus a commented custom-proposer skeleton.
 
 ITERATE LOCALLY (no submission needed; play the live arena)
-  bazel run //game_mcts/tournament_server/candidate:dev_bot -- \\
+  bazel run //game_mcts/tournament_server/candidate_api:dev_bot -- \\
       --name=me-dev --server={ARENA_TARGET} --opponent=builtin:mcts --games=5
 
 SUBMIT (pass paths, not contents -- the arena reads them off disk)
@@ -136,13 +136,13 @@ LEARN FROM RIVALS
 LIMITS
   files       <= 32 per submission, 512 KiB each, 2 MiB total
   extensions  .h .hpp .cc .cpp .inl only; relative paths, no ".."
-  deps        //game_mcts/cpp/mcts:*, //game_mcts/cpp/risk:*,
-              //game_mcts/cpp/risk/strategies:*, @abseil-cpp//
+  deps        //game_mcts/core/mcts:*, //game_mcts/games/risk:*,
+              //game_mcts/games/risk/strategies:*, @abseil-cpp//
   games       <= 200 per challenge
 
 TWO TRAPS THAT COST REAL TIME
   - A proposer's support_size() must mirror sample()'s branches exactly, or
-    DedupSampler asserts. See game_mcts/cpp/mcts/game_traits.h.
+    DedupSampler asserts. See game_mcts/core/mcts/game_traits.h.
   - An attack-averse proposer stalls rollouts to the move cap: games take
     minutes and come back as draws. Always sanity-check against builtin:random.
 """

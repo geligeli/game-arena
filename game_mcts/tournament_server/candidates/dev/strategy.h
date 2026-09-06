@@ -5,7 +5,7 @@
 // dev_bot target builds. Copy this directory, edit, iterate against a live
 // broker, then submit it:
 //
-//   bazel run //game_mcts/tournament_server/candidate:dev_bot --
+//   bazel run //game_mcts/tournament_server/candidate_api:dev_bot --
 //       --name=me-dev --server=localhost:50051 --opponent=builtin:mcts
 //       --games=5
 //
@@ -17,7 +17,7 @@
 
 #include <random>
 
-#include "game_mcts/tournament_server/candidate/candidate_api.h"
+#include "game_mcts/tournament_server/candidate_api/candidate_api.h"
 
 // This example is the stock Risk MCTS bot: the repo's proposer expands the
 // tree, and battles in rollouts are resolved by their expected outcome rather
@@ -43,8 +43,8 @@ inline auto MakePolicy(const candidate::Params &params) -> candidate::policy_t {
 // ---------------------------------------------------------------------------
 //
 // The proposer is where most of the strategy lives: it decides which moves the
-// search ever considers. See game_mcts/cpp/mcts/README.md (game-mcts repo)
-// and cpp/risk/strategies/risk_proposer.h for the full contract. The shape is:
+// search ever considers. See game_mcts/core/mcts/README.md (game-mcts repo)
+// and games/risk/strategies/risk_proposer.h for the full contract. The shape is:
 //
 //   struct MyProposer {
 //     using game_t = candidate::game_t;
@@ -64,9 +64,9 @@ inline auto MakePolicy(const candidate::Params &params) -> candidate::policy_t {
 // Two traps that cost real debugging time, both documented in-tree:
 //
 //  - support_size() must mirror sample()'s branches exactly, or DedupSampler
-//    asserts (game_mcts/cpp/mcts/game_traits.h in the game-mcts repo).
+//    asserts (game_mcts/core/mcts/game_traits.h in the game-mcts repo).
 //  - A proposer that avoids attacking stalls rollouts until the move cap, so
-//    games take minutes and finish as draws (game_mcts/cpp/risk/tuning_result.md).
+//    games take minutes and finish as draws (game_mcts/games/risk/tuning_result.md).
 //    Always sanity-check against builtin:random before submitting.
 
 #endif  // RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATES_DEV_STRATEGY_H

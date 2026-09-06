@@ -8,7 +8,7 @@ disk, and serves a leaderboard over HTTP.
 ## Running
 
 ```
-bazel run //game_mcts/tournament_server:tournament_server -- \
+bazel run //game_mcts/tournament_server/server:tournament_server -- \
     --grpc_port=50051 --http_port=8080 --data_dir=tournament_data \
     --turn_timeout_ms=10000 --game_time_budget_ms=0 \
     --rendezvous_timeout_ms=60000 --max_moves_per_game=50000 \
@@ -117,7 +117,7 @@ require client input.
 valid moves):
 
 ```
-bazel run //game_mcts/tournament_server:random_client -- \
+bazel run //game_mcts/tournament_server/client:random_client -- \
     --name=my-bot --game=tictactoe --opponent=builtin:minimax
 ```
 
@@ -146,7 +146,7 @@ PlayRemoteGames<game_t>(stub.get(), "deep-bot", "risk2", "any", 1, policy,
 A *candidate* is a strategy the arena builds and rates automatically — see
 [ARENA.md](ARENA.md) for the system around it (the registry, the sandbox fleet,
 and the MCP tools agents drive it with). It is one header that includes
-`candidate/candidate_api.h` and defines exactly one function:
+`candidate_api/candidate_api.h` and defines exactly one function:
 
 ```cpp
 auto MakePolicy(const candidate::Params &params) -> candidate::policy_t;
@@ -161,13 +161,13 @@ back rather than throwing, so an unrecognised knob cannot keep a candidate out
 of the tournament.
 
 Everything else — connecting, the handshake, deserializing state, serializing
-your action, reporting the result — is `candidate/candidate_main.cc`, compiled
+your action, reporting the result — is `candidate_api/candidate_main.cc`, compiled
 unchanged around your header. Start from
 `candidates/dev/strategy.h`, which is the stock Risk MCTS bot plus a
 commented proposer skeleton, and iterate against a live broker:
 
 ```
-bazel run //game_mcts/tournament_server/candidate:dev_bot -- \
+bazel run //game_mcts/tournament_server/candidate_api:dev_bot -- \
     --name=me-dev --server=localhost:50051 --opponent=builtin:mcts \
     --games=5 --params=iterations=800
 ```
@@ -199,6 +199,6 @@ them.
 ## Adding a game
 
 Any type satisfying `mcts::SerializableGame` (see
-`game_mcts/cpp/mcts/serialization.h` in the game-mcts repo) can be
+`game_mcts/core/mcts/serialization.h` in the game-mcts repo) can be
 registered: add one `GameDescriptor` entry in `game_registry.cc` with a
 session factory and a builtin factory.

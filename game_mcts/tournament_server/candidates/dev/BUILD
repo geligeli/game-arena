@@ -7,5 +7,5 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "strategy",
     hdrs = ["strategy.h"],
-    deps = ["//game_mcts/tournament_server/candidate:candidate_api"],
+    deps = ["//game_mcts/tournament_server/candidate_api:candidate_api"],
 )

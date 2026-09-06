@@ -17,7 +17,7 @@
 #include <random>
 #include <string>
 
-#include "game_mcts/cpp/mcts/game_traits.h"
+#include "game_mcts/core/mcts/game_traits.h"
 
 namespace benchgame {
 

@@ -3,7 +3,7 @@
 
 #include "game_mcts/tournament_server/benchgame/bench.pb.h"
 #include "game_mcts/tournament_server/benchgame/bench_game.h"
-#include "game_mcts/cpp/mcts/serialization.h"
+#include "game_mcts/core/mcts/serialization.h"
 
 namespace mcts {
 

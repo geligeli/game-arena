@@ -21,7 +21,7 @@ cc_proto_library(
 cc_library(
     name = "bench_game",
     hdrs = ["bench_game.h"],
-    deps = ["@game_mcts//game_mcts/cpp/mcts:game_traits"],
+    deps = ["@game_mcts//game_mcts/core/mcts:game_traits"],
 )
 
 cc_library(
@@ -30,6 +30,6 @@ cc_library(
     deps = [
         ":bench_cc_proto",
         ":bench_game",
-        "@game_mcts//game_mcts/cpp/mcts:serialization",
+        "@game_mcts//game_mcts/core/mcts:serialization",
     ],
 )
