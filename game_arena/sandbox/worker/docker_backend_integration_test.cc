@@ -190,8 +190,7 @@ class DockerBackendIntegrationTest : public ::testing::Test {
     order.set_order_id(id);
     order.set_game("nim");
     order.set_base_commit(kFakeCommit);
-    order.set_referee_target(
-        "//game_arena/testgame:match_referee");
+    order.set_referee_target("//game_arena/testgame:match_referee");
     order.set_opponent_spec("builtin:random");
     order.set_num_games(2);
 
@@ -245,6 +244,34 @@ TEST_F(DockerBackendIntegrationTest, WarmupClonesOneLowerDirPerSlot) {
       std::filesystem::is_directory(root_ / "work" / "slot0" / "overlay"));
   EXPECT_TRUE(std::filesystem::is_directory(root_ / "work" / "slot0" /
                                             "bazel_output_base"));
+}
+
+// The problem's registry_options have to survive all the way to the referee's
+// argv. They used to not: the config carried an mcts_iterations field that the
+// coordinator defaulted and no worker ever passed on, so a problem asking for a
+// stronger builtin was silently ignored because the referee's own flag default
+// happened to match.
+TEST_F(DockerBackendIntegrationTest, RegistryOptionsReachTheReferee) {
+  proto::WorkOrder order = MakeOrder("opts-1", "c-ok");
+  (*order.mutable_registry_options())["mcts_iterations"] = "800";
+  (*order.mutable_registry_options())["depth"] = "7";
+  ASSERT_TRUE(backend_->RunOrder(0, order).build_ok);
+
+  ExpectLogContains(ReadFile(root_ / "docker.log"),
+                    "'--registry_options=depth=7,mcts_iterations=800'");
+}
+
+// And an order that sets none must produce exactly the argv it always did.
+TEST_F(DockerBackendIntegrationTest, NoRegistryOptionsMeansNoFlag) {
+  // The fake docker log is shared by the whole suite, so look only at what
+  // this order appended to it.
+  const std::size_t before = ReadFile(root_ / "docker.log").size();
+  ASSERT_TRUE(backend_->RunOrder(0, MakeOrder("noopts-1", "c-ok")).build_ok);
+
+  const std::string mine = ReadFile(root_ / "docker.log").substr(before);
+  ASSERT_NE(mine.find("saw-0-noopts-1-referee"), std::string::npos)
+      << "the order did not run; nothing was asserted";
+  EXPECT_EQ(mine.find("--registry_options"), std::string::npos) << mine;
 }
 
 TEST_F(DockerBackendIntegrationTest, OrderBuildsInContainerAndParsesResult) {

@@ -56,6 +56,10 @@ struct SchedulerConfig {
   // A graded problem's command and how to fold its runs, templated the same
   // way. Absent for a match problem.
   std::optional<proto::GradeOrder> grade;
+  // ProblemConfig.match.registry_options, stamped on every order and forwarded
+  // to the referee untouched. The coordinator never reads these: what they
+  // mean is known only to the registry linked into the referee.
+  google::protobuf::Map<std::string, std::string> registry_options;
   // Stamped on every order: the problem, not the worker, knows whether its
   // submissions may run arbitrary code at build time.
   bool require_container = false;

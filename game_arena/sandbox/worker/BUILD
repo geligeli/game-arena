@@ -72,6 +72,7 @@ cc_library(
     srcs = ["local_backend.cc"],
     hdrs = ["local_backend.h"],
     deps = [
+        "//game_arena/common/kv_options",
         ":build_log",
         ":checkout",
         ":metric_report",
@@ -91,6 +92,7 @@ cc_library(
     srcs = ["docker_backend.cc"],
     hdrs = ["docker_backend.h"],
     deps = [
+        "//game_arena/common/kv_options",
         ":build_log",
         ":checkout",
         ":metric_report",

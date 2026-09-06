@@ -14,10 +14,9 @@
 
 namespace tournament_broker {
 
-void SetDefaultMctsIterations(int /*iterations*/) {
-  // Nim has no search-based builtin, so the referee's --mcts_iterations has
-  // nothing to configure here. Part of the registry interface because the
-  // referee sets it unconditionally; see the note in game_registry.h.
+void SetRegistryOptions(
+    const std::map<std::string, std::string> & /*options*/) {
+  // Nim has nothing to tune. Registries that do read their keys here.
 }
 
 auto GameRegistry() -> const std::map<std::string, GameDescriptor> & {

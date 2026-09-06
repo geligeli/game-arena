@@ -137,6 +137,7 @@ cc_library(
     srcs = ["main.cc"],
     alwayslink = 1,
     deps = [
+        "//game_arena/common/kv_options",
         ":broker_service",
         ":game_registry",
         ":matchmaker",
@@ -161,6 +162,7 @@ cc_library(
     srcs = ["broker_main.cc"],
     alwayslink = 1,
     deps = [
+        "//game_arena/common/kv_options",
         ":broker_service",
         ":game_registry",
         ":matchmaker",

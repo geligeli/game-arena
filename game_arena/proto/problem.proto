@@ -269,8 +269,17 @@ message MatchSpec {
   uint32 max_moves_per_game = 7;
   uint32 timeout_s = 8;
 
-  // Strength of "builtin:mcts" when its spec does not say.
-  uint32 mcts_iterations = 9;
+  // Opaque settings handed to the referee's game registry at startup, e.g.
+  // {"mcts_iterations": "400"} to set the strength of a search-based builtin
+  // when its spec does not say.
+  //
+  // Opaque on purpose: which knobs exist is a property of the registry linked
+  // into the referee, and the arena cannot enumerate them without knowing what
+  // the problem is. A registry ignores keys it does not recognise.
+  map<string, string> registry_options = 10;
+
+  reserved 9;
+  reserved "mcts_iterations";  // was: uint32, superseded by registry_options
 }
 
 // ---------------------------------------------------------------------------

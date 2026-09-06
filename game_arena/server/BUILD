@@ -122,6 +122,7 @@ cc_library(
     srcs = ["problem_config.cc"],
     hdrs = ["problem_config.h"],
     deps = [
+        "//game_arena/common/kv_options",
         "//game_arena/proto:problem_cc_proto",
         "@abseil-cpp//absl/strings",
         "@protobuf//:protobuf",

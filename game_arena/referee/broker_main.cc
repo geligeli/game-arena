@@ -33,6 +33,7 @@ bazel run //game_arena/referee:broker_server -- \
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
+#include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/referee/broker_service.h"
 #include "game_arena/referee/game_registry.h"
 #include "game_arena/referee/matchmaker.h"
@@ -70,8 +71,9 @@ ABSL_FLAG(int, shutdown_grace_s, 5,
           "How long a shutdown waits for in-flight RPCs to finish before "
           "cancelling them");
 ABSL_FLAG(double, k_factor, 32.0, "ELO K factor");
-ABSL_FLAG(int, mcts_iterations, 400,
-          "Default iterations for builtin:mcts opponents");
+ABSL_FLAG(std::string, registry_options, "",
+          "Comma-separated key=value settings for the linked game registry, "
+          "e.g. \"mcts_iterations=400\". Unknown keys are ignored");
 
 namespace {
 
@@ -110,8 +112,8 @@ auto main(int argc, char **argv) -> int {
     return 1;
   }
 
-  tournament_broker::SetDefaultMctsIterations(
-      absl::GetFlag(FLAGS_mcts_iterations));
+  tournament_broker::SetRegistryOptions(
+      kv_options::Parse(absl::GetFlag(FLAGS_registry_options)));
 
   tournament_broker::EloStore elo_store(data_dir / "ratings.pb",
                                         absl::GetFlag(FLAGS_k_factor));

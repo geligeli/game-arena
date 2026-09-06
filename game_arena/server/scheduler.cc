@@ -206,6 +206,7 @@ auto Scheduler::MakeOrderLocked(
   order.set_referee_target(config_.referee_target);
   order.set_match_deadline_s(config_.match_deadline_s);
   order.set_require_container(config_.require_container);
+  *order.mutable_registry_options() = config_.registry_options;
 
   if (!FillSideLocked(candidate, order.mutable_candidate())) {
     return std::nullopt;

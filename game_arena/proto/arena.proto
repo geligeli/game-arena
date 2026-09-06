@@ -402,6 +402,10 @@ message WorkOrder {
   // time must not quietly land on a worker that runs them as its own user.
   bool require_container = 19;
 
+  // ProblemConfig.match.registry_options, forwarded verbatim to the referee.
+  // The worker does not interpret these; only the linked registry does.
+  map<string, string> registry_options = 20;
+
   // A graded order: run this instead of playing anything.
   //
   // Flattened from the problem's GradeSpec rather than embedding it, so this

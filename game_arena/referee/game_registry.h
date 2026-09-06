@@ -17,12 +17,18 @@
 
 namespace tournament_broker {
 
-// Default strength for search-based builtins when the spec does not carry
-// iterations=...; set from the referee's --mcts_iterations at startup. A
-// registry whose builtins do not search implements this as a no-op.
-// TODO: generalise to an opaque per-registry options blob -- the arena should
-// not name a search algorithm.
-void SetDefaultMctsIterations(int iterations);
+// Registry-wide settings from the problem's match.registry_options, applied
+// once at referee startup before any game begins.
+//
+// Opaque key/value on purpose. What is tunable is a property of the registry
+// linked into this binary -- a search-based builtin might take
+// "mcts_iterations", a compiled-in opponent might take nothing at all -- and
+// the arena cannot name those knobs without knowing what the problem is.
+//
+// Every registry must define this; ignore keys you do not recognise, and note
+// that an unknown key is not an error (an older referee must still run a newer
+// problem's orders).
+void SetRegistryOptions(const std::map<std::string, std::string> &options);
 
 auto GameRegistry() -> const std::map<std::string, GameDescriptor> &;
 

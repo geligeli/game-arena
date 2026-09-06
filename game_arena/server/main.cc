@@ -145,6 +145,7 @@ auto SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem)
     config.default_games = static_cast<int>(match.games_per_order());
     config.run_timeout_s = static_cast<int>(match.timeout_s());
     config.referee_target = match.referee_target();
+    config.registry_options = match.registry_options();
     // Kept under the worker's own run timeout, so a stuck match comes back as a
     // partial tally rather than an order-level failure.
     config.match_deadline_s = std::max(1, config.run_timeout_s - 30);

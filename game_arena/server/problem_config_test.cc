@@ -86,7 +86,6 @@ TEST(ProblemConfigTest, AppliesDefaultsAndIsIdempotent) {
   EXPECT_EQ(config->build().timeout_s(), 1800u);
   EXPECT_EQ(config->sandbox().memory_limit_mb(), 4096u);
   EXPECT_EQ(config->match().games_per_order(), 10u);
-  EXPECT_EQ(config->match().mcts_iterations(), 400u);
   EXPECT_EQ(config->clients().default_quota().max_active_evaluations(), 1u);
   EXPECT_EQ(config->clients().default_quota().max_queued_jobs(), 8u);
 

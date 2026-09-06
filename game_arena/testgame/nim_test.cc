@@ -119,7 +119,9 @@ TEST(Registry, ExposesNimThroughTheArenaInterface) {
   std::string error;
   EXPECT_TRUE(descriptor.make_builtin("random", &error).has_value()) << error;
 
-  tournament_broker::SetDefaultMctsIterations(400);  // must be a safe no-op
+  // Must accept anything, including keys it knows nothing about.
+  tournament_broker::SetRegistryOptions(
+      {{"mcts_iterations", "400"}, {"unknown_key", "x"}});
 }
 
 }  // namespace

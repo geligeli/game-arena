@@ -14,6 +14,7 @@
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "game_arena/common/kv_options/kv_options.h"
 
 namespace tournament_arena {
 
@@ -158,9 +159,6 @@ void ApplyProblemDefaults(proto::ProblemConfig *config) {
     if (match->max_moves_per_game() == 0) {
       match->set_max_moves_per_game(50000);
     }
-    if (match->mcts_iterations() == 0) {
-      match->set_mcts_iterations(400);
-    }
     if (match->timeout_s() == 0) {
       match->set_timeout_s(1800);
     }
@@ -232,6 +230,24 @@ auto ValidateProblemConfig(const proto::ProblemConfig &config,
       if (match.referee_target().empty()) {
         *error = "match.referee_target is required";
         return false;
+      }
+      // These ride to the referee as a "k=v,k2=v2" flag, so a key or value
+      // carrying a separator would arrive as something else entirely. Caught
+      // here, at load, rather than as a puzzling referee on a worker.
+      for (const auto &[key, value] : match.registry_options()) {
+        if (!kv_options::IsValidKey(key)) {
+          *error =
+              absl::StrCat("match.registry_options has an invalid key '", key,
+                           "': keys must be non-empty and contain "
+                           "no ',' or '='");
+          return false;
+        }
+        if (!kv_options::IsValidValue(value)) {
+          *error = absl::StrCat("match.registry_options['", key,
+                                "'] contains ',' or '=', which the referee's "
+                                "option list cannot carry");
+          return false;
+        }
       }
       break;
     }

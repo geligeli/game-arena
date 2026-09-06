@@ -44,6 +44,7 @@ bazel run //game_arena/testgame:match_referee -- \
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
+#include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/proto/tournament_broker.pb.h"
 #include "game_arena/referee/broker_service.h"
 #include "game_arena/referee/game_registry.h"
@@ -77,8 +78,9 @@ ABSL_FLAG(int, worker_threads, 0,
 ABSL_FLAG(int, deadline_s, 0,
           "Give up and report what was played after this long. 0 waits "
           "forever, leaving the worker's own timeout as the only bound");
-ABSL_FLAG(int, mcts_iterations, 400,
-          "Default iterations for builtin:mcts opponents");
+ABSL_FLAG(std::string, registry_options, "",
+          "Comma-separated key=value settings for the linked game registry, "
+          "e.g. \"mcts_iterations=400\". Unknown keys are ignored");
 ABSL_FLAG(std::string, port_file, "",
           "Write the bound port here once listening, then the bots can be "
           "started against it. Use with --port=0 to let the OS pick: picking a "
@@ -171,8 +173,8 @@ auto main(int argc, char **argv) -> int {
     LOG(ERROR) << "Unknown --game " << game;
     return 2;
   }
-  tournament_broker::SetDefaultMctsIterations(
-      absl::GetFlag(FLAGS_mcts_iterations));
+  tournament_broker::SetRegistryOptions(
+      kv_options::Parse(absl::GetFlag(FLAGS_registry_options)));
 
   std::filesystem::path scratch = absl::GetFlag(FLAGS_scratch_dir);
   if (scratch.empty()) {

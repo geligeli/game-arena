@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "absl/log/log.h"
+#include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/common/process/process.h"
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/worker/bot_launch.h"
@@ -380,7 +381,7 @@ auto DockerBackend::RunOrder(int slot,
   const int match_deadline_s = order.match_deadline_s() > 0
                                    ? order.match_deadline_s()
                                    : std::max(1, run_timeout_s - 30);
-  const std::vector<std::string> referee_args = {
+  std::vector<std::string> referee_args = {
       "--port=" + std::to_string(kMatchPort),
       "--game=" + order.game(),
       "--games=" + std::to_string(order.num_games()),
@@ -388,6 +389,15 @@ auto DockerBackend::RunOrder(int slot,
       "--player_b=" + order.opponent_spec(),
       "--deadline_s=" + std::to_string(match_deadline_s),
   };
+  // Opaque to the worker: whatever the problem set, handed to the registry
+  // linked into the referee. Omitted entirely when empty so an order that
+  // sets nothing produces the argv it always did.
+  if (!order.registry_options().empty()) {
+    referee_args.push_back(
+        "--registry_options=" +
+        kv_options::Format({order.registry_options().begin(),
+                            order.registry_options().end()}));
+  }
   {
     process::RunOptions opts;
     opts.timeout = std::chrono::seconds(120);

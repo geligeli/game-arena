@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "absl/log/log.h"
+#include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/common/process/process.h"
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/common/step.h"
@@ -289,6 +290,15 @@ auto LocalBackend::RunOrder(int slot,
       "--scratch_dir=" + (SlotDir(slot) / "referee").string(),
       "--deadline_s=" + std::to_string(match_deadline_s),
   };
+  // Opaque to the worker: whatever the problem set, handed to the registry
+  // linked into the referee. Omitted entirely when empty so an order that
+  // sets nothing produces the argv it always did.
+  if (!order.registry_options().empty()) {
+    referee_args.push_back(
+        "--registry_options=" +
+        kv_options::Format({order.registry_options().begin(),
+                            order.registry_options().end()}));
+  }
   const std::filesystem::path referee_out = logs / "referee.out";
   const std::filesystem::path referee_err = logs / "referee.err";
   if (!std::filesystem::exists(referee)) {
