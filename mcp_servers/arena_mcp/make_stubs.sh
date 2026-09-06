@@ -2,8 +2,8 @@
 # Regenerates the arena's Python gRPC stubs into _pb/.
 #
 # Only needed for the venv flow (see mcp_servers/README.md): under bazel the
-# stubs come from //game_mcts/tournament_server/proto:arena_py. Re-run after
-# changing game_mcts/tournament_server/proto/arena.proto.
+# stubs come from //game_arena/proto:arena_py. Re-run after
+# changing game_arena/proto/arena.proto.
 set -e
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -15,7 +15,7 @@ mkdir -p "$here/_pb"
     -I"$repo" \
     --python_out="$here/_pb" \
     --grpc_python_out="$here/_pb" \
-    game_mcts/tournament_server/proto/arena.proto
+    game_arena/proto/arena.proto
 
 # protoc emits package-relative imports; make the generated tree importable.
 find "$here/_pb" -type d -exec touch {}/__init__.py \;

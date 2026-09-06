@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package tournament_arena.proto;
+
+// For ClientQuota, whose defaults live with the problem. Both files are
+// server-side config read by the same binary, so unlike arena.proto -- which is
+// the worker and agent wire protocol, and stays self-contained -- an import
+// here costs nothing.
+import "game_arena/proto/problem.proto";
+
+// Who may submit, and how much.
+//
+// Deliberately a separate file from problem.proto, and a separate file on disk:
+// ProblemConfig is published -- served to agents through GetProblem and
+// rendered on the leaderboard -- and the client list is not.
+//
+// Tokens are admin-provisioned. There is no registration RPC: a client exists
+// because an operator added it, which is what makes the quota mean anything.
+// Mint one with:
+//
+//   bazel run //game_arena/tools:arena_admin -- \
+//       mint --client_id=some-agent --display_name="Some Agent"
+//
+// and paste the block it prints. The raw token is shown once and never stored;
+// what lands here is its hash.
+
+message Client {
+  // Stable, and the submission's author. Attribution is derived from the token
+  // rather than self-reported, or the leaderboard credit beside an enforceable
+  // quota would itself be spoofable.
+  string client_id = 1;
+  string display_name = 2;
+  // Lowercase hex SHA-256 of the token. The raw token never touches the
+  // server's disk, so a leaked registry file is not a set of usable
+  // credentials.
+  string token_sha256 = 3;
+  // Keeps the id and its history while refusing new work. Deleting the entry
+  // would orphan the submissions it authored.
+  bool disabled = 4;
+  // Overrides the problem's defaults for this client. Unset fields fall back.
+  ClientQuota quota = 5;
+}
+
+message ClientRegistry {
+  repeated Client clients = 1;
+}

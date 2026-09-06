@@ -1,0 +1,51 @@
+# MODULE.bazel
+
+module(
+    name = "game_arena",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_python", version = "1.6.3")
+bazel_dep(name = "rules_cc", version = "0.2.14")
+
+# game_arena/server:no_problem_code_test is an sh_test.
+bazel_dep(name = "rules_shell", version = "0.7.1")
+bazel_dep(name = "googletest", version = "1.17.0")
+
+# game_arena/sandbox/worker:build_log parses bazel output with RE2.
+bazel_dep(name = "re2", version = "2025-11-05.bcr.1")
+bazel_dep(name = "abseil-cpp", version = "20250814.1")
+bazel_dep(name = "protobuf", version = "32.1")
+bazel_dep(name = "grpc", version = "1.74.1")
+
+# Already in the graph through grpc; declared directly so the arena's client
+# registry can hash tokens with SHA-256 rather than carry its own copy of one.
+# Version matched to what grpc resolves, so this adds no new fetch.
+bazel_dep(name = "boringssl", version = "0.20241024.0")
+
+# Workaround for https://github.com/protocolbuffers/protobuf/issues/22386:
+# @protobuf//python/dist loads @protobuf_pip_deps//:requirements.bzl, but that
+# repo is only created by a dev_dependency extension, so it is missing when
+# protobuf is not the root module. The patch drops the load (only used for
+# building protobuf's own wheels, which we don't do).
+single_version_override(
+    module_name = "protobuf",
+    patches = [
+        "//:protobuf_python_dist_build.patch",
+        "//:protobuf_python_dist_bzl.patch",
+    ],
+    patch_strip = 1,
+)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.12")
+
+# Runtime deps for the arena MCP server (mcp_servers/requirements.txt).
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "mcp_pip_deps",
+    python_version = "3.12",
+    requirements_lock = "//mcp_servers:requirements.txt",
+)
+use_repo(pip, "mcp_pip_deps")

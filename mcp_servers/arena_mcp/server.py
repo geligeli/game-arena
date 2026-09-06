@@ -24,13 +24,13 @@ import grpc
 from mcp.server.fastmcp import FastMCP
 
 # The venv flow loads hand-generated stubs from _pb/; under `bazel run` the
-# stubs come from //game_mcts/tournament_server/proto:arena_py instead, and
+# stubs come from //game_arena/proto:arena_py instead, and
 # _pb must stay off the path (resolve() follows runfiles symlinks back into
 # the checkout, where _pb may hold stubs for a different protobuf runtime).
 if "BUILD_WORKSPACE_DIRECTORY" not in os.environ:
     sys.path.insert(0, str(Path(__file__).resolve().parent / "_pb"))
 try:
-    from game_mcts.tournament_server.proto import arena_pb2, arena_pb2_grpc  # noqa: E402
+    from game_arena.proto import arena_pb2, arena_pb2_grpc  # noqa: E402
 except ImportError:  # bazel runfiles layout: flat stubs from :arena_py
     import arena_pb2  # type: ignore
     import arena_pb2_grpc  # type: ignore
@@ -90,7 +90,7 @@ def _rpc_error(error: grpc.RpcError) -> str:
             f"ERROR: {error.details()}\n"
             "Set ARENA_MCP_TOKEN in this MCP server's environment. The arena's "
             "operator mints one with:\n"
-            "  bazel run //game_mcts/tournament_server/tools:arena_admin -- "
+            "  bazel run //game_arena/tools:arena_admin -- "
             "mint --client_id=<you>"
         )
     if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
@@ -102,8 +102,8 @@ def _rpc_error(error: grpc.RpcError) -> str:
     if code == grpc.StatusCode.UNAVAILABLE:
         return (
             f"ERROR: no arena at {ARENA_TARGET}. Start it with:\n"
-            "  bazel run //game_mcts/tournament_server/server:problem_server -- "
-            "--problem_config=game_mcts/tournament_server/problems/risk2.textproto "
+            "  bazel run //game_arena/server:problem_server -- "
+            "--problem_config=game_arena/problems/risk2.textproto "
             "--data_dir=tournament_data"
         )
     return f"ERROR: {error.details()}"
