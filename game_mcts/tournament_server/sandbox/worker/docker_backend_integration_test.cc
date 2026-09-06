@@ -5,15 +5,15 @@
 // actually happens, but the exact mounts, argv and entrypoint scripts handed
 // to docker, and the host-side git work, are asserted from the logs.
 
+#include <gtest/gtest.h>
+#include <unistd.h>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
 #include <system_error>
-
-#include <gtest/gtest.h>
-#include <unistd.h>
 
 #include "game_mcts/tournament_server/sandbox/worker/docker_backend.h"
 
@@ -40,13 +40,24 @@ class DockerBackendIntegrationTest : public ::testing::Test {
                                  std::filesystem::perm_options::add);
     fake_git_ = root_ / "fake_git";
     std::ofstream(fake_git_) << FakeGitScript();
-    std::filesystem::permissions(fake_git_,
-                                 std::filesystem::perms::owner_all,
+    std::filesystem::permissions(fake_git_, std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::add);
+
+    // The overlay is assembled on the host by default, so containers need no
+    // CAP_SYS_ADMIN. Faked here: a test sandbox cannot mount(2), and what is
+    // under test is the flags the backend passes, not the kernel.
+    fake_mount_ = root_ / "fake_mount";
+    std::ofstream(fake_mount_)
+        << "#!/usr/bin/env bash\necho \"mount $*\" >> \""
+        << (root_ / "mount.log").string() << "\"\nexit 0\n";
+    std::filesystem::permissions(fake_mount_, std::filesystem::perms::owner_all,
                                  std::filesystem::perm_options::add);
 
     DockerBackendConfig config;
     config.docker = fake_docker_.string();
     config.git = fake_git_.string();
+    config.mount = fake_mount_.string();
+    config.umount = fake_mount_.string();
     config.docker_image = "fake-image:1";
     config.repo_dir = root_ / "repo_src";
     config.work_dir = root_ / "work";
@@ -80,26 +91,47 @@ class DockerBackendIntegrationTest : public ::testing::Test {
            // A candidate whose build fails: the container prints compiler
            // diagnostics and a nonzero exit, like bazel would.
            "      *failbuild-1-build*)\n"
-           "        echo \"game_mcts/tournament_server/candidates/failbuild-1/strategy.h:3:5: error: expected ';' before '}' token\"\n"
-           "        echo \"Target //game_mcts/tournament_server/candidates/failbuild-1:bot failed to build\"\n"
+           "        echo "
+           "\"game_mcts/tournament_server/candidates/failbuild-1/"
+           "strategy.h:3:5: error: expected ';' before '}' token\"\n"
+           "        echo \"Target "
+           "//game_mcts/tournament_server/candidates/failbuild-1:bot failed to "
+           "build\"\n"
            "        exit 1;;\n"
            // A bot that never finishes: runs until the server-side timeout
            // kills the container. bash execs a sole command, which would drop
            // the marker from the command line; the trailing `true` keeps
            // bash alive so Kill's pkill finds it.
-           "      *blockrun-1-run*)\n"
+           "      *blockrun-1-bot*)\n"
            "        bash -c 'sleep 15; true' \"fake-sleeper-$name\"\n"
            "        exit 137;;\n"
-           // The bot: prints the RESULT line the worker parses.
-           "      *-run)\n"
-           "        echo \"RESULT games=2 wins=1 draws=1 losses=0 elo=1500.0\"\n"
+           // The referee is started detached and its verdict is read back with
+           // `docker logs`, so stash it where the logs branch can find it.
+           "      *-referee)\n"
+           "        echo \"RESULT games=2 wins=1 draws=1 losses=0 elo=1500.0\" "
+           "> \"" +
+           (root_ / "referee_output").string() +
+           "\"\n"
+           "        exit 0;;\n"
+           // The bot plays and exits; the tally comes from the referee.
+           "      *-bot|*-opponent)\n"
            "        exit 0;;\n"
            // A clean build.
            "      *-build)\n"
-           "        echo \"INFO: Build completed successfully, 42 total actions\"\n"
+           "        echo \"INFO: Build completed successfully, 42 total "
+           "actions\"\n"
            "        exit 0;;\n"
            "    esac;;\n"
            "  rm)\n"
+           "    exit 0;;\n"
+           "  network)\n"
+           "    exit 0;;\n"
+           "  wait)\n"
+           "    exit 0;;\n"
+           "  logs)\n"
+           "    cat \"" +
+           (root_ / "referee_output").string() +
+           "\" 2>/dev/null\n"
            "    exit 0;;\n"
            "  kill)\n"
            "    pkill -f \"fake-sleeper-$1\"\n"
@@ -148,59 +180,78 @@ class DockerBackendIntegrationTest : public ::testing::Test {
 
   static void ExpectLogContains(const std::string &log,
                                 const std::string &fragment) {
-    EXPECT_NE(log.find(fragment), std::string::npos) << "fragment: " << fragment;
+    EXPECT_NE(log.find(fragment), std::string::npos)
+        << "fragment: " << fragment;
   }
 
-  static auto MakeOrder(const std::string &id, const std::string &candidate)
-      -> proto::WorkOrder {
+  static auto MakeOrder(const std::string &id,
+                        const std::string &candidate) -> proto::WorkOrder {
     proto::WorkOrder order;
     order.set_order_id(id);
-    order.set_candidate_id(candidate);
     order.set_game("risk2");
     order.set_base_commit(kFakeCommit);
-    auto *file = order.add_files();
-    file->set_path("strategy.h");
-    file->set_content("#pragma once\n");
-    order.set_entry_header("strategy.h");
-    order.set_broker_target("localhost:50051");
-    order.set_opponent("builtin:random");
+    order.set_referee_target(
+        "//game_mcts/tournament_server/referee:match_referee");
+    order.set_opponent_spec("builtin:random");
     order.set_num_games(2);
-    (*order.mutable_params())["iterations"] = "100";
+
+    proto::Side *side = order.mutable_candidate();
+    side->set_candidate_id(candidate);
+    side->set_patch(
+        "diff --git a/game_mcts/tournament_server/candidates/" + candidate +
+        "/strategy.h b/game_mcts/tournament_server/candidates/" + candidate +
+        "/strategy.h\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/game_mcts/tournament_server/candidates/" +
+        candidate +
+        "/strategy.h\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+#pragma once\n");
+    side->add_build_targets("//game_mcts/tournament_server/candidates/" +
+                            candidate + ":bot");
+    side->set_bot_target("//game_mcts/tournament_server/candidates/" +
+                         candidate + ":bot");
+    (*side->mutable_params())["iterations"] = "100";
     return order;
   }
 
   static std::filesystem::path root_;
   static std::filesystem::path fake_docker_;
   static std::filesystem::path fake_git_;
+  static std::filesystem::path fake_mount_;
   static std::unique_ptr<DockerBackend> backend_;
 };
 
 std::filesystem::path DockerBackendIntegrationTest::root_;
 std::filesystem::path DockerBackendIntegrationTest::fake_docker_;
 std::filesystem::path DockerBackendIntegrationTest::fake_git_;
+std::filesystem::path DockerBackendIntegrationTest::fake_mount_;
 std::unique_ptr<DockerBackend> DockerBackendIntegrationTest::backend_;
 
 TEST_F(DockerBackendIntegrationTest, WarmupClonesOneLowerDirPerSlot) {
   // The clone is a host-side git step, not a docker one.
   const std::string git_log = ReadFile(root_ / "git.log");
-  ExpectLogContains(
-      git_log, "git clone --local " + (root_ / "repo_src").string() + " " +
-                   (root_ / "work" / "slot0" / "repo").string());
-  ExpectLogContains(
-      git_log, "git clone --local " + (root_ / "repo_src").string() + " " +
-                   (root_ / "work" / "slot1" / "repo").string());
-  EXPECT_TRUE(std::filesystem::exists(root_ / "work" / "slot0" / "repo" / ".git"));
-  EXPECT_TRUE(std::filesystem::exists(root_ / "work" / "slot1" / "repo" / ".git"));
+  ExpectLogContains(git_log, "git clone --local " +
+                                 (root_ / "repo_src").string() + " " +
+                                 (root_ / "work" / "slot0" / "repo").string());
+  ExpectLogContains(git_log, "git clone --local " +
+                                 (root_ / "repo_src").string() + " " +
+                                 (root_ / "work" / "slot1" / "repo").string());
+  EXPECT_TRUE(
+      std::filesystem::exists(root_ / "work" / "slot0" / "repo" / ".git"));
+  EXPECT_TRUE(
+      std::filesystem::exists(root_ / "work" / "slot1" / "repo" / ".git"));
   // Bind-mount sources that docker would have to create exist up front.
   EXPECT_TRUE(std::filesystem::is_directory(root_ / "work" / "disk_cache"));
-  EXPECT_TRUE(std::filesystem::is_directory(root_ / "work" / "slot0" / "overlay"));
-  EXPECT_TRUE(std::filesystem::is_directory(
-      root_ / "work" / "slot0" / "bazel_output_base"));
+  EXPECT_TRUE(
+      std::filesystem::is_directory(root_ / "work" / "slot0" / "overlay"));
+  EXPECT_TRUE(std::filesystem::is_directory(root_ / "work" / "slot0" /
+                                            "bazel_output_base"));
 }
 
 TEST_F(DockerBackendIntegrationTest, OrderBuildsInContainerAndParsesResult) {
-  const OrderOutcome outcome =
-      backend_->RunOrder(0, MakeOrder("ok-1", "c-ok"));
+  const OrderOutcome outcome = backend_->RunOrder(0, MakeOrder("ok-1", "c-ok"));
 
   EXPECT_TRUE(outcome.build_ok) << outcome.error;
   EXPECT_TRUE(outcome.error.empty()) << outcome.error;
@@ -219,62 +270,114 @@ TEST_F(DockerBackendIntegrationTest, OrderBuildsInContainerAndParsesResult) {
                 .find(kFakeCommit),
             0);
 
-  // The candidate and its generated BUILD are staged where docker is pointed.
-  const auto staged = root_ / "work" / "slot0" / "patches" /
-                      "game_mcts/tournament_server/candidates/c-ok";
-  EXPECT_TRUE(std::filesystem::is_regular_file(staged / "strategy.h"));
-  EXPECT_TRUE(std::filesystem::is_regular_file(staged / "BUILD"));
+  // The submission is staged as the one thing the container applies: its patch.
+  const auto staged = root_ / "work" / "slot0" / "patches" / "c-ok.diff";
+  ASSERT_TRUE(std::filesystem::is_regular_file(staged));
+  EXPECT_NE(ReadFile(staged).find("+#pragma once"), std::string::npos);
 
   const std::string log = ReadFile(root_ / "docker.log");
   // Zombie cleanup, then the build container over the slot's overlay.
   ExpectLogContains(log, "docker rm -f saw-0-ok-1-build");
   ExpectLogContains(log, "--name saw-0-ok-1-build");
-  ExpectLogContains(log, "--cap-add SYS_ADMIN");
-  ExpectLogContains(log, "--network host");
+  // No capabilities: the overlay was mounted on the host, so there is nothing
+  // for the container to be privileged for.
+  ExpectLogContains(log, "--cap-drop ALL");
+  ExpectLogContains(log, "--security-opt no-new-privileges");
+  EXPECT_EQ(log.find("SYS_ADMIN"), std::string::npos) << log;
+  // A build that can fetch can also exfiltrate, and a submitted genrule is
+  // arbitrary code.
+  ExpectLogContains(log, "--network none");
+  EXPECT_EQ(log.find("--network host"), std::string::npos) << log;
+  // The container gets the merged tree, not the pieces: with the overlay
+  // mounted on the host there is nothing left for it to assemble.
   ExpectLogContains(log, "--mount type=bind,source=" +
-                             (root_ / "work" / "slot0" / "repo").string() +
-                             ",target=/repo_lower,readonly");
+                             (root_ / "work" / "slot0" / "merged").string() +
+                             ",target=/workspace");
+  ExpectLogContains(ReadFile(root_ / "mount.log"), "-t overlay");
   ExpectLogContains(log, "--mount type=bind,source=" +
                              (root_ / "work" / "slot0" / "overlay").string() +
                              ",target=/sandbox");
   ExpectLogContains(log, "--mount type=bind,source=" +
                              (root_ / "work" / "slot0" / "patches").string() +
                              ",target=/patches,readonly");
-  ExpectLogContains(log, "--mount type=bind,source=" +
-                             (root_ / "work" / "slot0" / "bazel_output_base")
-                                 .string() +
-                             ",target=/output_base");
+  ExpectLogContains(
+      log, "--mount type=bind,source=" +
+               (root_ / "work" / "slot0" / "bazel_output_base").string() +
+               ",target=/output_base");
   ExpectLogContains(log, "--mount type=bind,source=" +
                              (root_ / "work" / "disk_cache").string() +
                              ",target=/disk_cache");
   ExpectLogContains(log, "--entrypoint /bin/sh fake-image:1 -c");
-  // The entrypoint: overlay assembly, candidate copy, bazel against the slot's
-  // persistent output base.
-  ExpectLogContains(log, "mount -t overlay overlay -o lowerdir=/repo_lower,"
-                         "upperdir=/sandbox/upper,workdir=/sandbox/work "
-                         "/workspace");
-  ExpectLogContains(log, "cp -a /patches/. /workspace/");
-  ExpectLogContains(log, "exec bazel --output_base=/output_base "
-                         "--disk_cache=/disk_cache "
-                         "build '//game_mcts/tournament_server/candidates/"
-                         "c-ok:bot'");
+  // The entrypoint applies the patch and builds; it mounts nothing.
+  EXPECT_EQ(log.find("mount -t overlay"), std::string::npos)
+      << "the container should not be mounting anything:\n"
+      << log;
+  ExpectLogContains(log,
+                    "exec bazel --output_base=/output_base "
+                    "--disk_cache=/disk_cache "
+                    "build '//game_mcts/tournament_server/candidates/"
+                    "c-ok:bot'");
 
-  // The run container: same overlay and output base, a memory cap, and the
-  // built bot exec'd with the broker connection.
-  ExpectLogContains(log, "docker rm -f saw-0-ok-1-run");
-  ExpectLogContains(log, "--name saw-0-ok-1-run");
+  // The match runs on its own egress-free network, torn down afterwards.
+  ExpectLogContains(log, "docker network create --internal saw-0-ok-1-net");
+  ExpectLogContains(log, "docker network rm saw-0-ok-1-net");
+
+  // The referee is started detached on that network, and judges the match.
+  ExpectLogContains(log, "--name saw-0-ok-1-referee");
+  ExpectLogContains(log, "--network saw-0-ok-1-net");
+  ExpectLogContains(log,
+                    "exec 'game_mcts/tournament_server/referee/"
+                    "match_referee' '--port=50051' '--game=risk2' "
+                    "'--games=2' '--player_a=c-ok' "
+                    "'--player_b=builtin:random'");
+
+  // The bot dials the referee by container name, not a host address: there is
+  // no broker outside the sandbox to reach.
+  ExpectLogContains(log, "--name saw-0-ok-1-bot");
   ExpectLogContains(log, "--memory 4096m");
-  ExpectLogContains(log, "exec './bazel-bin/game_mcts/tournament_server/"
-                         "candidates/c-ok/bot' '--name=c-ok' "
-                         "'--server=localhost:50051' "
-                         "'--opponent=builtin:random' '--games=2' "
-                         "'--params=iterations=100'");
-  // The run container does not carry the patch or disk-cache mounts.
-  const auto run_invocation = log.find("--name saw-0-ok-1-run");
+  ExpectLogContains(log,
+                    "exec './bazel-bin/game_mcts/tournament_server/"
+                    "candidates/c-ok/bot' '--name=c-ok' "
+                    "'--server=saw-0-ok-1-referee:50051' "
+                    "'--opponent=builtin:random' '--games=2' "
+                    "'--params=iterations=100'");
+
+  // The verdict is read from the referee, not the bot.
+  ExpectLogContains(log, "docker wait saw-0-ok-1-referee");
+  ExpectLogContains(log, "docker logs saw-0-ok-1-referee");
+
+  // The playing containers do not carry the patch or disk-cache mounts.
+  const auto run_invocation = log.find("--name saw-0-ok-1-bot");
   ASSERT_NE(run_invocation, std::string::npos);
   const std::string run_line = log.substr(run_invocation, 4000);
   EXPECT_EQ(run_line.find("/patches"), std::string::npos);
   EXPECT_EQ(run_line.find("/disk_cache"), std::string::npos);
+}
+
+// The isolation this backend rests on, asserted as flags rather than trusted
+// as a comment. A submitted genrule is arbitrary code; the claim is that it
+// runs with nothing to reach and nothing to keep.
+TEST_F(DockerBackendIntegrationTest, EveryContainerIsHardened) {
+  ASSERT_TRUE(backend_->RunOrder(0, MakeOrder("hard-1", "c-hard")).build_ok);
+  const std::string log = ReadFile(root_ / "docker.log");
+
+  int hardened = 0;
+  std::size_t at = 0;
+  while ((at = log.find("docker run", at)) != std::string::npos) {
+    const std::size_t end = log.find('\n', at);
+    const std::string line = log.substr(at, end - at);
+    at = end == std::string::npos ? log.size() : end;
+    EXPECT_NE(line.find("--cap-drop ALL"), std::string::npos) << line;
+    EXPECT_NE(line.find("--security-opt no-new-privileges"), std::string::npos)
+        << line;
+    EXPECT_NE(line.find("--read-only"), std::string::npos) << line;
+    EXPECT_NE(line.find("--pids-limit"), std::string::npos) << line;
+    // Never the host's network: the build and a graded run get none, and a
+    // match gets its own internal bridge.
+    EXPECT_EQ(line.find("--network host"), std::string::npos) << line;
+    ++hardened;
+  }
+  EXPECT_GE(hardened, 2) << "expected at least a build and a run container";
 }
 
 TEST_F(DockerBackendIntegrationTest, BuildFailureIsReportedNotErrored) {
@@ -304,18 +407,20 @@ TEST_F(DockerBackendIntegrationTest, RunTimeoutKillsTheContainer) {
       << outcome.error;
   // The server stopped the container by name after the client-side timeout.
   ExpectLogContains(ReadFile(root_ / "docker.log"),
-                    "docker kill saw-0-blockrun-1-run");
+                    "docker kill saw-0-blockrun-1-bot");
 }
 
-TEST_F(DockerBackendIntegrationTest, EscapingPatchPathIsRejected) {
+// A side with no patch cannot be staged, and nothing should reach docker.
+// The path-escape check itself now lives at submit time, in the diff parser --
+// the worker's job is to notice it has nothing to apply.
+TEST_F(DockerBackendIntegrationTest, SideWithoutAPatchIsRejected) {
   proto::WorkOrder order = MakeOrder("esc-1", "esc-1");
-  order.mutable_files(0)->set_path("../evil.h");
-  order.set_entry_header("../evil.h");
+  order.mutable_candidate()->clear_patch();
 
   const OrderOutcome outcome = backend_->RunOrder(0, order);
 
   EXPECT_FALSE(outcome.build_ok);
-  EXPECT_NE(outcome.error.find("escapes its directory"), std::string::npos)
+  EXPECT_NE(outcome.error.find("carries no patch"), std::string::npos)
       << outcome.error;
   // Rejected before anything reached docker.
   EXPECT_EQ(ReadFile(root_ / "docker.log").find("saw-0-esc-1"),

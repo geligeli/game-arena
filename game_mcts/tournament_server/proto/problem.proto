@@ -1,0 +1,291 @@
+syntax = "proto3";
+
+package tournament_arena.proto;
+
+// What a problem *is*, expressed as data rather than compiled-in assumptions.
+//
+// One server runs one problem. Everything that used to be a flag on the
+// tournament server or a hardcoded branch in the worker -- which repo to build,
+// what counts as a good answer, how much a submission may touch, what the
+// sandbox is allowed to do -- lives here, so standing up a new problem is
+// writing a .textproto rather than editing C++.
+//
+// The whole message is embedded verbatim in every WorkOrder. That is what keeps
+// the fleet stateless with respect to problems: a worker has no config file, no
+// notion of which problem it serves, and needs no restart when one changes.
+//
+// Two ways a solution earns a score, and they are exclusive:
+//
+//   GradeSpec   run it, read a number off it (how fast, how small, how accurate)
+//   MatchSpec   play it against others, rate the outcomes with ELO
+//
+// Text format, loaded by server/problem_config.h. Protobuf rather than YAML
+// because the config is already a wire message: it is served to agents over
+// RPC, rendered on the leaderboard, and shipped inside every work order, and a
+// second hand-written schema for those would be a second thing to keep in sync.
+
+// ---------------------------------------------------------------------------
+// The repository a submission patches
+// ---------------------------------------------------------------------------
+
+message RepoSpec {
+  // A git URL or a local path. Workers clone this once per slot.
+  string url = 1;
+  // The tree submissions are patched onto. "HEAD" is resolved to a concrete
+  // sha once at server startup, never per submission: a rating is only
+  // comparable across candidates if they were built against the same tree.
+  string base_commit = 2;
+}
+
+// ---------------------------------------------------------------------------
+// What a submission may contain
+// ---------------------------------------------------------------------------
+
+// Bounds on a submitted patch, checked by the coordinator before anything is
+// stored or dispatched. These are cheap parse-level checks, not a security
+// boundary -- the sandbox is (see SandboxSpec). Their job is to keep a
+// runaway agent from filling the disk and to keep submissions on-topic.
+message SubmissionPolicy {
+  uint64 max_patch_bytes = 1;
+  uint32 max_files = 2;
+  uint32 max_hunks = 3;
+
+  // Glob patterns over the patch's touched paths, matched in this order: a
+  // path must match some allow_paths entry and no deny_paths entry. An empty
+  // allow_paths allows everything not denied.
+  //
+  // Worth stating plainly: this does NOT contain a hostile submission. A patch
+  // that may touch a BUILD file can run arbitrary code at build time through a
+  // genrule, and most interesting problems must allow exactly that. Use it to
+  // express what a solution *is* ("only under solutions/"), and rely on the
+  // sandbox for what a solution may *do*.
+  repeated string allow_paths = 4;
+  repeated string deny_paths = 5;
+
+  // Directory an add-only patch is synthesized under when a client submits
+  // plain files instead of a diff. Empty disables that convenience, requiring
+  // every submission to arrive as a patch.
+  string files_submit_dir = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Building
+// ---------------------------------------------------------------------------
+
+message BuildSpec {
+  // Bazel targets built after the patch applies, in order. A build failure is
+  // reported to the submitter as compacted compiler output, never a full log.
+  //
+  // "{submission_id}" is substituted before the target reaches bazel, so a
+  // problem whose solutions each live in their own directory can name them:
+  //   "//solutions/{submission_id}:bot"
+  // The same substitution applies to grade.argv and match.referee_target.
+  repeated string targets = 1;
+  // Extra bazel flags, e.g. "--config=native".
+  repeated string bazel_flags = 2;
+  uint32 timeout_s = 3;
+}
+
+// ---------------------------------------------------------------------------
+// The sandbox
+// ---------------------------------------------------------------------------
+
+message SandboxSpec {
+  // Image every container starts from. Must carry bazel matching the repo's
+  // MODULE.bazel.lock, a C++ toolchain, and a warm repository cache -- builds
+  // run without egress, so a module fetch is a build failure, not a retry.
+  string image = 1;
+
+  uint32 memory_limit_mb = 2;
+  double cpus = 3;
+  uint32 pids_limit = 4;
+
+  enum Network {
+    // No interface at all. The default, and the only correct setting for a
+    // graded run: a solution timed against a stopwatch has no business
+    // reaching the network.
+    NETWORK_NONE = 0;
+    // A per-order internal bridge, no egress. Match evaluation needs it so the
+    // two bot containers can reach their referee.
+    NETWORK_INTERNAL_BRIDGE = 1;
+  }
+  Network network = 5;
+
+  // Refuse to run this problem on the local (non-container) backend. Any
+  // problem whose patches may touch BUILD files should set this: on the local
+  // backend a submitted genrule runs as the worker's own user.
+  bool require_container = 6;
+
+  // Let the build container reach the network.
+  //
+  // Off by default, and worth keeping off: a build that can fetch can also
+  // exfiltrate, and a submitted genrule is arbitrary code. The cost is that the
+  // image must carry a warm bazel repository cache, because a module fetch will
+  // fail. That failure is the correct outcome -- it is a submission depending
+  // on something the problem did not offer.
+  bool allow_build_network = 7;
+
+  // Run as this user inside the container, e.g. "1000:1000". Empty runs as
+  // whatever the image's default is, which for most images is root.
+  string run_as_user = 8;
+
+  // Assemble the overlay on the host and bind-mount the merged tree in, rather
+  // than calling mount(8) inside the container.
+  //
+  // On by default, because the in-container form needs CAP_SYS_ADMIN, and a
+  // container with CAP_SYS_ADMIN running submitted build code is not a
+  // boundary. It requires the worker to be able to mount overlayfs -- root, or
+  // a user namespace -- which is a worker prerequisite alongside docker itself.
+  // There is deliberately no silent fallback: an order fails loudly rather than
+  // quietly running privileged.
+  bool host_overlay = 9;
+  // Set when host_overlay was explicitly configured, so "unset" can default to
+  // true without making false unexpressible.
+  bool host_overlay_set = 10;
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation: grading
+// ---------------------------------------------------------------------------
+
+message MetricSpec {
+  string name = 1;  // key in the report, e.g. "wall_ms"
+  enum Direction {
+    MINIMIZE = 0;
+    MAXIMIZE = 1;
+  }
+  Direction direction = 2;
+  // The metric the leaderboard ranks by. Exactly one metric must set it.
+  bool primary = 3;
+  string unit = 4;  // display only, e.g. "ms"
+}
+
+// Run the built solution and read numbers off it.
+//
+// The command writes JSON to the path in $ARENA_REPORT:
+//   {"metrics": {"wall_ms": 1234.5, "peak_rss_mb": 91.2}}
+// A "RESULT wall_ms=1234.5" line on stdout is accepted as a fallback, matching
+// the shape the match harness already prints.
+message GradeSpec {
+  // argv run inside the sandbox, at the workspace root.
+  repeated string argv = 1;
+
+  // Runs to perform. A single timing is noise; the aggregate is the score.
+  uint32 repeats = 2;
+  enum Aggregate {
+    MIN = 0;     // best of N -- the usual choice for a timing
+    MEDIAN = 1;
+    MEAN = 2;
+  }
+  Aggregate aggregate = 3;
+
+  repeated MetricSpec metrics = 4;
+
+  // Only accept results from workers reporting this machine class. A wall-clock
+  // number from a laptop and one from a server are not the same measurement,
+  // and a leaderboard that mixes them is measuring the fleet, not the
+  // submissions. Empty accepts any worker.
+  string require_machine_class = 5;
+
+  uint32 timeout_s = 6;
+}
+
+// What a graded command writes to the path in $ARENA_REPORT. Parsed as JSON,
+// so a command can emit it with `printf` and no library:
+//
+//   {"metrics": {"wall_ms": 1234.5, "peak_rss_mb": 91.2}}
+//
+// Keys not declared in GradeSpec.metrics are ignored rather than rejected: a
+// benchmark reporting more than the problem ranks on is normal, and failing the
+// run over it would be hostile.
+message MetricReport {
+  map<string, double> metrics = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation: matches
+// ---------------------------------------------------------------------------
+
+// Play the solution against others and rate it.
+//
+// The worker starts a referee container and points both sides at it over a
+// private bridge. The referee owns the rules; the coordinator never does.
+message MatchSpec {
+  // Key into the referee's game registry, e.g. "risk2".
+  string game = 1;
+  // Bazel label of the referee binary, built from the same patched tree.
+  string referee_target = 2;
+
+  uint32 games_per_order = 3;
+  // Opponents a freshly submitted solution is placed against, e.g.
+  // "builtin:random", "builtin:mcts". A later Evaluate may name any rival.
+  repeated string placement_opponents = 4;
+
+  uint32 turn_timeout_ms = 5;
+  // Total thinking time per seat per game. Zero leaves only turn_timeout_ms,
+  // which on its own bounds nothing: a slow strategy can burn the full turn
+  // budget on every one of thousands of moves.
+  uint32 game_time_budget_ms = 6;
+  uint32 max_moves_per_game = 7;
+  uint32 timeout_s = 8;
+
+  // Strength of "builtin:mcts" when its spec does not say.
+  uint32 mcts_iterations = 9;
+}
+
+// ---------------------------------------------------------------------------
+// Ranking and client policy
+// ---------------------------------------------------------------------------
+
+message RankingSpec {
+  enum Kind {
+    ELO = 0;     // requires MatchSpec
+    METRIC = 1;  // requires GradeSpec
+  }
+  Kind kind = 1;
+  // For METRIC: which metric orders the board. Empty uses the GradeSpec metric
+  // marked primary.
+  string metric_name = 2;
+}
+
+// Per-client limits. Defaults live here; server/client_registry.h lets an
+// individual client override them.
+message ClientQuota {
+  // Evaluations a client may have running at once. One is the point: a client
+  // waits for its own result before spending the fleet on another guess.
+  uint32 max_active_evaluations = 1;
+  // Outstanding jobs, covering re-evaluations as well as fresh submissions --
+  // without it a client can bank a hundred rematches behind its one active
+  // evaluation.
+  uint32 max_queued_jobs = 2;
+}
+
+message ClientPolicy {
+  ClientQuota default_quota = 1;
+}
+
+// ---------------------------------------------------------------------------
+// The problem
+// ---------------------------------------------------------------------------
+
+message ProblemConfig {
+  // Stable identifier, also the standings key. One server, one problem_id.
+  string problem_id = 1;
+  string display_name = 2;
+  // Markdown. Served whole to agents so the contract arrives in one call, and
+  // rendered at the top of the leaderboard page for humans.
+  string description = 3;
+
+  RepoSpec repo = 4;
+  SubmissionPolicy submission = 5;
+  BuildSpec build = 6;
+  SandboxSpec sandbox = 7;
+
+  oneof evaluation {
+    GradeSpec grade = 8;
+    MatchSpec match = 9;
+  }
+
+  RankingSpec ranking = 10;
+  ClientPolicy clients = 11;
+}

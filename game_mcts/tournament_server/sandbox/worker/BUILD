@@ -8,13 +8,35 @@ package(default_visibility = ["//visibility:public"])
 # in, build it and play its games. Workers dial the arena, so a fleet can be
 # attached from anywhere.
 
-# The BUILD file a submission is compiled with. Pure string generation, so the
-# exact bazel a candidate produces can be asserted directly.
+# Turning an order's bazel labels and params into something to exec. Shared by
+# both backends so they cannot drift into launching the same order differently.
 cc_library(
-    name = "candidate_build",
-    srcs = ["candidate_build.cc"],
-    hdrs = ["candidate_build.h"],
-    deps = ["//game_mcts/tournament_server/proto:arena_cc_proto"],
+    name = "bot_launch",
+    srcs = ["bot_launch.cc"],
+    hdrs = ["bot_launch.h"],
+    deps = ["@protobuf//:protobuf"],
+)
+
+# Reading what a graded command measured, and folding several runs into one
+# number per metric.
+cc_library(
+    name = "metric_report",
+    srcs = ["metric_report.cc"],
+    hdrs = ["metric_report.h"],
+    deps = [
+        "//game_mcts/tournament_server/proto:arena_cc_proto",
+        "//game_mcts/tournament_server/proto:problem_cc_proto",
+        "@protobuf//:protobuf",
+    ],
+)
+
+cc_test(
+    name = "metric_report_test",
+    srcs = ["metric_report_test.cc"],
+    deps = [
+        ":metric_report",
+        "@googletest//:gtest_main",
+    ],
 )
 
 # Compacts bazel output before it crosses the wire: the system's biggest token
@@ -38,7 +60,8 @@ cc_library(
     hdrs = ["local_backend.h"],
     deps = [
         ":build_log",
-        ":candidate_build",
+        ":metric_report",
+        ":bot_launch",
         ":sandbox_backend",
         "//game_mcts/common/process",
         "@abseil-cpp//absl/log",
@@ -53,7 +76,8 @@ cc_library(
     hdrs = ["docker_backend.h"],
     deps = [
         ":build_log",
-        ":candidate_build",
+        ":metric_report",
+        ":bot_launch",
         ":sandbox_backend",
         "//game_mcts/common/process",
         "@abseil-cpp//absl/log",
@@ -75,15 +99,6 @@ cc_binary(
         "@abseil-cpp//absl/log:initialize",
         "@abseil-cpp//absl/strings",
         "@grpc//:grpc++",
-    ],
-)
-
-cc_test(
-    name = "candidate_build_test",
-    srcs = ["candidate_build_test.cc"],
-    deps = [
-        ":candidate_build",
-        "@googletest//:gtest_main",
     ],
 )
 
@@ -115,6 +130,17 @@ cc_test(
     srcs = ["docker_backend_integration_test.cc"],
     deps = [
         ":docker_backend",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# The graded path end to end: fake git and bazel, but a real command writing a
+# real report through $ARENA_REPORT.
+cc_test(
+    name = "local_backend_integration_test",
+    srcs = ["local_backend_integration_test.cc"],
+    deps = [
+        ":local_backend",
         "@googletest//:gtest_main",
     ],
 )

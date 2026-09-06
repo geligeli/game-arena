@@ -32,12 +32,53 @@ service Arena {
 
   rpc ListCandidates(ListCandidatesRequest) returns (ListCandidatesResponse);
 
-  // Queues more games for a candidate against a chosen opponent.
-  rpc Challenge(ChallengeRequest) returns (ChallengeResponse);
+  // Queues more work for a candidate: more games against a chosen opponent for
+  // a match problem, more runs for a graded one.
+  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
 
   rpc GetJob(GetJobRequest) returns (Job);
 
   rpc Leaderboard(LeaderboardRequest) returns (LeaderboardResponse);
+
+  // What this server's problem is, in one call. An agent should not have to
+  // read the operator's config file, or a README that may describe a different
+  // problem than the one this server is running.
+  rpc GetProblem(GetProblemRequest) returns (ProblemInfo);
+}
+
+message GetProblemRequest {}
+
+// The problem, as a submitter needs to know it.
+//
+// A curated view of ProblemConfig rather than the config itself: the config
+// also carries image names, timeouts and fleet settings, which are the
+// operator's business and would only be noise here.
+message ProblemInfo {
+  string problem_id = 1;
+  string display_name = 2;
+  // Markdown. The whole contract, so one call replaces reading five files.
+  string description = 3;
+  // The tree submissions are patched onto. An agent should check this out
+  // before writing a diff against it.
+  string base_commit = 4;
+
+  // False: submissions play each other and are rated. True: they are run and
+  // measured.
+  bool graded = 5;
+  // What the leaderboard ranks by -- "elo", or the metric's name.
+  string score_label = 6;
+  // For a graded problem, whether lower or higher wins.
+  bool lower_is_better = 7;
+
+  // What a submission may contain.
+  uint64 max_patch_bytes = 8;
+  uint32 max_files = 9;
+  uint32 max_hunks = 10;
+  repeated string allow_paths = 11;
+  repeated string deny_paths = 12;
+  // Non-empty when the structured form (files + entry_header) is accepted, and
+  // the directory those files are placed under. Empty means patches only.
+  string files_submit_dir = 13;
 }
 
 service SandboxFleet {
@@ -74,10 +115,19 @@ message Candidate {
   // result stays attributable to a known tree.
   string base_commit = 7;
 
+  // The submission itself: a unified diff against |base_commit|. This is the
+  // canonical stored form. A structured submission (files + entry_header) is
+  // converted into one at submit time, so there is exactly one thing to
+  // validate, store, dispatch and apply.
+  bytes patch = 15;
+  // Every path |patch| touches, derived at submit time. Kept on the manifest so
+  // listing and policy display never re-parse the diff.
+  repeated string touched_paths = 16;
+
+  // As submitted, for display and provenance. A structured submission records
+  // what it sent; the patch above is what actually gets built.
   repeated string file_paths = 8;
-  // Header the harness includes; must be one of file_paths.
   string entry_header = 9;
-  // Extra bazel deps, checked against the arena's allowlist at submit time.
   repeated string extra_deps = 10;
   map<string, string> params = 11;
 
@@ -101,16 +151,34 @@ message SubmitRequest {
   string game = 3;
   string parent_id = 4;
   string notes = 5;
+
+  // A unified diff against the problem's base commit. The general form: it can
+  // change anything the problem's submission policy allows.
+  bytes patch = 10;
+
+  // The structured form, for problems whose solutions are a directory of new
+  // files. The server turns these into an add-only patch under the problem's
+  // files_submit_dir, generating the BUILD file, so nothing downstream has to
+  // know which form was used. Ignored when |patch| is set.
   repeated SourceFile files = 6;
   string entry_header = 7;
   repeated string extra_deps = 8;
+
   map<string, string> params = 9;
+
+  // Abort this client's in-flight jobs and take their place, instead of being
+  // refused for being over quota. For an agent that already knows its running
+  // candidate is superseded, waiting for it to finish is pure delay.
+  bool cancel_running = 11;
 }
 
 message SubmitResponse {
   string candidate_id = 1;
   // The build + placement job. Poll it with GetJob.
   string job_id = 2;
+  // Jobs aborted to make room, when cancel_running was set. They end in the
+  // CANCELLED state.
+  repeated string superseded_job_ids = 3;
 }
 
 message GetCandidateRequest { string candidate_id = 1; }
@@ -125,7 +193,9 @@ message ListCandidatesRequest {
   string author = 2;  // empty: all authors
   int32 limit = 3;    // 0: server default
   enum Order {
-    ELO_DESC = 0;
+    // Whatever this problem ranks by, best first -- ELO for a match problem,
+    // the primary metric for a graded one, in whichever direction wins.
+    BEST_FIRST = 0;
     NEWEST = 1;
   }
   Order order = 4;
@@ -135,10 +205,25 @@ message ListCandidatesRequest {
 // and what an agent deciding whom to learn from actually wants.
 message CandidateStanding {
   Candidate candidate = 1;
-  double elo = 2;
+
+  // What this problem ranks by: ELO for a match problem, the primary metric for
+  // a graded one. Named `score` rather than `elo` because half the problems
+  // this server runs have never played a game. LeaderboardResponse.score_label
+  // says which it is.
+  double score = 2;
+
+  // Match problems.
   int32 wins = 3;
   int32 draws = 4;
   int32 losses = 5;
+
+  // Graded problems: every metric measured, not just the ranked one, plus the
+  // host that produced them -- a wall-clock number is not a property of the
+  // submission alone.
+  map<string, double> metrics = 6;
+  string worker_id = 7;
+  string machine_class = 8;
+  int32 runs = 9;
 }
 
 message ListCandidatesResponse { repeated CandidateStanding candidates = 1; }
@@ -147,15 +232,37 @@ message ListCandidatesResponse { repeated CandidateStanding candidates = 1; }
 // Jobs
 // ---------------------------------------------------------------------------
 
-message ChallengeRequest {
+message EvaluateRequest {
   string candidate_id = 1;
-  // "builtin:<spec>" | "<candidate_id>" | "top" (the current leader) |
-  // "ladder" (a spread of rated opponents).
-  string opponent = 2;
-  int32 games = 3;
+
+  // Which kind depends on the problem, not the caller's mood: a match problem
+  // takes |match|, a graded one takes |grade|. Sending the wrong one is an
+  // error rather than a silent default, so an agent learns the problem's shape
+  // from its first mistake instead of from a result that means nothing.
+  oneof spec {
+    MatchRequest match = 2;
+    GradeRequest grade = 3;
+  }
+
+  // As on SubmitRequest: replace this client's in-flight work rather than being
+  // refused for being over quota.
+  bool cancel_running = 4;
 }
 
-message ChallengeResponse { string job_id = 1; }
+message MatchRequest {
+  // "builtin:<spec>" | "<candidate_id>" | "top" (the current leader) |
+  // "ladder" (a spread of rated opponents).
+  string opponent = 1;
+  int32 games = 2;
+}
+
+message GradeRequest {
+  // Extra measurement runs. More runs is a tighter number, not a better one:
+  // the aggregate is taken over them per GradeSpec.aggregate.
+  int32 repeats = 1;
+}
+
+message EvaluateResponse { string job_id = 1; }
 
 message GetJobRequest { string job_id = 1; }
 
@@ -168,6 +275,10 @@ message Job {
     RUNNING = 1;
     DONE = 2;
     FAILED = 3;
+    // The submitter replaced this job with a newer one. Distinct from FAILED
+    // on purpose: an agent polling needs to tell "you replaced it" from "it
+    // broke", and only one of those is worth investigating.
+    CANCELLED = 4;
   }
   State state = 3;
 
@@ -191,7 +302,12 @@ message LeaderboardRequest {
   int32 limit = 2;
 }
 
-message LeaderboardResponse { repeated CandidateStanding rows = 1; }
+message LeaderboardResponse {
+  repeated CandidateStanding rows = 1;
+  // What `score` means here, e.g. "elo" or "wall_ms". A client that renders a
+  // column heading should use this rather than assume.
+  string score_label = 2;
+}
 
 // ---------------------------------------------------------------------------
 // Sandbox fleet
@@ -204,33 +320,119 @@ message WorkerHello {
   int32 slots = 2;           // orders it will run concurrently
   string backend = 3;        // "local" | "docker"
   repeated string games = 4; // empty: any game the server knows
+  // What kind of host this is, e.g. "bench-c7i". A graded problem can require
+  // one (GradeSpec.require_machine_class): a timing from a laptop and one from
+  // a server are not the same measurement, and a board that mixes them ranks
+  // the fleet rather than the submissions.
+  string machine_class = 5;
+}
+
+// One buildable side of an order: a submission, patched onto the base commit
+// and built.
+message Side {
+  string candidate_id = 1;
+
+  // Unified diff against WorkOrder.base_commit, applied with `git apply` in
+  // the worker's checkout. The coordinator only ever parsed its headers -- it
+  // has no tree to apply anything to, and applying submitted patches is
+  // exactly the work a coordinator must not do.
+  bytes patch = 2;
+
+  // Bazel targets to build, with "{submission_id}" already expanded, so the
+  // worker needs no templating and no problem config of its own.
+  repeated string build_targets = 3;
+
+  // The built binary this side plays with, as a bazel label. Empty for a
+  // graded order, which runs a command instead of playing anything.
+  string bot_target = 4;
+
+  map<string, string> params = 5;
 }
 
 message WorkOrder {
   string order_id = 1;
   string job_id = 2;
-  string candidate_id = 3;
   string game = 4;
 
-  // Everything the worker needs to reproduce the build: check out
-  // |base_commit|, drop |files| into the candidate directory, generate a BUILD
-  // from |entry_header| and |extra_deps|, build, run.
+  // The tree every side is patched onto. Two submissions are only comparable
+  // if they were built against the same one.
   string base_commit = 5;
-  repeated SourceFile files = 6;
-  string entry_header = 7;
-  repeated string extra_deps = 8;
 
-  // host:port the built bot dials. Not necessarily the address the worker used
-  // to reach the fleet service: workers may be on other hosts.
-  string broker_target = 9;
-  // "any" | "builtin:<spec>" | "player:<candidate_id>". Both sides of a
-  // candidate-vs-candidate match get mirrored "player:" orders.
-  string opponent = 10;
+  // The submission being evaluated.
+  Side candidate = 3;
+
+  // "builtin:<spec>" or "player:<candidate_id>". A "player:" opponent's own
+  // side travels in |opponent| below: one order is one whole match, so a
+  // worker never needs a second worker to cooperate with.
+  string opponent_spec = 10;
+
+  // The other side of a candidate-vs-candidate match.
+  //
+  // Both sides in one order is the point. The arena used to dispatch two
+  // mirrored orders that had to land on workers at the same time, because half
+  // a match is a bot parked at a rendezvous burning a slot for no game. One
+  // order cannot be half-dispatched.
+  //
+  // Both patches are applied to the same checkout, so a match problem's
+  // submissions must touch disjoint paths -- adding a directory of their own is
+  // the usual shape. A patch that conflicts with its opponent's comes back as
+  // an ordinary order error naming the conflict.
+  Side opponent = 16;
+
   int32 num_games = 11;
-  map<string, string> params = 12;
-
   int32 build_timeout_s = 13;
   int32 run_timeout_s = 14;
+
+  // The referee binary, built from the same patched tree and started by the
+  // worker on a private network beside the bots. From
+  // ProblemConfig.match.referee_target. Empty for a graded order, which has no
+  // opponent to referee.
+  string referee_target = 15;
+
+  // Wall-clock limit the referee gives the whole match, after which it reports
+  // what was played. Bounded below run_timeout_s, so a stuck match produces a
+  // partial tally rather than an order-level failure.
+  int32 match_deadline_s = 17;
+
+  // Refuse this order on a non-container backend.
+  //
+  // Carried on the order rather than left to the worker's own configuration,
+  // because it is the *problem* that knows whether its patches can touch BUILD
+  // files -- and a problem whose submissions can run arbitrary code at build
+  // time must not quietly land on a worker that runs them as its own user.
+  bool require_container = 19;
+
+  // A graded order: run this instead of playing anything.
+  //
+  // Flattened from the problem's GradeSpec rather than embedding it, so this
+  // message stays self-contained. A work order is the worker protocol, and a
+  // worker that had to link the problem-config schema to read one would be a
+  // worker that needs redeploying when that schema changes.
+  GradeOrder grade = 18;
+}
+
+message GradeOrder {
+  // argv to run in the sandbox at the workspace root, "{submission_id}"
+  // already expanded.
+  repeated string argv = 1;
+  // Measurement runs. One timing is noise; the aggregate over these is the
+  // score.
+  int32 repeats = 2;
+  enum Aggregate {
+    MIN = 0;
+    MEDIAN = 1;
+    MEAN = 2;
+  }
+  Aggregate aggregate = 3;
+  // Metrics the problem ranks on. A report may carry more -- a benchmark that
+  // prints extra numbers is normal -- and the rest are dropped here rather
+  // than stored.
+  repeated string metric_names = 4;
+  int32 timeout_s = 5;
+  // Refuse the order unless the worker reports this machine class. A wall-clock
+  // number from the wrong kind of host is worse than no number: it looks like a
+  // result.
+  string require_machine_class = 6;
 }
 
 message CancelOrder { string order_id = 1; }
@@ -259,6 +461,20 @@ message OrderResult {
   // Non-empty when the order could not be completed at all (clone failed, bot
   // crashed, timed out). Distinct from a clean build that lost every game.
   string error = 9;
+
+  // Whose build broke, when build_ok is false. An order builds both sides of a
+  // match, and the opponent failing to compile is not the submitter's fault --
+  // without this the coordinator would mark the wrong candidate BUILD_FAILED
+  // and retire a submission for someone else's mistake.
+  string build_failed_candidate_id = 10;
+
+  // Metrics from a graded order, keyed by GradeSpec.metrics names. Empty for a
+  // match order.
+  map<string, double> metrics = 11;
+  // Which host produced the metrics, and what class of machine it is. A wall
+  // clock number is meaningless without them.
+  string worker_id = 12;
+  string machine_class = 13;
 }
 
 message Heartbeat { int32 free_slots = 1; }
@@ -282,6 +498,25 @@ message FleetMessage {
 // ---------------------------------------------------------------------------
 // Persistence (not part of the RPC surface)
 // ---------------------------------------------------------------------------
+
+// One submission's measured metrics, written to <data_dir>/metrics.pb.
+//
+// The worker and machine class are stored with the numbers deliberately: a
+// wall-clock measurement is meaningless without the machine that produced it,
+// and a leaderboard that lost track of that would be ranking the fleet.
+message MetricRecord {
+  string candidate_id = 1;
+  map<string, double> metrics = 2;
+  string worker_id = 3;
+  string machine_class = 4;
+  int64 measured_unix_ms = 5;
+  // How many runs the aggregate was taken over.
+  int32 runs = 6;
+}
+
+message MetricStore {
+  map<string, MetricRecord> records = 1;  // key: candidate_id
+}
 
 // Written to <data_dir>/candidates/<candidate_id>/manifest.pb. Sources live
 // beside it under src/, so they can be read and diffed without a tool.

@@ -8,7 +8,7 @@ disk, and serves a leaderboard over HTTP.
 ## Running
 
 ```
-bazel run //game_mcts/tournament_server/server:tournament_server -- \
+bazel run //game_mcts/tournament_server/referee:broker_server -- \
     --grpc_port=50051 --http_port=8080 --data_dir=tournament_data \
     --turn_timeout_ms=10000 --game_time_budget_ms=0 \
     --rendezvous_timeout_ms=60000 --max_moves_per_game=50000 \
@@ -200,5 +200,6 @@ them.
 
 Any type satisfying `mcts::SerializableGame` (see
 `game_mcts/core/mcts/serialization.h` in the game-mcts repo) can be
-registered: add one `GameDescriptor` entry in `game_registry.cc` with a
+registered: add one `GameDescriptor` entry in `referee/game_registry.cc`
+with a
 session factory and a builtin factory.

@@ -1,7 +1,10 @@
 #ifndef GAME_MCTS_GAME_MCTS_CPP_PROCESS_PROCESS_H
 #define GAME_MCTS_GAME_MCTS_CPP_PROCESS_PROCESS_H
+#include <sys/types.h>
+
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -59,6 +62,13 @@ struct RunOptions {
   // an over-allocating child fail its own allocation rather than push the host
   // into swap or the OOM killer.
   std::size_t address_space_limit_bytes = 0;
+
+  // Called in the parent with the child's pgid, once, right after the child is
+  // in its own process group. Lets a caller abort a run it is not the one
+  // waiting on -- `killpg(pgid, SIGKILL)` reaches the whole tree, which is what
+  // a build tool needs. Runs on the calling thread before the wait begins, so
+  // it must not block.
+  std::function<void(pid_t)> on_started;
 };
 
 struct RunResult {

@@ -1,22 +1,31 @@
 #ifndef RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATE_STORE_H
 #define RISK_GAME_AI_CPP_TOURNAMENT_SERVER_CANDIDATE_STORE_H
 
-// Persistent registry of submitted strategies.
+// Persistent registry of submissions.
 //
 // On disk, mirroring GameHistory's layout so both are readable without a tool:
 //
 //   <dir>/<candidate_id>/manifest.pb    the Candidate proto
-//   <dir>/<candidate_id>/src/<path>     the submitted sources, verbatim
+//   <dir>/<candidate_id>/patch.diff     the submission itself
+//   <dir>/<candidate_id>/src/<path>     files the patch adds, extracted
 //   <dir>/index.jsonl                   one line per candidate, append-only
 //
-// Sources are written out as real files rather than kept inside the manifest
-// so a human (or an agent with a shell) can read, grep and diff them directly;
-// the manifest stays the index.
+// A submission *is* a patch. A structured submission (a list of files plus an
+// entry header) is converted into an add-only patch here, at submit time, so
+// everything downstream -- the scheduler, the wire, both worker backends --
+// handles exactly one form and the worker only ever runs `git apply`.
 //
-// Submitted paths are attacker-controlled in the sense that matters here: an
-// agent generates them. Validate() is therefore the single gate every write
-// goes through, and it is deliberately strict -- an allowlist of extensions
-// under a relative path, no symlinks, bounded size and count.
+// The added files are also extracted beside the patch, as real files, so a
+// human or an agent with a shell can read and grep a rival's source without a
+// checkout. The manifest stays the index.
+//
+// Submitted content is attacker-controlled in the sense that matters here: an
+// agent generates it. Validate() is the single gate every write goes through.
+// What it can and cannot promise is worth being exact about: it bounds size,
+// bounds hunk count, and holds touched paths to the problem's policy. It does
+// not make a patch safe to build -- a problem that lets submissions touch BUILD
+// files has accepted arbitrary code at build time, and only the sandbox
+// contains that.
 
 #include <cstddef>
 #include <filesystem>
@@ -27,6 +36,7 @@
 #include <vector>
 
 #include "game_mcts/tournament_server/proto/arena.pb.h"
+#include "game_mcts/tournament_server/proto/problem.pb.h"
 
 namespace tournament_arena {
 
@@ -39,10 +49,25 @@ struct CandidateLimits {
   std::size_t max_build_error_bytes = 8 * 1024;
 };
 
+// What the store needs from the problem to turn a submission into a patch and
+// decide whether to accept it. Filled from ProblemConfig; passed rather than
+// read from a global so the store stays testable without a config file.
+struct SubmissionRules {
+  proto::SubmissionPolicy policy;
+  // Directory a structured submission's files are placed under, as
+  // <files_submit_dir>/<candidate_id>/<path>. Empty rejects the structured
+  // form, requiring every submission to arrive as a patch.
+  std::string files_submit_dir;
+  // Game key the generated BUILD compiles the candidate harness for. Only used
+  // by the structured form.
+  std::string game;
+};
+
 class CandidateStore {
  public:
   explicit CandidateStore(std::filesystem::path dir,
-                          CandidateLimits limits = {});
+                          CandidateLimits limits = {},
+                          SubmissionRules rules = {});
 
   // Rebuilds the in-memory index from disk. Call once at startup.
   void Load();
@@ -66,6 +91,10 @@ class CandidateStore {
   auto ReadSource(const std::string &candidate_id, const std::string &path,
                   std::string *error) const -> std::optional<std::string>;
 
+  // The stored patch, verbatim. This is what the scheduler puts on the wire.
+  auto ReadPatch(const std::string &candidate_id,
+                 std::string *error) const -> std::optional<std::string>;
+
   // All candidates, newest first.
   auto List() const -> std::vector<proto::Candidate>;
 
@@ -84,8 +113,16 @@ class CandidateStore {
   void AppendIndexLocked(const proto::Candidate &candidate) const;
   auto AllocateIdLocked(const std::string &display_name) const -> std::string;
 
+  // Builds the patch a request will be stored as: the request's own when it
+  // sent one, otherwise a synthesized add-only patch under the problem's
+  // files_submit_dir, generated BUILD included.
+  auto PatchForLocked(const proto::SubmitRequest &request,
+                      const std::string &candidate_id,
+                      std::string *error) const -> std::optional<std::string>;
+
   const std::filesystem::path dir_;
   const CandidateLimits limits_;
+  const SubmissionRules rules_;
 
   mutable std::mutex mutex_;
   // candidate_id -> manifest. Small (hundreds), and every lookup is on the

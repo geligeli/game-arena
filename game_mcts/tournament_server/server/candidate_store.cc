@@ -9,6 +9,8 @@
 #include <string_view>
 
 #include "absl/log/log.h"
+#include "game_mcts/tournament_server/server/generated_build.h"
+#include "game_mcts/tournament_server/server/unified_diff.h"
 
 namespace tournament_arena {
 
@@ -38,12 +40,23 @@ auto JsonEscape(const std::string &s) -> std::string {
   out.reserve(s.size());
   for (const char c : s) {
     switch (c) {
-      case '"': out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\n': out += "\\n"; break;
-      case '\r': out += "\\r"; break;
-      case '\t': out += "\\t"; break;
-      default: out += c;
+      case '"':
+        out += "\\\"";
+        break;
+      case '\\':
+        out += "\\\\";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        out += c;
     }
   }
   return out;
@@ -55,8 +68,8 @@ auto HasAllowedExtension(const std::string &path) -> bool {
     return false;
   }
   const std::string_view ext(path.data() + dot, path.size() - dot);
-  return std::find(kAllowedExtensions.begin(), kAllowedExtensions.end(),
-                   ext) != kAllowedExtensions.end();
+  return std::find(kAllowedExtensions.begin(), kAllowedExtensions.end(), ext) !=
+         kAllowedExtensions.end();
 }
 
 }  // namespace
@@ -136,8 +149,8 @@ auto Slugify(const std::string &display_name) -> std::string {
 }
 
 CandidateStore::CandidateStore(std::filesystem::path dir,
-                               CandidateLimits limits)
-    : dir_(std::move(dir)), limits_(limits) {
+                               CandidateLimits limits, SubmissionRules rules)
+    : dir_(std::move(dir)), limits_(limits), rules_(std::move(rules)) {
   std::error_code ec;
   std::filesystem::create_directories(dir_, ec);
   if (ec) {
@@ -173,72 +186,136 @@ void CandidateStore::Load() {
   LOG(INFO) << "Loaded " << candidates_.size() << " candidates from " << dir_;
 }
 
+namespace {
+
+// A path passes when it matches some allow pattern (or there are none) and no
+// deny pattern. Deny wins, so a broad allow can be narrowed without rewriting
+// it.
+auto PathAllowed(const proto::SubmissionPolicy &policy, const std::string &path,
+                 std::string *error) -> bool {
+  for (const std::string &pattern : policy.deny_paths()) {
+    if (PathMatchesGlob(path, pattern)) {
+      *error = "path '" + path + "' is excluded by this problem (deny_paths '" +
+               pattern + "')";
+      return false;
+    }
+  }
+  if (policy.allow_paths().empty()) {
+    return true;
+  }
+  for (const std::string &pattern : policy.allow_paths()) {
+    if (PathMatchesGlob(path, pattern)) {
+      return true;
+    }
+  }
+  *error = "path '" + path +
+           "' is outside what this problem accepts; see the problem's "
+           "allow_paths";
+  return false;
+}
+
+}  // namespace
+
 auto CandidateStore::Validate(const proto::SubmitRequest &request,
                               std::string *error) const -> bool {
   if (request.display_name().empty()) {
     *error = "display_name is required";
     return false;
   }
-  if (request.game().empty()) {
-    *error = "game is required (e.g. \"risk2\")";
-    return false;
-  }
-  if (request.files().empty()) {
-    *error = "at least one source file is required";
-    return false;
-  }
-  if (static_cast<std::size_t>(request.files_size()) > limits_.max_files) {
-    *error = "too many files: " + std::to_string(request.files_size()) +
-             " (max " + std::to_string(limits_.max_files) + ")";
+  if (request.patch().empty() && request.files().empty()) {
+    *error = "a submission needs either a patch or at least one source file";
     return false;
   }
 
-  std::size_t total = 0;
-  std::vector<std::string> seen;
-  for (const proto::SourceFile &file : request.files()) {
-    if (!ValidateSourcePath(file.path(), error)) {
+  if (request.patch().empty()) {
+    // The structured form is a convenience over the patch form, so it is
+    // checked here and then converted; everything below applies to the result.
+    if (rules_.files_submit_dir.empty()) {
+      *error =
+          "this problem takes patches, not file lists: send a unified diff in "
+          "the patch field";
       return false;
     }
-    if (std::find(seen.begin(), seen.end(), file.path()) != seen.end()) {
-      *error = "duplicate file path: '" + file.path() + "'";
+    if (static_cast<std::size_t>(request.files_size()) > limits_.max_files) {
+      *error = "too many files: " + std::to_string(request.files_size()) +
+               " (max " + std::to_string(limits_.max_files) + ")";
       return false;
     }
-    seen.push_back(file.path());
-    if (file.content().size() > limits_.max_file_bytes) {
-      *error = "file '" + file.path() + "' is too large (" +
-               std::to_string(file.content().size()) + " bytes, max " +
-               std::to_string(limits_.max_file_bytes) + ")";
+    std::vector<std::string> seen;
+    for (const proto::SourceFile &file : request.files()) {
+      if (!ValidateSourcePath(file.path(), error)) {
+        return false;
+      }
+      if (std::find(seen.begin(), seen.end(), file.path()) != seen.end()) {
+        *error = "duplicate file path: '" + file.path() + "'";
+        return false;
+      }
+      seen.push_back(file.path());
+      if (file.content().size() > limits_.max_file_bytes) {
+        *error = "file '" + file.path() + "' is too large (" +
+                 std::to_string(file.content().size()) + " bytes, max " +
+                 std::to_string(limits_.max_file_bytes) + ")";
+        return false;
+      }
+    }
+    if (request.entry_header().empty()) {
+      *error = "entry_header is required (the header defining MakePolicy)";
       return false;
     }
-    total += file.content().size();
+    if (std::find(seen.begin(), seen.end(), request.entry_header()) ==
+        seen.end()) {
+      *error = "entry_header '" + request.entry_header() +
+               "' is not among the submitted files";
+      return false;
+    }
+    for (const std::string &dep : request.extra_deps()) {
+      const bool allowed = std::any_of(
+          kAllowedDepPrefixes.begin(), kAllowedDepPrefixes.end(),
+          [&](std::string_view prefix) { return dep.rfind(prefix, 0) == 0; });
+      if (!allowed) {
+        *error = "dependency '" + dep +
+                 "' is not allowed (permitted: //game_mcts/core/mcts:, "
+                 "//game_mcts/games/risk:, //game_mcts/games/risk/strategies:, "
+                 "@abseil-cpp//)";
+        return false;
+      }
+    }
   }
-  if (total > limits_.max_total_bytes) {
-    *error = "submission is too large (" + std::to_string(total) +
-             " bytes, max " + std::to_string(limits_.max_total_bytes) + ")";
+
+  // From here on there is only a patch, whichever form arrived. Validating the
+  // synthesized one too is deliberate: the generator is code, and a policy that
+  // only checked hand-written patches would not check what actually gets built.
+  const std::optional<std::string> patch =
+      PatchForLocked(request, "validate-only", error);
+  if (!patch.has_value()) {
+    return false;
+  }
+  const proto::SubmissionPolicy &policy = rules_.policy;
+  if (policy.max_patch_bytes() > 0 &&
+      patch->size() > policy.max_patch_bytes()) {
+    *error = "patch is too large (" + std::to_string(patch->size()) +
+             " bytes, max " + std::to_string(policy.max_patch_bytes()) + ")";
     return false;
   }
 
-  if (request.entry_header().empty()) {
-    *error = "entry_header is required (the header defining MakePolicy)";
+  Patch parsed;
+  if (!ParseUnifiedDiff(*patch, &parsed, error)) {
     return false;
   }
-  if (std::find(seen.begin(), seen.end(), request.entry_header()) ==
-      seen.end()) {
-    *error = "entry_header '" + request.entry_header() +
-             "' is not among the submitted files";
+  if (policy.max_files() > 0 && parsed.files.size() > policy.max_files()) {
+    *error =
+        "patch touches too many files: " + std::to_string(parsed.files.size()) +
+        " (max " + std::to_string(policy.max_files()) + ")";
     return false;
   }
-
-  for (const std::string &dep : request.extra_deps()) {
-    const bool allowed =
-        std::any_of(kAllowedDepPrefixes.begin(), kAllowedDepPrefixes.end(),
-                    [&](std::string_view prefix) {
-                      return dep.rfind(prefix, 0) == 0;
-                    });
-    if (!allowed) {
-       *error = "dependency '" + dep +
-                "' is not allowed (permitted: //game_mcts/core/mcts:, "
-                "//game_mcts/games/risk:, //game_mcts/games/risk/strategies:, @abseil-cpp//)";
+  if (policy.max_hunks() > 0 &&
+      static_cast<uint32_t>(parsed.total_hunks) > policy.max_hunks()) {
+    *error = "patch has too many hunks: " + std::to_string(parsed.total_hunks) +
+             " (max " + std::to_string(policy.max_hunks()) + ")";
+    return false;
+  }
+  for (const std::string &path : TouchedPaths(parsed)) {
+    if (!PathAllowed(policy, path, error)) {
       return false;
     }
   }
@@ -249,6 +326,44 @@ auto CandidateStore::Validate(const proto::SubmitRequest &request,
     return false;
   }
   return true;
+}
+
+auto CandidateStore::PatchForLocked(
+    const proto::SubmitRequest &request, const std::string &candidate_id,
+    std::string *error) const -> std::optional<std::string> {
+  if (!request.patch().empty()) {
+    return std::string(request.patch());
+  }
+  if (rules_.files_submit_dir.empty()) {
+    *error = "this problem takes patches, not file lists";
+    return std::nullopt;
+  }
+
+  const std::string root = rules_.files_submit_dir + "/" + candidate_id;
+  std::vector<NewFile> files;
+  std::vector<std::string> paths;
+  for (const proto::SourceFile &file : request.files()) {
+    files.push_back({root + "/" + file.path(), file.content()});
+    paths.push_back(file.path());
+  }
+
+  // The BUILD is generated, never submitted: a submitter who could write their
+  // own could write a genrule, and a genrule runs arbitrary code at build time.
+  const std::string build = GenerateCandidateBuild(
+      rules_.files_submit_dir, candidate_id,
+      rules_.game.empty() ? request.game() : rules_.game, paths,
+      request.entry_header(),
+      {request.extra_deps().begin(), request.extra_deps().end()});
+  if (build.empty()) {
+    *error =
+        "cannot generate a BUILD file for this submission (unknown game '" +
+        request.game() +
+        "', or an entry header that is not one of the "
+        "submitted files)";
+    return std::nullopt;
+  }
+  files.push_back({root + "/BUILD", build});
+  return MakeAddOnlyPatch(files);
 }
 
 auto CandidateStore::AllocateIdLocked(const std::string &display_name) const
@@ -293,8 +408,7 @@ auto CandidateStore::WriteManifestLocked(
   std::error_code ec;
   std::filesystem::rename(tmp, path, ec);
   if (ec) {
-    LOG(ERROR) << "Could not install manifest " << path << ": "
-               << ec.message();
+    LOG(ERROR) << "Could not install manifest " << path << ": " << ec.message();
     return false;
   }
   return true;
@@ -339,6 +453,23 @@ auto CandidateStore::Create(const proto::SubmitRequest &request,
   candidate.set_status(proto::Candidate::PENDING);
   candidate.set_submitted_unix_ms(NowUnixMs());
 
+  // Generated with the real id this time: a structured submission's paths carry
+  // it, so the patch validated above and the one stored differ by exactly that.
+  const std::optional<std::string> patch =
+      PatchForLocked(request, candidate.candidate_id(), error);
+  if (!patch.has_value()) {
+    return std::nullopt;
+  }
+  candidate.set_patch(*patch);
+
+  Patch parsed;
+  if (!ParseUnifiedDiff(*patch, &parsed, error)) {
+    return std::nullopt;
+  }
+  for (const std::string &path : TouchedPaths(parsed)) {
+    candidate.add_touched_paths(path);
+  }
+
   const std::filesystem::path root = CandidateDir(candidate.candidate_id());
   std::error_code ec;
   std::filesystem::create_directories(root / "src", ec);
@@ -347,12 +478,32 @@ auto CandidateStore::Create(const proto::SubmitRequest &request,
     return std::nullopt;
   }
 
-  for (const proto::SourceFile &file : request.files()) {
+  {
+    std::ofstream out(root / "patch.diff", std::ios::binary | std::ios::trunc);
+    if (!out) {
+      *error = "cannot write patch.diff";
+      return std::nullopt;
+    }
+    out.write(patch->data(), static_cast<std::streamsize>(patch->size()));
+    if (!out) {
+      *error = "short write for patch.diff";
+      return std::nullopt;
+    }
+  }
+
+  // Files the patch adds are also written out plainly, so a rival's source can
+  // be read and grepped without reconstructing it from a diff. A patch that
+  // only modifies existing files adds none, and GetSource then has nothing to
+  // serve for it -- which is honest: those lines live in the repo, not here.
+  for (const PatchFile &file : parsed.files) {
+    if (!file.is_new || file.added_content.empty()) {
+      continue;
+    }
     const std::filesystem::path path = root / "src" / file.path();
     std::filesystem::create_directories(path.parent_path(), ec);
     if (ec) {
-      *error = "cannot create directory for '" + file.path() +
-               "': " + ec.message();
+      *error =
+          "cannot create directory for '" + file.path() + "': " + ec.message();
       return std::nullopt;
     }
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -360,8 +511,8 @@ auto CandidateStore::Create(const proto::SubmitRequest &request,
       *error = "cannot write '" + file.path() + "'";
       return std::nullopt;
     }
-    out.write(file.content().data(),
-              static_cast<std::streamsize>(file.content().size()));
+    out.write(file.added_content.data(),
+              static_cast<std::streamsize>(file.added_content.size()));
     if (!out) {
       *error = "short write for '" + file.path() + "'";
       return std::nullopt;
@@ -376,9 +527,31 @@ auto CandidateStore::Create(const proto::SubmitRequest &request,
   AppendIndexLocked(candidate);
   candidates_[candidate.candidate_id()] = candidate;
   LOG(INFO) << "Candidate " << candidate.candidate_id() << " submitted by '"
-            << candidate.author() << "' for " << candidate.game() << " ("
-            << candidate.file_paths_size() << " files)";
+            << candidate.author() << "' (" << patch->size() << " byte patch, "
+            << candidate.touched_paths_size() << " path(s) touched)";
   return candidate;
+}
+
+auto CandidateStore::ReadPatch(const std::string &candidate_id,
+                               std::string *error) const
+    -> std::optional<std::string> {
+  std::lock_guard lock(mutex_);
+  const auto it = candidates_.find(candidate_id);
+  if (it == candidates_.end()) {
+    *error = "unknown candidate '" + candidate_id + "'";
+    return std::nullopt;
+  }
+  if (!it->second.patch().empty()) {
+    return std::string(it->second.patch());
+  }
+  // Manifests written before the patch was inlined keep it only on disk.
+  std::ifstream in(CandidateDir(candidate_id) / "patch.diff", std::ios::binary);
+  if (!in) {
+    *error = "candidate '" + candidate_id + "' has no stored patch";
+    return std::nullopt;
+  }
+  return std::string(std::istreambuf_iterator<char>(in),
+                     std::istreambuf_iterator<char>());
 }
 
 auto CandidateStore::Get(const std::string &candidate_id) const
@@ -391,10 +564,9 @@ auto CandidateStore::Get(const std::string &candidate_id) const
   return it->second;
 }
 
-auto CandidateStore::ReadSource(const std::string &candidate_id,
-                                const std::string &path,
-                                std::string *error) const
-    -> std::optional<std::string> {
+auto CandidateStore::ReadSource(
+    const std::string &candidate_id, const std::string &path,
+    std::string *error) const -> std::optional<std::string> {
   proto::Candidate candidate;
   {
     std::lock_guard lock(mutex_);
@@ -413,8 +585,7 @@ auto CandidateStore::ReadSource(const std::string &candidate_id,
     *error = "candidate '" + candidate_id + "' has no file '" + path + "'";
     return std::nullopt;
   }
-  std::ifstream in(CandidateDir(candidate_id) / "src" / path,
-                   std::ios::binary);
+  std::ifstream in(CandidateDir(candidate_id) / "src" / path, std::ios::binary);
   if (!in) {
     *error = "cannot read '" + path + "'";
     return std::nullopt;

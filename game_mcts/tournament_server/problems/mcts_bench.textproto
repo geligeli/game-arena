@@ -1,0 +1,96 @@
+# A graded problem: make the MCTS hot path faster without breaking it.
+#
+# The counterpart to risk2.textproto -- same repo, same fleet, same submission
+# flow, but the score is a stopwatch rather than a tournament. It exists as much
+# to keep the grading path honest as to be run: if only match problems have a
+# real config, the grade path rots.
+#
+#   bazel run //game_mcts/tournament_server/server:problem_server -- \
+#       --problem_config=$PWD/game_mcts/tournament_server/problems/mcts_bench.textproto \
+#       --data_dir=$PWD/bench_data --clients=$PWD/clients.textproto
+
+problem_id: "mcts-bench"
+display_name: "MCTS throughput"
+description:
+  "Make `//game_mcts/tools/bench:mcts_bench` run faster. Ranked by wall time, "
+  "lowest wins.\n"
+  "\n"
+  "Submit a patch touching anything under `game_mcts/core/` or "
+  "`game_mcts/common/`. The benchmark and its harness are off limits -- "
+  "optimising the stopwatch is not optimising the search -- and the existing "
+  "tests must still pass, which is why they are built alongside the "
+  "benchmark.\n"
+
+repo {
+  url: "/large_nfs/game-mcts"
+  base_commit: "HEAD"
+}
+
+submission {
+  max_patch_bytes: 1048576
+  max_files: 64
+  allow_paths: "game_mcts/core/**"
+  allow_paths: "game_mcts/common/**"
+  # Editing the benchmark is editing the scoreboard.
+  deny_paths: "game_mcts/tools/**"
+  deny_paths: "**/BUILD"
+  deny_paths: "**/*_test.cpp"
+  deny_paths: "**/*_test.cc"
+
+  # No files_submit_dir: this problem's solutions change existing code, so a
+  # patch is the only form that can express one.
+}
+
+build {
+  # The tests build alongside the benchmark, so "fast but wrong" fails to build
+  # rather than topping the board.
+  targets: "//game_mcts/tools/bench:mcts_bench"
+  targets: "//game_mcts/core/mcts:mcts_test"
+  bazel_flags: "--config=native"
+  timeout_s: 2400
+}
+
+sandbox {
+  image: "takumi.city/jax-cpu-training:latest"
+  memory_limit_mb: 8192
+  # One core, pinned: a submission must not score by spawning threads.
+  cpus: 1.0
+  # A timed run has no business reaching the network.
+  network: NETWORK_NONE
+  require_container: true
+}
+
+grade {
+  argv: "bazel-bin/game_mcts/tools/bench/mcts_bench"
+  argv: "--benchmark_format=json"
+  # A single timing is noise. Best of five is the score.
+  repeats: 5
+  aggregate: MIN
+  metrics {
+    name: "wall_ms"
+    direction: MINIMIZE
+    primary: true
+    unit: "ms"
+  }
+  metrics {
+    name: "peak_rss_mb"
+    direction: MINIMIZE
+    unit: "MiB"
+  }
+  # A wall-clock number from a laptop and one from a server are not the same
+  # measurement. Without this the board ranks the fleet, not the submissions.
+  require_machine_class: "bench-c7i"
+  timeout_s: 900
+}
+
+ranking {
+  kind: METRIC
+  metric_name: "wall_ms"
+}
+
+clients {
+  default_quota {
+    max_active_evaluations: 1
+    max_queued_jobs: 4
+  }
+}

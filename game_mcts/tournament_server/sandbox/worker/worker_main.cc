@@ -12,6 +12,9 @@
 // Each slot owns a checkout and a bazel output base, so builds run in parallel
 // without sharing a workspace lock.
 
+#include <grpcpp/grpcpp.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -21,9 +24,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-#include <grpcpp/grpcpp.h>
-#include <unistd.h>
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
@@ -48,7 +48,8 @@ ABSL_FLAG(std::string, work_dir, "/tmp/arena_sandbox",
 ABSL_FLAG(std::string, disk_cache, "",
           "Shared bazel --disk_cache across slots; defaults to "
           "<work_dir>/disk_cache");
-ABSL_FLAG(std::string, backend, "local", "How orders are executed: local or docker");
+ABSL_FLAG(std::string, backend, "local",
+          "How orders are executed: local or docker");
 ABSL_FLAG(std::string, docker_image, "",
           "Image for --backend=docker; must contain bazel matching the repo's "
           "MODULE.bazel.lock (required with --backend=docker)");
@@ -56,6 +57,26 @@ ABSL_FLAG(std::string, bazel, "bazel", "bazel binary (local backend)");
 ABSL_FLAG(std::string, git, "git", "git binary");
 ABSL_FLAG(std::string, bazel_flags, "",
           "Comma-separated extra bazel flags, e.g. --config=native");
+ABSL_FLAG(bool, host_overlay, true,
+          "Assemble each slot's overlay on the host and bind-mount the merged "
+          "tree in, so containers need no CAP_SYS_ADMIN. Requires this worker "
+          "to be able to mount overlayfs (root, or a user namespace). Turning "
+          "it off falls back to mounting inside the container, which needs "
+          "CAP_SYS_ADMIN and is not a security boundary");
+ABSL_FLAG(bool, allow_build_network, false,
+          "Let the build container reach the network. Off by default: a build "
+          "that can fetch can also exfiltrate, and a submitted genrule is "
+          "arbitrary code. The image must carry a warm bazel repository cache");
+ABSL_FLAG(std::string, run_as_user, "",
+          "Run containers as this user, e.g. \"1000:1000\". Empty leaves the "
+          "image's default, which for most images is root");
+ABSL_FLAG(double, container_cpus, 0.0, "CPU cap per container. 0 is unlimited");
+ABSL_FLAG(int, pids_limit, 512, "Process cap per container. 0 is unlimited");
+ABSL_FLAG(std::string, machine_class, "",
+          "What kind of host this is, e.g. \"bench-c7i\". A graded problem can "
+          "require one: a timing from a laptop and one from a server are not "
+          "the same measurement, and a board that mixes them ranks the fleet "
+          "rather than the submissions");
 ABSL_FLAG(int, reconnect_delay_s, 5,
           "Delay before re-attaching after the arena drops the stream");
 
@@ -86,8 +107,12 @@ auto DefaultWorkerId() -> std::string {
 // session is torn down and a fresh one is built on reconnect.
 class WorkerSession {
  public:
-  WorkerSession(SandboxBackend *backend, Stream *stream, int slots)
-      : backend_(backend), stream_(stream) {
+  WorkerSession(SandboxBackend *backend, Stream *stream, int slots,
+                std::string worker_id, std::string machine_class)
+      : backend_(backend),
+        stream_(stream),
+        worker_id_(std::move(worker_id)),
+        machine_class_(std::move(machine_class)) {
     for (int slot = 0; slot < slots; ++slot) {
       threads_.emplace_back([this, slot] { SlotLoop(slot); });
     }
@@ -110,13 +135,20 @@ class WorkerSession {
     cv_.notify_one();
   }
 
-  // Best effort: an order already being built cannot be recalled, so this only
-  // drops it if it has not started. The arena tolerates a late result.
+  // Drops the order if it is still queued, and stops it if it is already
+  // running -- the backend kills the process group or the containers by name.
+  //
+  // The two halves are deliberately not one atomic step. An order that finishes
+  // between them just reports its result, which the arena already tolerates:
+  // it asked for the slot back, and it gets the slot back either way.
   void Cancel(const std::string &order_id) {
-    std::lock_guard lock(mutex_);
-    std::erase_if(queue_, [&](const proto::WorkOrder &order) {
-      return order.order_id() == order_id;
-    });
+    {
+      std::lock_guard lock(mutex_);
+      std::erase_if(queue_, [&](const proto::WorkOrder &order) {
+        return order.order_id() == order_id;
+      });
+    }
+    backend_->Cancel(order_id);
   }
 
   void Stop() {
@@ -142,8 +174,9 @@ class WorkerSession {
       }
 
       LOG(INFO) << "slot " << slot << ": order " << order.order_id()
-                << " candidate " << order.candidate_id() << " vs "
-                << order.opponent() << " (" << order.num_games() << " games)";
+                << " candidate " << order.candidate().candidate_id() << " vs "
+                << order.opponent_spec() << " (" << order.num_games()
+                << " games)";
       SendProgress(order.order_id(), proto::OrderProgress::BUILDING);
 
       const OrderOutcome outcome = backend_->RunOrder(slot, order);
@@ -159,10 +192,19 @@ class WorkerSession {
       result->set_losses(outcome.losses);
       result->set_elo(outcome.elo);
       result->set_error(outcome.error);
+      // Whose build broke, when one did. An order builds both sides of a
+      // match, and the opponent failing to compile is not the submitter's
+      // fault -- without this the arena retires the wrong submission.
+      result->set_build_failed_candidate_id(outcome.build_failed_candidate_id);
+      result->set_worker_id(worker_id_);
+      result->set_machine_class(machine_class_);
+      for (const auto &[name, value] : outcome.metrics) {
+        (*result->mutable_metrics())[name] = value;
+      }
 
       LOG(INFO) << "slot " << slot << ": order " << order.order_id()
-                << " done, build_ok=" << outcome.build_ok << " games="
-                << outcome.games_played
+                << " done, build_ok=" << outcome.build_ok
+                << " games=" << outcome.games_played
                 << (outcome.error.empty() ? "" : " error=" + outcome.error);
       Write(message);
     }
@@ -185,6 +227,8 @@ class WorkerSession {
 
   SandboxBackend *backend_;  // not owned
   Stream *stream_;           // not owned
+  const std::string worker_id_;
+  const std::string machine_class_;
 
   std::mutex mutex_;
   std::condition_variable cv_;
@@ -208,6 +252,7 @@ auto main(int argc, char **argv) -> int {
   }
 
   const int slots = std::max(1, absl::GetFlag(FLAGS_slots));
+  const std::string machine_class = absl::GetFlag(FLAGS_machine_class);
   const std::string worker_id = absl::GetFlag(FLAGS_worker_id).empty()
                                     ? DefaultWorkerId()
                                     : absl::GetFlag(FLAGS_worker_id);
@@ -224,8 +269,8 @@ auto main(int argc, char **argv) -> int {
     backend_config.bazel = absl::GetFlag(FLAGS_bazel);
     backend_config.git = absl::GetFlag(FLAGS_git);
     if (!absl::GetFlag(FLAGS_bazel_flags).empty()) {
-      backend_config.bazel_flags =
-          absl::StrSplit(absl::GetFlag(FLAGS_bazel_flags), ',', absl::SkipEmpty());
+      backend_config.bazel_flags = absl::StrSplit(
+          absl::GetFlag(FLAGS_bazel_flags), ',', absl::SkipEmpty());
     }
     backend = std::make_unique<LocalBackend>(std::move(backend_config));
   } else if (absl::GetFlag(FLAGS_backend) == "docker") {
@@ -249,9 +294,20 @@ auto main(int argc, char **argv) -> int {
             : std::filesystem::path(absl::GetFlag(FLAGS_disk_cache));
     backend_config.docker_image = absl::GetFlag(FLAGS_docker_image);
     backend_config.git = absl::GetFlag(FLAGS_git);
+    backend_config.host_overlay = absl::GetFlag(FLAGS_host_overlay);
+    backend_config.allow_build_network =
+        absl::GetFlag(FLAGS_allow_build_network);
+    backend_config.run_as_user = absl::GetFlag(FLAGS_run_as_user);
+    backend_config.cpus = absl::GetFlag(FLAGS_container_cpus);
+    backend_config.pids_limit = absl::GetFlag(FLAGS_pids_limit);
+    if (!backend_config.host_overlay) {
+      LOG(WARNING) << "--host_overlay=false: containers run with CAP_SYS_ADMIN "
+                      "so they can mount their own overlay. Submitted build "
+                      "code then runs privileged, which is not a boundary";
+    }
     if (!absl::GetFlag(FLAGS_bazel_flags).empty()) {
-      backend_config.bazel_flags =
-          absl::StrSplit(absl::GetFlag(FLAGS_bazel_flags), ',', absl::SkipEmpty());
+      backend_config.bazel_flags = absl::StrSplit(
+          absl::GetFlag(FLAGS_bazel_flags), ',', absl::SkipEmpty());
     }
     backend = std::make_unique<DockerBackend>(std::move(backend_config));
   } else {
@@ -261,8 +317,8 @@ auto main(int argc, char **argv) -> int {
   }
 
   LOG(INFO) << "Worker '" << worker_id << "' warming up " << slots
-             << " slot(s) from " << absl::GetFlag(FLAGS_repo) << " via the "
-             << backend->name() << " backend";
+            << " slot(s) from " << absl::GetFlag(FLAGS_repo) << " via the "
+            << backend->name() << " backend";
   std::string error;
   if (!backend->Warmup(slots, &error)) {
     LOG(ERROR) << "Cannot prepare slots: " << error;
@@ -288,7 +344,8 @@ auto main(int argc, char **argv) -> int {
     } else {
       LOG(INFO) << "Attached to " << absl::GetFlag(FLAGS_server) << " as '"
                 << worker_id << "' with " << slots << " slot(s)";
-      WorkerSession session(backend.get(), stream.get(), slots);
+      WorkerSession session(backend.get(), stream.get(), slots, worker_id,
+                            machine_class);
       proto::FleetMessage message;
       while (stream->Read(&message)) {
         if (message.has_order()) {

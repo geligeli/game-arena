@@ -1,6 +1,9 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -10,6 +13,139 @@ package(
 # scheduling, ELO and history stores, and the HTTP leaderboard. Client-side
 # strategy code lives in //game_mcts/tournament_server/client.
 
+# The BUILD file a structured submission is compiled with. Runs at submit time,
+# because the generated BUILD is part of the patch that gets stored.
+cc_library(
+    name = "generated_build",
+    srcs = ["generated_build.cc"],
+    hdrs = ["generated_build.h"],
+)
+
+cc_test(
+    name = "generated_build_test",
+    srcs = ["generated_build_test.cc"],
+    deps = [
+        ":generated_build",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# Who may submit, and how much. Holds hashes, never tokens.
+cc_library(
+    name = "client_registry",
+    srcs = ["client_registry.cc"],
+    hdrs = ["client_registry.h"],
+    deps = [
+        "//game_mcts/tournament_server/proto:clients_cc_proto",
+        "//game_mcts/tournament_server/proto:problem_cc_proto",
+        "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/strings",
+        "@boringssl//:crypto",
+        "@protobuf//:protobuf",
+    ],
+)
+
+cc_test(
+    name = "client_registry_test",
+    srcs = ["client_registry_test.cc"],
+    deps = [
+        ":client_registry",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# How a problem's submissions are scored and ordered. Two problems ask
+# genuinely different questions -- "who beats whom" and "how fast is it" -- and
+# everything above this sees only rows.
+cc_library(
+    name = "standings",
+    hdrs = ["standings.h"],
+    deps = ["//game_mcts/tournament_server/proto:arena_cc_proto"],
+)
+
+cc_library(
+    name = "elo_standings",
+    srcs = ["elo_standings.cc"],
+    hdrs = ["elo_standings.h"],
+    deps = [
+        ":candidate_store",
+        ":elo_store",
+        ":standings",
+        "@abseil-cpp//absl/log",
+    ],
+)
+
+cc_library(
+    name = "metric_standings",
+    srcs = ["metric_standings.cc"],
+    hdrs = ["metric_standings.h"],
+    deps = [
+        ":standings",
+        "@abseil-cpp//absl/log",
+    ],
+)
+
+cc_test(
+    name = "standings_test",
+    srcs = ["standings_test.cc"],
+    deps = [
+        ":elo_standings",
+        ":metric_standings",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# Reading and writing unified diffs: which paths a submission touches, how big
+# it is, and what a newly added file contains. Header-level only -- applying a
+# patch is the worker's job, in a container.
+cc_library(
+    name = "unified_diff",
+    srcs = ["unified_diff.cc"],
+    hdrs = ["unified_diff.h"],
+    deps = ["@abseil-cpp//absl/strings"],
+)
+
+cc_test(
+    name = "unified_diff_test",
+    srcs = ["unified_diff_test.cc"],
+    deps = [
+        ":unified_diff",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# What a problem is, as data: parsing, defaulting and checking the .textproto
+# the server is started with. No problem-specific code -- just the schema.
+cc_library(
+    name = "problem_config",
+    srcs = ["problem_config.cc"],
+    hdrs = ["problem_config.h"],
+    deps = [
+        "//game_mcts/tournament_server/proto:problem_cc_proto",
+        "@abseil-cpp//absl/strings",
+        "@protobuf//:protobuf",
+    ],
+)
+
+cc_test(
+    name = "problem_config_test",
+    srcs = ["problem_config_test.cc"],
+    deps = [
+        ":problem_config",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "shipped_problems_test",
+    srcs = ["shipped_problems_test.cc"],
+    data = ["//game_mcts/tournament_server/problems:configs"],
+    deps = [
+        ":problem_config",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # Persistent registry of submitted strategies: manifests plus their sources on
 # disk, and the validation gate every submission passes through.
 cc_library(
@@ -17,7 +153,10 @@ cc_library(
     srcs = ["candidate_store.cc"],
     hdrs = ["candidate_store.h"],
     deps = [
+        ":generated_build",
+        ":unified_diff",
         "//game_mcts/tournament_server/proto:arena_cc_proto",
+        "//game_mcts/tournament_server/proto:problem_cc_proto",
         "@abseil-cpp//absl/log",
     ],
 )
@@ -48,7 +187,10 @@ cc_library(
         ":candidate_store",
         ":elo_store",
         ":fleet_worker",
+        ":problem_config",
+        ":standings",
         "//game_mcts/tournament_server/proto:arena_cc_proto",
+        "//game_mcts/tournament_server/proto:clients_cc_proto",
         "@abseil-cpp//absl/log",
     ],
 )
@@ -57,54 +199,9 @@ cc_test(
     name = "scheduler_test",
     srcs = ["scheduler_test.cc"],
     deps = [
+        ":elo_standings",
         ":scheduler",
         "@googletest//:gtest_main",
-    ],
-)
-
-# Type-erased game engine: adapts any mcts::SerializableGame to a byte-level
-# interface the broker core can drive.
-cc_library(
-    name = "game_session",
-    srcs = ["game_session.cc"],
-    hdrs = ["game_session.h"],
-    deps = [
-        "//game_mcts/core/mcts:game_traits",
-        "//game_mcts/core/mcts:serialization",
-        "//game_mcts/tournament_server/proto:tournament_broker_cc_proto",
-        "@abseil-cpp//absl/log:check",
-    ],
-)
-
-# Game-generic built-in strategies (random, minimax).
-cc_library(
-    name = "builtins",
-    hdrs = ["builtins.h"],
-    deps = [
-        ":game_session",
-        "//game_mcts/core/mcts:game_traits",
-        "//game_mcts/core/mcts:minimax",
-        "//game_mcts/core/mcts:serialization",
-    ],
-)
-
-cc_library(
-    name = "game_registry",
-    srcs = ["game_registry.cc"],
-    hdrs = ["game_registry.h"],
-    deps = [
-        ":builtins",
-        ":game_session",
-        "//game_mcts/core/mcts:game_traits",
-        "//game_mcts/core/mcts:mcts",
-        "//game_mcts/games/risk:risk_game",
-        "//game_mcts/games/risk:risk_serialization",
-        "//game_mcts/games/risk/strategies:risk_proposer",
-        "//game_mcts/games/risk/strategies:risk_rollout_shortcuts",
-        "//game_mcts/games/tictactoe:tictactoe",
-        "//game_mcts/games/tictactoe:tictactoe_serialization",
-        "//game_mcts/tournament_server/benchgame:bench_game",
-        "//game_mcts/tournament_server/benchgame:bench_serialization",
     ],
 )
 
@@ -128,95 +225,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "client_handle",
-    hdrs = ["client_handle.h"],
-    deps = ["//game_mcts/tournament_server/proto:tournament_broker_cc_proto"],
-)
-
-# Bounded execution: a worker pool, per-game strands, and one timer thread.
-# No gRPC dependency, so the game layer stays transport agnostic.
-cc_library(
-    name = "worker_pool",
-    srcs = ["worker_pool.cc"],
-    hdrs = ["worker_pool.h"],
-    deps = ["@abseil-cpp//absl/functional:any_invocable"],
-)
-
-# One game as an event-driven state machine on a strand, instead of a blocking
-# loop on a dedicated thread.
-cc_library(
-    name = "game_run",
-    srcs = ["game_run.cc"],
-    hdrs = ["game_run.h"],
-    deps = [
-        ":client_handle",
-        ":elo_store",
-        ":game_history",
-        ":game_session",
-        ":worker_pool",
-        "//game_mcts/tournament_server/proto:tournament_broker_cc_proto",
-        "@abseil-cpp//absl/log",
-    ],
-)
-
-cc_library(
-    name = "matchmaker",
-    srcs = ["matchmaker.cc"],
-    hdrs = ["matchmaker.h"],
-    deps = [
-        ":client_handle",
-        ":elo_store",
-        ":game_history",
-        ":game_registry",
-        ":game_run",
-        ":game_session",
-        ":worker_pool",
-        "//game_mcts/tournament_server/proto:tournament_broker_cc_proto",
-        "@abseil-cpp//absl/log",
-    ],
-)
-
-# ClientHandle over a gRPC bidi stream, split from the reactor that owns the
-# RPC so the two lifetimes can differ.
-cc_library(
-    name = "player_connection",
-    srcs = ["player_connection.cc"],
-    hdrs = ["player_connection.h"],
-    deps = [
-        ":client_handle",
-        "//game_mcts/tournament_server/proto:tournament_broker_cc_proto",
-        "@abseil-cpp//absl/log",
-        "@grpc//:grpc++",
-    ],
-)
-
-# Callback-API reactor: one per Play stream, owned by gRPC.
-cc_library(
-    name = "play_reactor",
-    srcs = ["play_reactor.cc"],
-    hdrs = ["play_reactor.h"],
-    deps = [
-        ":matchmaker",
-        ":player_connection",
-        "//game_mcts/tournament_server/proto:tournament_broker_cc_grpc",
-        "@abseil-cpp//absl/log",
-        "@grpc//:grpc++",
-    ],
-)
-
-cc_library(
-    name = "broker_service",
-    srcs = ["broker_service.cc"],
-    hdrs = ["broker_service.h"],
-    deps = [
-        ":matchmaker",
-        ":play_reactor",
-        "//game_mcts/tournament_server/proto:tournament_broker_cc_grpc",
-        "@grpc//:grpc++",
-    ],
-)
-
 # Agent-facing arena RPCs, consumed by the MCP server.
 cc_library(
     name = "arena_service",
@@ -224,6 +232,7 @@ cc_library(
     hdrs = ["arena_service.h"],
     deps = [
         ":candidate_store",
+        ":client_registry",
         ":elo_store",
         ":scheduler",
         "//game_mcts/tournament_server/proto:arena_cc_grpc",
@@ -252,26 +261,29 @@ cc_library(
     hdrs = ["http_leaderboard.h"],
     deps = [
         ":candidate_store",
-        ":elo_store",
         ":game_history",
+        ":standings",
         "@abseil-cpp//absl/log",
     ],
 )
 
+# The coordinator. Links no game and no problem code -- enforced by
+# :no_problem_code_test, not by convention.
 cc_binary(
-    name = "tournament_server",
+    name = "problem_server",
     srcs = ["main.cc"],
     deps = [
         ":arena_service",
-        ":broker_service",
         ":candidate_store",
+        ":elo_standings",
         ":elo_store",
         ":fleet_service",
         ":game_history",
-        ":game_registry",
         ":http_leaderboard",
-        ":matchmaker",
+        ":metric_standings",
+        ":problem_config",
         ":scheduler",
+        ":standings",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
         "@abseil-cpp//absl/log",
@@ -279,6 +291,18 @@ cc_binary(
         "@abseil-cpp//absl/log:initialize",
         "@grpc//:grpc++",
     ],
+)
+
+# The coordinator must never link a game.
+#
+# Checked on the linked binary rather than on the dependency graph, because the
+# graph has more than one route in: the referee package, a game target directly,
+# or something that quietly grew a dep on one. Symbols do not care which route
+# was taken.
+sh_test(
+    name = "no_problem_code_test",
+    srcs = ["no_problem_code_test.sh"],
+    data = [":problem_server"],
 )
 
 cc_test(
@@ -291,87 +315,16 @@ cc_test(
 )
 
 cc_test(
-    name = "player_connection_test",
-    srcs = ["player_connection_test.cc"],
-    deps = [
-        ":player_connection",
-        "@googletest//:gtest_main",
-        "@grpc//:grpc++",
-    ],
-)
-
-cc_test(
-    name = "worker_pool_test",
-    srcs = ["worker_pool_test.cc"],
-    deps = [
-        ":worker_pool",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "game_run_test",
-    srcs = ["game_run_test.cc"],
-    deps = [
-        ":client_handle",
-        ":elo_store",
-        ":game_history",
-        ":game_registry",
-        ":game_run",
-        ":worker_pool",
-        "//game_mcts/games/tictactoe:tictactoe",
-        "//game_mcts/games/tictactoe:tictactoe_cc_proto",
-        "//game_mcts/games/tictactoe:tictactoe_serialization",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "game_session_test",
-    srcs = ["game_session_test.cc"],
-    deps = [
-        ":game_registry",
-        ":game_session",
-        "//game_mcts/games/risk:risk_game",
-        "//game_mcts/games/risk:risk_serialization",
-        "//game_mcts/games/risk/strategies:risk_proposer",
-        "//game_mcts/games/tictactoe:tictactoe",
-        "//game_mcts/games/tictactoe:tictactoe_cc_proto",
-        "//game_mcts/games/tictactoe:tictactoe_serialization",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
     name = "arena_integration_test",
     srcs = ["arena_integration_test.cc"],
     deps = [
+        ":elo_standings",
         ":arena_service",
         ":candidate_store",
         ":elo_store",
         ":fleet_service",
         ":scheduler",
         "//game_mcts/tournament_server/proto:arena_cc_grpc",
-        "@googletest//:gtest_main",
-        "@grpc//:grpc++",
-    ],
-)
-
-cc_test(
-    name = "broker_integration_test",
-    srcs = ["broker_integration_test.cc"],
-    deps = [
-        ":broker_service",
-        ":client_handle",
-        ":elo_store",
-        ":game_history",
-        ":game_registry",
-        ":http_leaderboard",
-        ":matchmaker",
-        "//game_mcts/games/tictactoe:tictactoe",
-        "//game_mcts/games/tictactoe:tictactoe_serialization",
-        "//game_mcts/tournament_server/client:remote_client",
-        "//game_mcts/tournament_server/proto:tournament_broker_cc_grpc",
         "@googletest//:gtest_main",
         "@grpc//:grpc++",
     ],

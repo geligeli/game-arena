@@ -42,7 +42,7 @@ cc_binary(
     srcs = ["random_client.cc"],
     deps = [
         "//game_mcts/tournament_server/proto:tournament_broker_cc_grpc",
-        "//game_mcts/tournament_server/server:game_registry",
+        "//game_mcts/tournament_server/referee:game_registry",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
         "@abseil-cpp//absl/log",

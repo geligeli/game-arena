@@ -16,7 +16,12 @@
 // still not a security boundary: containers keep host networking so the bot
 // can reach the broker, and the build image is trusted.
 
+#include <sys/types.h>
+
 #include <filesystem>
+#include <functional>
+#include <map>
+#include <mutex>
 #include <string>
 
 #include "game_mcts/tournament_server/sandbox/worker/sandbox_backend.h"
@@ -44,6 +49,16 @@ class LocalBackend final : public SandboxBackend {
 
   auto RunOrder(int slot,
                 const proto::WorkOrder &order) -> OrderOutcome override;
+  // Kills the order's current step by process group, which reaches the whole
+  // tree -- bazel spawns one, and killing only the parent leaves the workers
+  // building.
+  void Cancel(const std::string &order_id) override;
+
+  // Publishes a step's process group against |order_id| while it runs, so a
+  // Cancel from the stream thread can reach it. Public only so the scope guard
+  // in the .cc can reach Untrack.
+  auto Track(const std::string &order_id) -> std::function<void(pid_t)>;
+  void Untrack(const std::string &order_id);
   auto name() const -> std::string override { return "local"; }
 
   // Prepares |slots| checkouts up front, so the first order does not pay for
@@ -59,10 +74,21 @@ class LocalBackend final : public SandboxBackend {
   // candidate. Returns false with *error set.
   auto PrepareCheckout(int slot, const std::string &base_commit,
                        std::string *error) -> bool;
-  auto WriteCandidate(int slot, const proto::WorkOrder &order,
-                      std::string *error) -> bool;
+  // Applies one side's patch with git. Both sides of a match land in the same
+  // checkout, so the second one can conflict; that is reported as itself.
+  auto ApplySide(int slot, const proto::Side &side, std::string *error) -> bool;
+  // Runs a graded order's command |repeats| times and aggregates what it
+  // measured. |outcome| arrives with build_ok already decided.
+  auto RunGrade(int slot, const proto::WorkOrder &order,
+                OrderOutcome outcome) -> OrderOutcome;
 
   const LocalBackendConfig config_;
+
+  // order id -> the process group of the step it is running, so a cancel can
+  // reach work already under way. An order with no entry is either queued or
+  // between steps, and Cancel then has nothing to do.
+  mutable std::mutex mutex_;
+  std::map<std::string, pid_t> running_;
 };
 
 }  // namespace tournament_arena

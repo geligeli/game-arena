@@ -1,19 +1,22 @@
 #include "game_mcts/tournament_server/server/http_leaderboard.h"
 
-#include <algorithm>
-#include <cstdio>
-#include <sstream>
-#include <vector>
-
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cstdio>
+#include <optional>
+#include <sstream>
+#include <vector>
+
 #include "absl/log/log.h"
 
 namespace tournament_broker {
+
+using tournament_arena::Standing;
 
 namespace {
 
@@ -32,11 +35,20 @@ auto HtmlEscape(const std::string &s) -> std::string {
   out.reserve(s.size());
   for (const char c : s) {
     switch (c) {
-      case '<': out += "&lt;"; break;
-      case '>': out += "&gt;"; break;
-      case '&': out += "&amp;"; break;
-      case '"': out += "&quot;"; break;
-      default: out += c;
+      case '<':
+        out += "&lt;";
+        break;
+      case '>':
+        out += "&gt;";
+        break;
+      case '&':
+        out += "&amp;";
+        break;
+      case '"':
+        out += "&quot;";
+        break;
+      default:
+        out += c;
     }
   }
   return out;
@@ -47,12 +59,23 @@ auto JsonEscape(const std::string &s) -> std::string {
   out.reserve(s.size());
   for (const char c : s) {
     switch (c) {
-      case '"': out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\n': out += "\\n"; break;
-      case '\r': out += "\\r"; break;
-      case '\t': out += "\\t"; break;
-      default: out += c;
+      case '"':
+        out += "\\\"";
+        break;
+      case '\\':
+        out += "\\\\";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        out += c;
     }
   }
   return out;
@@ -89,12 +112,14 @@ void Respond(int fd, int status, const std::string &status_text,
 }  // namespace
 
 HttpLeaderboard::HttpLeaderboard(
-    int port, const EloStore *elo_store, const GameHistory *history,
-    const tournament_arena::CandidateStore *candidates)
+    int port, const GameHistory *history,
+    const tournament_arena::CandidateStore *candidates,
+    const tournament_arena::Standings *standings, std::string problem_name)
     : port_(port),
-      elo_store_(elo_store),
       history_(history),
-      candidates_(candidates) {}
+      candidates_(candidates),
+      standings_(standings),
+      problem_name_(std::move(problem_name)) {}
 
 HttpLeaderboard::~HttpLeaderboard() { Stop(); }
 
@@ -183,10 +208,13 @@ void HttpLeaderboard::HandleConnection(int fd) {
     Respond(fd, 405, "Method Not Allowed", "text/plain", "GET only\n");
     return;
   }
-  if (path == "/" || path == "/index.html") {
-    Respond(fd, 200, "OK", "text/html; charset=utf-8",
-            RenderLeaderboardHtml());
-  } else if (path == "/api/leaderboard") {
+  // The standings and candidate store come from the arena. A standalone broker
+  // has neither, and 404 is the honest answer there rather than an empty table
+  // that looks like nobody has scored yet.
+  const bool has_arena = standings_ != nullptr;
+  if ((path == "/" || path == "/index.html") && has_arena) {
+    Respond(fd, 200, "OK", "text/html; charset=utf-8", RenderLeaderboardHtml());
+  } else if (path == "/api/leaderboard" && has_arena) {
     Respond(fd, 200, "OK", "application/json", RenderLeaderboardJson());
   } else if (path == "/api/games") {
     Respond(fd, 200, "OK", "application/json", RenderGamesJson());
@@ -198,46 +226,62 @@ void HttpLeaderboard::HandleConnection(int fd) {
 }
 
 auto HttpLeaderboard::RenderLeaderboardHtml() const -> std::string {
-  const proto::RatingStore snapshot = elo_store_->Snapshot();
-  std::vector<LeaderboardRow> rows;
-  for (const auto &[key, rating] : snapshot.ratings()) {
-    const auto tab = key.find('\t');
-    rows.push_back(LeaderboardRow{.game = key.substr(0, tab),
-                                  .player = key.substr(tab + 1),
-                                  .rating = rating});
-  }
-  std::sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) {
-    if (a.game != b.game) return a.game < b.game;
-    return a.rating.elo() > b.rating.elo();
-  });
+  const std::string title =
+      problem_name_.empty() ? "Leaderboard" : problem_name_;
+  const std::string score = standings_->score_label();
 
   std::ostringstream html;
   html << "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
           "<meta http-equiv=\"refresh\" content=\"5\">"
-          "<title>Tournament Leaderboard</title>"
+          "<title>"
+       << HtmlEscape(title)
+       << "</title>"
           "<style>body{font-family:sans-serif;margin:2em}"
           "table{border-collapse:collapse}"
           "td,th{border:1px solid #ccc;padding:4px 10px;text-align:right}"
-          "th{background:#eee}td.l{text-align:left}</style></head><body>"
-          "<h1>Tournament Leaderboard</h1>"
-          "<table><tr><th>Rank</th><th>Player</th><th>Game</th><th>ELO</th>"
-          "<th>W</th><th>D</th><th>L</th></tr>";
-  std::string current_game;
-  int rank = 0;
-  for (const auto &row : rows) {
-    if (row.game != current_game) {
-      current_game = row.game;
-      rank = 1;
+          "th{background:#eee}td.l{text-align:left}"
+          "td.d,th.d{color:#666;font-size:90%}</style></head><body>"
+          "<h1>"
+       << HtmlEscape(title)
+       << "</h1><table><tr><th>Rank</th><th>Submission</th>"
+          "<th>Author</th><th>"
+       << HtmlEscape(score) << "</th>";
+  // A match problem has a W/D/L record; a graded one has the host that produced
+  // the number, which is the thing a reader most needs to trust it.
+  const bool graded = score != "elo";
+  html << (graded ? "<th>runs</th><th class=\"d\">machine</th>"
+                  : "<th>W</th><th>D</th><th>L</th>");
+  html << "</tr>";
+
+  int rank = 1;
+  for (const Standing &row : standings_->Rank(0)) {
+    // Without a submission registry -- the standalone broker's case -- a row is
+    // just a player name, which is its own display name.
+    const auto candidate = candidates_ != nullptr
+                               ? candidates_->Get(row.candidate_id)
+                               : std::nullopt;
+    const std::string name =
+        candidate.has_value() ? candidate->display_name() : row.candidate_id;
+    const std::string author =
+        candidate.has_value() ? candidate->author() : std::string("-");
+    char score_text[32];
+    std::snprintf(score_text, sizeof(score_text), graded ? "%.3f" : "%.1f",
+                  row.score);
+    html << "<tr><td>" << rank++ << "</td><td class=\"l\">" << HtmlEscape(name)
+         << "</td><td class=\"l\">" << HtmlEscape(author) << "</td><td>"
+         << score_text << "</td>";
+    if (graded) {
+      html << "<td>" << row.runs << "</td><td class=\"d l\">"
+           << HtmlEscape(row.machine_class.empty() ? "-" : row.machine_class)
+           << "</td>";
+    } else {
+      html << "<td>" << row.wins << "</td><td>" << row.draws << "</td><td>"
+           << row.losses << "</td>";
     }
-    char elo[32];
-    std::snprintf(elo, sizeof(elo), "%.1f", row.rating.elo());
-    html << "<tr><td>" << rank++ << "</td><td class=\"l\">"
-         << HtmlEscape(row.player) << "</td><td class=\"l\">"
-         << HtmlEscape(row.game) << "</td><td>" << elo << "</td><td>"
-         << row.rating.wins() << "</td><td>" << row.rating.draws()
-         << "</td><td>" << row.rating.losses() << "</td></tr>";
+    html << "</tr>";
   }
   html << "</table><p><a href=\"/api/leaderboard\">JSON</a> &middot; "
+          "<a href=\"/api/candidates\">candidates</a> &middot; "
           "<a href=\"/api/games\">recent games</a></p></body></html>";
   return html.str();
 }
@@ -249,8 +293,9 @@ auto HttpLeaderboard::RenderCandidatesJson() const -> std::string {
   for (const auto &candidate : candidates_->List()) {
     if (!first) json << ",";
     first = false;
-    const auto rating =
-        elo_store_->Get(candidate.game(), candidate.candidate_id());
+    const tournament_arena::Standing row =
+        standings_ != nullptr ? standings_->Get(candidate.candidate_id())
+                              : tournament_arena::Standing{};
     json << "{\"candidate_id\":\"" << JsonEscape(candidate.candidate_id())
          << "\",\"display_name\":\"" << JsonEscape(candidate.display_name())
          << "\",\"author\":\"" << JsonEscape(candidate.author())
@@ -258,9 +303,8 @@ auto HttpLeaderboard::RenderCandidatesJson() const -> std::string {
          << "\",\"parent_id\":\"" << JsonEscape(candidate.parent_id())
          << "\",\"status\":\""
          << tournament_arena::proto::Candidate::Status_Name(candidate.status())
-         << "\",\"elo\":" << rating.elo() << ",\"wins\":" << rating.wins()
-         << ",\"draws\":" << rating.draws()
-         << ",\"losses\":" << rating.losses()
+         << "\",\"score\":" << row.score << ",\"wins\":" << row.wins
+         << ",\"draws\":" << row.draws << ",\"losses\":" << row.losses
          << ",\"submitted_unix_ms\":" << candidate.submitted_unix_ms() << "}";
   }
   json << "]";
@@ -268,21 +312,38 @@ auto HttpLeaderboard::RenderCandidatesJson() const -> std::string {
 }
 
 auto HttpLeaderboard::RenderLeaderboardJson() const -> std::string {
-  const proto::RatingStore snapshot = elo_store_->Snapshot();
   std::ostringstream json;
-  json << "[";
+  json << "{\"score_label\":\"" << JsonEscape(standings_->score_label())
+       << "\",\"rows\":[";
   bool first = true;
-  for (const auto &[key, rating] : snapshot.ratings()) {
-    const auto tab = key.find('\t');
+  int rank = 1;
+  for (const Standing &row : standings_->Rank(0)) {
+    const auto candidate = candidates_ != nullptr
+                               ? candidates_->Get(row.candidate_id)
+                               : std::nullopt;
     if (!first) json << ",";
     first = false;
-    json << "{\"game\":\"" << JsonEscape(key.substr(0, tab))
-         << "\",\"player\":\"" << JsonEscape(key.substr(tab + 1))
-         << "\",\"elo\":" << rating.elo() << ",\"wins\":" << rating.wins()
-         << ",\"draws\":" << rating.draws() << ",\"losses\":"
-         << rating.losses() << "}";
+    json << "{\"rank\":" << rank++ << ",\"player\":\""
+         << JsonEscape(row.candidate_id) << "\",\"candidate_id\":\""
+         << JsonEscape(row.candidate_id) << "\",\"display_name\":\""
+         << JsonEscape(candidate.has_value() ? candidate->display_name()
+                                             : row.candidate_id)
+         << "\",\"author\":\""
+         << JsonEscape(candidate.has_value() ? candidate->author() : "-")
+         << "\",\"score\":" << row.score << ",\"wins\":" << row.wins
+         << ",\"draws\":" << row.draws << ",\"losses\":" << row.losses
+         << ",\"runs\":" << row.runs << ",\"worker_id\":\""
+         << JsonEscape(row.worker_id) << "\",\"machine_class\":\""
+         << JsonEscape(row.machine_class) << "\",\"metrics\":{";
+    bool first_metric = true;
+    for (const auto &[name, value] : row.metrics) {
+      if (!first_metric) json << ",";
+      first_metric = false;
+      json << "\"" << JsonEscape(name) << "\":" << value;
+    }
+    json << "}}";
   }
-  json << "]";
+  json << "]}";
   return json.str();
 }
 

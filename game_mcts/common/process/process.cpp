@@ -310,6 +310,11 @@ auto RunCommand(const std::string& executable,
   // Also set from the parent: whichever runs first wins, and neither side may
   // assume the other has been scheduled yet.
   ::setpgid(pid, pid);
+  if (options.on_started) {
+    // The child is in its own group now, so a pgid kill from elsewhere reaches
+    // the whole tree rather than racing the setpgid above.
+    options.on_started(pid);
+  }
   result.started = true;
 
   const auto deadline = std::chrono::steady_clock::now() + options.timeout;

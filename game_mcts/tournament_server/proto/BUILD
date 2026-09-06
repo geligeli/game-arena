@@ -25,6 +25,37 @@ cc_grpc_library(
     deps = [":tournament_broker_cc_proto"],
 )
 
+# Who may submit, and how much. Kept apart from problem.proto because that one
+# is published and this one is not.
+proto_library(
+    name = "clients_proto",
+    srcs = ["clients.proto"],
+    deps = [":problem_proto"],
+)
+
+cc_proto_library(
+    name = "clients_cc_proto",
+    deps = [":clients_proto"],
+)
+
+# What a problem is, as data: repo, submission policy, build, sandbox, how a
+# solution is scored, and per-client limits. Embedded in every work order, so
+# workers carry no problem config of their own.
+proto_library(
+    name = "problem_proto",
+    srcs = ["problem.proto"],
+)
+
+cc_proto_library(
+    name = "problem_cc_proto",
+    deps = [":problem_proto"],
+)
+
+py_proto_library(
+    name = "problem_py_proto",
+    deps = [":problem_proto"],
+)
+
 proto_library(
     name = "arena_proto",
     srcs = ["arena.proto"],

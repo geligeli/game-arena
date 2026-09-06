@@ -5,17 +5,17 @@
 //   bazel run //game_mcts/tournament_server/client:random_client
 //       -- --name=my-bot --game=tictactoe --opponent=builtin:minimax
 
+#include <grpcpp/grpcpp.h>
+
 #include <random>
 #include <string>
-
-#include <grpcpp/grpcpp.h>
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
-#include "game_mcts/tournament_server/server/game_registry.h"
 #include "game_mcts/tournament_server/proto/tournament_broker.grpc.pb.h"
+#include "game_mcts/tournament_server/referee/game_registry.h"
 
 ABSL_FLAG(std::string, server, "localhost:50051", "host:port of the broker");
 ABSL_FLAG(std::string, name, "", "Player name (required)");
