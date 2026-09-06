@@ -19,13 +19,20 @@
 
 #include "absl/log/log.h"
 #include "game_mcts/common/process/process.h"
+#include "game_mcts/tournament_server/sandbox/common/files.h"
+#include "game_mcts/tournament_server/sandbox/common/step.h"
 #include "game_mcts/tournament_server/sandbox/worker/bot_launch.h"
 #include "game_mcts/tournament_server/sandbox/worker/build_log.h"
+#include "game_mcts/tournament_server/sandbox/worker/checkout.h"
 #include "game_mcts/tournament_server/sandbox/worker/metric_report.h"
 
 namespace tournament_arena {
 
 namespace {
+
+using sandbox_common::ReadFile;
+using sandbox_common::RunStep;
+using sandbox_common::StepResult;
 
 // The caller's environment plus |extra|. RunOptions treats an empty env as
 // "inherit", so adding one variable means rebuilding the whole list.
@@ -37,44 +44,6 @@ auto InheritedEnvWith(const std::string &extra) -> std::vector<std::string> {
   }
   env.push_back(extra);
   return env;
-}
-
-auto ReadFile(const std::filesystem::path &path) -> std::string {
-  std::ifstream in(path, std::ios::binary);
-  if (!in) {
-    return {};
-  }
-  return std::string(std::istreambuf_iterator<char>(in),
-                     std::istreambuf_iterator<char>());
-}
-
-// One step of an order, with its output captured to a file. Combining stdout
-// and stderr into one file would interleave unpredictably, so they stay apart
-// and are concatenated only when reporting.
-struct StepResult {
-  process::RunResult run;
-  std::string output;
-};
-
-auto RunStep(const std::string &executable,
-             const std::vector<std::string> &args,
-             const std::filesystem::path &cwd,
-             const std::filesystem::path &log_dir, const std::string &tag,
-             std::chrono::seconds timeout,
-             std::size_t address_space_limit_bytes = 0,
-             const std::function<void(pid_t)> &on_started = {}) -> StepResult {
-  process::RunOptions options;
-  options.on_started = on_started;
-  options.cwd = cwd;
-  options.stdout_path = log_dir / (tag + ".out");
-  options.stderr_path = log_dir / (tag + ".err");
-  options.timeout = timeout;
-  options.address_space_limit_bytes = address_space_limit_bytes;
-
-  StepResult result;
-  result.run = process::RunCommand(executable, args, options);
-  result.output = ReadFile(options.stdout_path) + ReadFile(options.stderr_path);
-  return result;
 }
 
 // Polls for the referee's port file. Polling rather than a pipe because the
@@ -123,20 +92,8 @@ auto LocalBackend::PrepareCheckout(int slot, const std::string &base_commit,
                                    std::string *error) -> bool {
   const std::filesystem::path repo = RepoDir(slot);
   const std::filesystem::path logs = SlotDir(slot) / "logs";
-  std::error_code ec;
-  std::filesystem::create_directories(logs, ec);
-
-  if (!std::filesystem::exists(repo / ".git")) {
-    std::filesystem::create_directories(SlotDir(slot), ec);
-    // --local hardlinks the object store instead of copying it, so a clone of
-    // a multi-gigabyte history costs almost nothing on the same filesystem.
-    const StepResult clone = RunStep(
-        config_.git, {"clone", "--local", config_.repo_url, repo.string()},
-        SlotDir(slot), logs, "clone", std::chrono::seconds(900));
-    if (!clone.run.started || clone.run.exit_code != 0) {
-      *error = "git clone failed: " + TailOf(clone.output, 2000);
-      return false;
-    }
+  if (!EnsureClone(config_.git, config_.repo_url, repo, logs, error)) {
+    return false;
   }
 
   // Discard whatever the previous order's patch left behind. Not scoped to a
@@ -153,22 +110,7 @@ auto LocalBackend::PrepareCheckout(int slot, const std::string &base_commit,
     return false;
   }
 
-  if (!base_commit.empty()) {
-    const StepResult fetch =
-        RunStep(config_.git, {"fetch", "--all", "--tags", "--quiet"}, repo,
-                logs, "fetch", std::chrono::seconds(600));
-    (void)fetch;  // A stale mirror is survivable; the checkout below decides.
-
-    const StepResult checkout =
-        RunStep(config_.git, {"checkout", "--force", base_commit}, repo, logs,
-                "checkout", std::chrono::seconds(300));
-    if (!checkout.run.started || checkout.run.exit_code != 0) {
-      *error = "git checkout " + base_commit +
-               " failed: " + TailOf(checkout.output, 2000);
-      return false;
-    }
-  }
-  return true;
+  return SyncToCommit(config_.git, repo, base_commit, logs, error);
 }
 
 auto LocalBackend::ApplySide(int slot, const proto::Side &side,
@@ -181,18 +123,10 @@ auto LocalBackend::ApplySide(int slot, const proto::Side &side,
   const std::filesystem::path logs = SlotDir(slot) / "logs";
   const std::filesystem::path patch_file =
       SlotDir(slot) / (side.candidate_id() + ".diff");
-  {
-    std::ofstream out(patch_file, std::ios::binary | std::ios::trunc);
-    if (!out) {
-      *error = "cannot stage the patch for " + side.candidate_id();
-      return false;
-    }
-    out.write(side.patch().data(),
-              static_cast<std::streamsize>(side.patch().size()));
-    if (!out) {
-      *error = "short write staging the patch for " + side.candidate_id();
-      return false;
-    }
+  if (!sandbox_common::WriteFile(patch_file, side.patch(), error)) {
+    *error =
+        "cannot stage the patch for " + side.candidate_id() + ": " + *error;
+    return false;
   }
 
   // --check first, so a patch that cannot apply is reported as itself rather

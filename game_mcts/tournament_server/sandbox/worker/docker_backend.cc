@@ -1,20 +1,25 @@
 #include "game_mcts/tournament_server/sandbox/worker/docker_backend.h"
 
-#include <cctype>
-#include <fstream>
-#include <sstream>
 #include <system_error>
 #include <utility>
 
 #include "absl/log/log.h"
 #include "game_mcts/common/process/process.h"
+#include "game_mcts/tournament_server/sandbox/common/files.h"
 #include "game_mcts/tournament_server/sandbox/worker/bot_launch.h"
 #include "game_mcts/tournament_server/sandbox/worker/build_log.h"
+#include "game_mcts/tournament_server/sandbox/worker/checkout.h"
 #include "game_mcts/tournament_server/sandbox/worker/metric_report.h"
 
 namespace tournament_arena {
 
 namespace {
+
+using sandbox_common::BindMount;
+using sandbox_common::HostOverlayPrelude;
+using sandbox_common::OverlayMountScript;
+using sandbox_common::ReadFile;
+using sandbox_common::ShellQuote;
 
 // Both sides of an order, primary first. A builtin opponent contributes none.
 auto SidesOf(const proto::WorkOrder &order)
@@ -26,105 +31,7 @@ auto SidesOf(const proto::WorkOrder &order)
   return sides;
 }
 
-auto ReadFile(const std::filesystem::path &path) -> std::string {
-  std::ifstream in(path, std::ios::binary);
-  if (!in) {
-    return {};
-  }
-  return std::string(std::istreambuf_iterator<char>(in),
-                     std::istreambuf_iterator<char>());
-}
-
-// One subprocess step with its output captured to a file, the same shape the
-// local backend uses. stdout and stderr stay apart and are concatenated only
-// when reporting.
-struct StepResult {
-  process::RunResult run;
-  std::string output;
-};
-
-auto RunStep(const std::string &executable,
-             const std::vector<std::string> &args,
-             const std::filesystem::path &cwd,
-             const std::filesystem::path &log_dir, const std::string &tag,
-             std::chrono::seconds timeout) -> StepResult {
-  process::RunOptions options;
-  options.cwd = cwd;
-  options.stdout_path = log_dir / (tag + ".out");
-  options.stderr_path = log_dir / (tag + ".err");
-  options.timeout = timeout;
-
-  StepResult result;
-  result.run = process::RunCommand(executable, args, options);
-  result.output = ReadFile(options.stdout_path) + ReadFile(options.stderr_path);
-  return result;
-}
-
-// A bind mount in `docker run --mount` syntax. The long form is deliberate:
-// `-v` creates |source| as an empty directory when it does not exist, which
-// would turn a missing slot directory into an empty repository or a run that
-// silently drops every patch. --mount fails the run instead.
-auto BindMount(const std::filesystem::path &source, const std::string &target,
-               bool readonly) -> std::string {
-  std::string mount =
-      "type=bind,source=" + source.string() + ",target=" + target;
-  if (readonly) {
-    mount += ",readonly";
-  }
-  return mount;
-}
-
-// The overlay assembly shared by both container scripts. The upper and work
-// dirs sit under one bind mount so they are guaranteed to share a filesystem,
-// which overlayfs requires.
-// The in-container form: needs CAP_SYS_ADMIN, and is only used when the
-// problem explicitly opts out of the host-side mount.
-auto OverlayMountScript() -> std::string {
-  return "mkdir -p " + std::string(kDockerScratch) + "/upper " +
-         kDockerScratch + "/work " + kDockerWorkspace +
-         "\n"
-         "export HOME=" +
-         kDockerScratch +
-         "\n"
-         "mount -t overlay overlay -o lowerdir=" +
-         kDockerLowerMount + ",upperdir=" + kDockerScratch +
-         "/upper,workdir=" + kDockerScratch + "/work " + kDockerWorkspace +
-         "\n";
-}
-
-// With the overlay mounted on the host, the container has nothing to assemble
-// -- the merged tree is already at kDockerWorkspace. It still needs a writable
-// HOME, because bazel insists on one and the root filesystem is read-only.
-auto HostOverlayPrelude() -> std::string {
-  return "export HOME=" + std::string(kDockerScratch) + "\n";
-}
-
 }  // namespace
-
-auto ShellQuote(const std::string &value) -> std::string {
-  std::string quoted = "'";
-  for (const char c : value) {
-    if (c == '\'') {
-      quoted += "'\\''";
-    } else {
-      quoted += c;
-    }
-  }
-  quoted += "'";
-  return quoted;
-}
-
-auto SanitizeContainerName(const std::string &value) -> std::string {
-  std::string name;
-  for (const unsigned char c : value) {
-    if (std::isalnum(c) != 0 || c == '_' || c == '.' || c == '-') {
-      name += static_cast<char>(c);
-    } else {
-      name += '-';
-    }
-  }
-  return name;
-}
 
 auto DockerBuildScript(const std::filesystem::path &disk_cache,
                        const std::vector<std::string> &bazel_flags,
@@ -135,14 +42,17 @@ auto DockerBuildScript(const std::filesystem::path &disk_cache,
   // the build log, rather than becoming a confusing compile error later.
   std::string script = "set -eu\n";
   script += mount_in_container ? OverlayMountScript() : HostOverlayPrelude();
-  script += "cd " + std::string(kDockerWorkspace) + "\n";
+  script += "cd " + std::string(sandbox_common::kWorkspace) + "\n";
   for (const std::string &patch : patch_files) {
-    script += "git apply " +
-              ShellQuote(std::string(kDockerPatchMount) + "/" + patch) + "\n";
+    script +=
+        "git apply " +
+        ShellQuote(std::string(sandbox_common::kPatchMount) + "/" + patch) +
+        "\n";
   }
-  script += std::string("exec bazel --output_base=") + kDockerOutputBaseMount;
+  script += std::string("exec bazel --output_base=") +
+            sandbox_common::kOutputBaseMount;
   if (!disk_cache.empty()) {
-    script += std::string(" --disk_cache=") + kDockerDiskCacheMount;
+    script += std::string(" --disk_cache=") + sandbox_common::kDiskCacheMount;
   }
   for (const std::string &flag : bazel_flags) {
     script += " " + ShellQuote(flag);
@@ -160,7 +70,7 @@ auto DockerGradeScript(const std::string &report_path,
                        bool mount_in_container) -> std::string {
   std::string script = "set -eu\n";
   script += mount_in_container ? OverlayMountScript() : HostOverlayPrelude();
-  script += "cd " + std::string(kDockerWorkspace) + "\n";
+  script += "cd " + std::string(sandbox_common::kWorkspace) + "\n";
   // Where the command writes its numbers. Exported rather than fixed, so the
   // command needs no knowledge of the sandbox's directory layout.
   script += "export ARENA_REPORT=" + ShellQuote(report_path) + "\n";
@@ -177,7 +87,7 @@ auto DockerRunScript(const std::string &bot_path,
                      bool mount_in_container) -> std::string {
   std::string script = "set -eu\n";
   script += mount_in_container ? OverlayMountScript() : HostOverlayPrelude();
-  script += "cd " + std::string(kDockerWorkspace) + "\n";
+  script += "cd " + std::string(sandbox_common::kWorkspace) + "\n";
   script += "exec " + ShellQuote(bot_path);
   for (const std::string &arg : args) {
     script += " " + ShellQuote(arg);
@@ -233,29 +143,8 @@ auto DockerBackend::Warmup(int slots, std::string *error) -> bool {
                config_.work_dir.string() + ": " + ec.message();
       return false;
     }
-    if (!CloneSlot(slot, error)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-auto DockerBackend::CloneSlot(int slot, std::string *error) -> bool {
-  const std::filesystem::path repo = RepoDir(slot);
-  const std::filesystem::path logs = SlotDir(slot) / "logs";
-  std::error_code ec;
-  std::filesystem::create_directories(logs, ec);
-
-  if (!std::filesystem::exists(repo / ".git")) {
-    std::filesystem::create_directories(SlotDir(slot), ec);
-    // --local hardlinks the object store instead of copying it, so a clone of
-    // a multi-gigabyte history costs almost nothing on the same filesystem.
-    const StepResult clone =
-        RunStep(config_.git,
-                {"clone", "--local", config_.repo_dir.string(), repo.string()},
-                SlotDir(slot), logs, "clone", std::chrono::seconds(900));
-    if (!clone.run.started || clone.run.exit_code != 0) {
-      *error = "git clone failed: " + TailOf(clone.output, 2000);
+    if (!EnsureClone(config_.git, config_.repo_dir, RepoDir(slot),
+                     SlotDir(slot) / "logs", error)) {
       return false;
     }
   }
@@ -264,30 +153,10 @@ auto DockerBackend::CloneSlot(int slot, std::string *error) -> bool {
 
 auto DockerBackend::PrepareCheckout(int slot, const std::string &base_commit,
                                     std::string *error) -> bool {
-  if (!CloneSlot(slot, error)) {
-    return false;
-  }
-
-  const std::filesystem::path repo = RepoDir(slot);
   const std::filesystem::path logs = SlotDir(slot) / "logs";
-  if (base_commit.empty()) {
-    return true;
-  }
-
-  const StepResult fetch =
-      RunStep(config_.git, {"fetch", "--all", "--tags", "--quiet"}, repo, logs,
-              "fetch", std::chrono::seconds(600));
-  (void)fetch;  // A stale mirror is survivable; the checkout below decides.
-
-  const StepResult checkout =
-      RunStep(config_.git, {"checkout", "--force", base_commit}, repo, logs,
-              "checkout", std::chrono::seconds(300));
-  if (!checkout.run.started || checkout.run.exit_code != 0) {
-    *error = "git checkout " + base_commit +
-             " failed: " + TailOf(checkout.output, 2000);
-    return false;
-  }
-  return true;
+  return EnsureClone(config_.git, config_.repo_dir, RepoDir(slot), logs,
+                     error) &&
+         SyncToCommit(config_.git, RepoDir(slot), base_commit, logs, error);
 }
 
 auto DockerBackend::StageCandidate(int slot, const proto::WorkOrder &order,
@@ -318,16 +187,10 @@ auto DockerBackend::StageCandidate(int slot, const proto::WorkOrder &order,
     }
     const std::filesystem::path path =
         PatchDir(slot) /
-        (SanitizeContainerName(side->candidate_id()) + ".diff");
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) {
-      *error = "cannot stage the patch for " + side->candidate_id();
-      return false;
-    }
-    out.write(side->patch().data(),
-              static_cast<std::streamsize>(side->patch().size()));
-    if (!out) {
-      *error = "short write staging the patch for " + side->candidate_id();
+        (sandbox_common::SanitizeContainerName(side->candidate_id()) + ".diff");
+    if (!sandbox_common::WriteFile(path, side->patch(), error)) {
+      *error =
+          "cannot stage the patch for " + side->candidate_id() + ": " + *error;
       return false;
     }
   }
@@ -376,10 +239,11 @@ auto DockerBackend::RunOrder(int slot,
   } slot_guard{this, order.order_id()};
 
   std::vector<std::string> build_mounts = WorkspaceMounts(slot);
-  build_mounts.push_back(BindMount(PatchDir(slot), kDockerPatchMount, true));
+  build_mounts.push_back(
+      BindMount(PatchDir(slot), sandbox_common::kPatchMount, true));
   if (!config_.disk_cache.empty()) {
     build_mounts.push_back(
-        BindMount(config_.disk_cache, kDockerDiskCacheMount, false));
+        BindMount(config_.disk_cache, sandbox_common::kDiskCacheMount, false));
   }
   // Everything this order needs, in one build: both sides and the referee that
   // will judge them. They share an output base, so building them together is
@@ -387,8 +251,8 @@ auto DockerBackend::RunOrder(int slot,
   std::vector<std::string> targets;
   std::vector<std::string> patch_files;
   for (const proto::Side *side : SidesOf(order)) {
-    patch_files.push_back(SanitizeContainerName(side->candidate_id()) +
-                          ".diff");
+    patch_files.push_back(
+        sandbox_common::SanitizeContainerName(side->candidate_id()) + ".diff");
     for (const std::string &target : side->build_targets()) {
       targets.push_back(target);
     }
@@ -410,27 +274,20 @@ auto DockerBackend::RunOrder(int slot,
 
     // A worker that was killed mid-order leaves its container running under
     // this exact name; clear it so a redelivered order can start fresh.
-    process::RunOptions rm;
-    rm.timeout = std::chrono::seconds(60);
-    process::RunCommand(config_.docker, {"rm", "-f", build_name}, rm);
+    sandbox_common::RemoveContainer(config_.docker, build_name);
 
-    std::vector<std::string> args = {"run", "--rm", "--name", build_name};
-    for (const std::string &flag : HardeningArgs()) {
-      args.push_back(flag);
-    }
     // A build that can fetch can also exfiltrate, and a submitted genrule is
     // arbitrary code. The image is expected to carry a warm repository cache.
-    args.insert(args.end(),
-                {"--network", config_.allow_build_network ? "bridge" : "none"});
-    for (const std::string &mount : build_mounts) {
-      args.push_back("--mount");
-      args.push_back(mount);
-    }
-    args.push_back("--entrypoint");
-    args.push_back("/bin/sh");
-    args.push_back(config_.docker_image);
-    args.push_back("-c");
-    args.push_back(build_script);
+    const std::vector<std::string> args = sandbox_common::DockerRunArgs({
+        /*name=*/build_name,
+        /*image=*/config_.docker_image,
+        /*script=*/build_script,
+        /*rm=*/true,
+        /*detached=*/false,
+        /*network=*/config_.allow_build_network ? "bridge" : "none",
+        /*extra_args=*/HardeningArgs(),
+        /*mounts=*/build_mounts,
+    });
 
     const process::RunResult build =
         process::RunCommand(config_.docker, args, options);
@@ -443,9 +300,7 @@ auto DockerBackend::RunOrder(int slot,
     if (build.timed_out) {
       // The timeout killed the docker *client*; the container is managed by
       // the daemon and would otherwise keep building.
-      process::RunOptions kill;
-      kill.timeout = std::chrono::seconds(60);
-      process::RunCommand(config_.docker, {"kill", build_name}, kill);
+      sandbox_common::KillContainer(config_.docker, build_name);
       outcome.build_log = CompactBuildLog(build_output);
       outcome.error = "build timed out after " +
                       std::to_string(build_timeout.count()) + "s";
@@ -478,11 +333,11 @@ auto DockerBackend::RunOrder(int slot,
 
   // Everything this match creates, removed on every exit path below.
   const auto cleanup = [&] {
+    for (const std::string &name : {referee_name, bot_name, opponent_name}) {
+      sandbox_common::RemoveContainer(config_.docker, name);
+    }
     process::RunOptions rm;
     rm.timeout = std::chrono::seconds(60);
-    for (const std::string &name : {referee_name, bot_name, opponent_name}) {
-      process::RunCommand(config_.docker, {"rm", "-f", name}, rm);
-    }
     process::RunCommand(config_.docker, {"network", "rm", network}, rm);
   };
   // A worker killed mid-order leaves containers behind under these exact
@@ -510,24 +365,16 @@ auto DockerBackend::RunOrder(int slot,
   const auto container_args =
       [&](const std::string &name, bool detached,
           const std::string &script) -> std::vector<std::string> {
-    std::vector<std::string> args = {"run", "--name", name, "--network",
-                                     network};
-    for (const std::string &flag : HardeningArgs()) {
-      args.push_back(flag);
-    }
-    if (detached) {
-      args.push_back("-d");
-    }
-    for (const std::string &mount : match_mounts) {
-      args.push_back("--mount");
-      args.push_back(mount);
-    }
-    args.push_back("--entrypoint");
-    args.push_back("/bin/sh");
-    args.push_back(config_.docker_image);
-    args.push_back("-c");
-    args.push_back(script);
-    return args;
+    return sandbox_common::DockerRunArgs({
+        /*name=*/name,
+        /*image=*/config_.docker_image,
+        /*script=*/script,
+        /*rm=*/false,  // the referee's verdict is read back via `docker logs`
+        /*detached=*/detached,
+        /*network=*/network,
+        /*extra_args=*/HardeningArgs(),
+        /*mounts=*/match_mounts,
+    });
   };
 
   const int match_deadline_s = order.match_deadline_s() > 0
@@ -611,9 +458,7 @@ auto DockerBackend::RunOrder(int slot,
     if (run.timed_out) {
       // The timeout killed the docker *client*; the container is the daemon's
       // and would otherwise keep playing.
-      process::RunOptions kill;
-      kill.timeout = std::chrono::seconds(60);
-      process::RunCommand(config_.docker, {"kill", bot_name}, kill);
+      sandbox_common::KillContainer(config_.docker, bot_name);
       outcome.error =
           "games timed out after " + std::to_string(run_timeout_s) + "s";
       cleanup();
@@ -686,38 +531,32 @@ auto DockerBackend::RunGrade(int slot, const proto::WorkOrder &order,
     // slot's overlay upper on the host -- so the worker can read it back
     // without the container writing anywhere else.
     const std::string in_container_report =
-        std::string(kDockerScratch) + "/report.json";
+        std::string(sandbox_common::kScratch) + "/report.json";
     const std::filesystem::path host_report = OverlayDir(slot) / "report.json";
     std::error_code ec;
     std::filesystem::remove(host_report, ec);
 
-    process::RunOptions rm;
-    rm.timeout = std::chrono::seconds(60);
-    process::RunCommand(config_.docker, {"rm", "-f", name}, rm);
+    sandbox_common::RemoveContainer(config_.docker, name);
 
     process::RunOptions options;
     options.stdout_path = logs / (name + std::to_string(run) + ".out");
     options.stderr_path = logs / (name + std::to_string(run) + ".err");
     options.timeout = std::chrono::seconds(timeout_s);
 
-    std::vector<std::string> args = {"run", "--rm", "--name", name,
-                                     // A timed run has no business reaching the
-                                     // network.
-                                     "--network", "none"};
-    for (const std::string &flag : HardeningArgs()) {
-      args.push_back(flag);
-    }
-    for (const std::string &mount : mounts) {
-      args.push_back("--mount");
-      args.push_back(mount);
-    }
-    args.push_back("--entrypoint");
-    args.push_back("/bin/sh");
-    args.push_back(config_.docker_image);
-    args.push_back("-c");
-    args.push_back(DockerGradeScript(in_container_report,
-                                     {grade.argv().begin(), grade.argv().end()},
-                                     !config_.host_overlay));
+    const std::vector<std::string> args = sandbox_common::DockerRunArgs({
+        /*name=*/name,
+        /*image=*/config_.docker_image,
+        /*script=*/
+        DockerGradeScript(in_container_report,
+                          {grade.argv().begin(), grade.argv().end()},
+                          !config_.host_overlay),
+        /*rm=*/true,
+        /*detached=*/false,
+        // A timed run has no business reaching the network.
+        /*network=*/"none",
+        /*extra_args=*/HardeningArgs(),
+        /*mounts=*/mounts,
+    });
 
     const process::RunResult result =
         process::RunCommand(config_.docker, args, options);
@@ -727,9 +566,7 @@ auto DockerBackend::RunGrade(int slot, const proto::WorkOrder &order,
       return outcome;
     }
     if (result.timed_out) {
-      process::RunOptions kill;
-      kill.timeout = std::chrono::seconds(60);
-      process::RunCommand(config_.docker, {"kill", name}, kill);
+      sandbox_common::KillContainer(config_.docker, name);
       outcome.error =
           "graded run timed out after " + std::to_string(timeout_s) + "s";
       return outcome;
@@ -859,17 +696,19 @@ auto DockerBackend::WorkspaceMounts(int slot) const
     -> std::vector<std::string> {
   if (config_.host_overlay) {
     // The merged tree is already assembled; the container just gets it.
-    return {BindMount(MergedDir(slot), kDockerWorkspace, false),
-            BindMount(OverlayDir(slot), kDockerScratch, false),
-            BindMount(OutputBase(slot), kDockerOutputBaseMount, false)};
+    return {
+        BindMount(MergedDir(slot), sandbox_common::kWorkspace, false),
+        BindMount(OverlayDir(slot), sandbox_common::kScratch, false),
+        BindMount(OutputBase(slot), sandbox_common::kOutputBaseMount, false)};
   }
-  return {BindMount(RepoDir(slot), kDockerLowerMount, true),
-          BindMount(OverlayDir(slot), kDockerScratch, false),
-          BindMount(OutputBase(slot), kDockerOutputBaseMount, false)};
+  return {BindMount(RepoDir(slot), sandbox_common::kLowerMount, true),
+          BindMount(OverlayDir(slot), sandbox_common::kScratch, false),
+          BindMount(OutputBase(slot), sandbox_common::kOutputBaseMount, false)};
 }
 
 auto ContainerNameBase(int slot, const std::string &order_id) -> std::string {
-  return "saw-" + std::to_string(slot) + "-" + SanitizeContainerName(order_id);
+  return "saw-" + std::to_string(slot) + "-" +
+         sandbox_common::SanitizeContainerName(order_id);
 }
 
 void DockerBackend::Cancel(const std::string &order_id) {
@@ -887,11 +726,9 @@ void DockerBackend::Cancel(const std::string &order_id) {
   // Killing one that already exited is a no-op, which is exactly the race we
   // want here rather than a lock held across a docker call.
   const std::string base = ContainerNameBase(slot, order_id);
-  process::RunOptions kill;
-  kill.timeout = std::chrono::seconds(60);
   for (const char *suffix :
        {"-build", "-referee", "-bot", "-opponent", "-grade"}) {
-    process::RunCommand(config_.docker, {"kill", base + suffix}, kill);
+    sandbox_common::KillContainer(config_.docker, base + suffix);
   }
   LOG(INFO) << "Cancelled order " << order_id << " (containers " << base
             << "-*)";

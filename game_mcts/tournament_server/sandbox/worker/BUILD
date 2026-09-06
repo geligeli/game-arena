@@ -48,6 +48,19 @@ cc_library(
     deps = ["@re2"],
 )
 
+# The host-side git work both backends do per slot: clone once, then fetch
+# and force-checkout the order's base commit. Shared so the two backends
+# cannot drift into running the same order on different trees.
+cc_library(
+    name = "checkout",
+    srcs = ["checkout.cc"],
+    hdrs = ["checkout.h"],
+    deps = [
+        ":build_log",
+        "//game_mcts/tournament_server/sandbox/common:step",
+    ],
+)
+
 cc_library(
     name = "sandbox_backend",
     hdrs = ["sandbox_backend.h"],
@@ -60,10 +73,13 @@ cc_library(
     hdrs = ["local_backend.h"],
     deps = [
         ":build_log",
+        ":checkout",
         ":metric_report",
         ":bot_launch",
         ":sandbox_backend",
         "//game_mcts/common/process",
+        "//game_mcts/tournament_server/sandbox/common:files",
+        "//game_mcts/tournament_server/sandbox/common:step",
         "@abseil-cpp//absl/log",
     ],
 )
@@ -76,10 +92,13 @@ cc_library(
     hdrs = ["docker_backend.h"],
     deps = [
         ":build_log",
+        ":checkout",
         ":metric_report",
         ":bot_launch",
         ":sandbox_backend",
         "//game_mcts/common/process",
+        "//game_mcts/tournament_server/sandbox/common:docker",
+        "//game_mcts/tournament_server/sandbox/common:files",
         "@abseil-cpp//absl/log",
     ],
 )
@@ -111,8 +130,9 @@ cc_test(
     ],
 )
 
-# The pure helpers: quoting, name sanitisation and the exact entrypoint script
-# handed to /bin/sh, asserted without a docker daemon.
+# The order-specific entrypoint scripts, asserted without a docker daemon.
+# Quoting, name sanitisation and the overlay preludes are tested in
+# sandbox/common:docker_test.
 cc_test(
     name = "docker_backend_test",
     srcs = ["docker_backend_test.cc"],

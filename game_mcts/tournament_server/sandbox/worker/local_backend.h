@@ -12,9 +12,9 @@
 //
 // Isolation here is resource limits and timeouts, not a security boundary.
 // Candidate code is compiled and run as the worker's own user. The docker
-// backend (docker_backend.h) adds container and memory isolation, but is
-// still not a security boundary: containers keep host networking so the bot
-// can reach the broker, and the build image is trusted.
+// backend (docker_backend.h) runs the same steps in hardened containers -- no
+// network, no capabilities, cgroup caps -- and a problem can refuse this
+// backend entirely with SandboxSpec.require_container.
 
 #include <sys/types.h>
 

@@ -23,13 +23,13 @@
 // Run blocks until the container exits, the server-side timeout fires, or a
 // Kill RPC with the same identifier stops the container mid-flight.
 
+#include <grpcpp/grpcpp.h>
+
 #include <chrono>
 #include <filesystem>
 #include <map>
 #include <mutex>
 #include <string>
-
-#include <grpcpp/grpcpp.h>
 
 #include "game_mcts/tournament_server/proto/sandbox_runner.grpc.pb.h"
 #include "game_mcts/tournament_server/proto/sandbox_runner.pb.h"
@@ -71,13 +71,12 @@ struct SandboxRunnerConfig {
 // safely written under a scratch directory or the in-container workspace.
 auto IsSafePatchPath(const std::string &path) -> bool;
 
-// Single-quote escaping for embedding an arbitrary string into the
-// container's `/bin/sh -c` script.
-auto ShellQuote(const std::string &value) -> std::string;
-
 // Stable docker container name for a run identifier, within docker's
 // [a-zA-Z0-9][a-zA-Z0-9_.-]* alphabet. The name doubles as the scratch
 // directory name and as the handle Kill uses to stop the container.
+//
+// Shell quoting and the name-sanitising alphabet come from
+// sandbox/common/docker.h, shared with the fleet worker's docker backend.
 auto ContainerName(const std::string &identifier) -> std::string;
 
 class SandboxRunnerService final

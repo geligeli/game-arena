@@ -1,6 +1,7 @@
-// The pure helpers of the docker backend: shell quoting, container-name
-// sanitisation, and the exact /bin/sh scripts the containers would run.
-// Asserted directly, without a docker daemon.
+// The order-specific entrypoint scripts: the exact /bin/sh text the build,
+// run and grade containers would execute. Asserted directly, without a docker
+// daemon. Shell quoting, name sanitisation, bind-mount syntax and the overlay
+// prelude fragments are tested in sandbox/common/docker_test.cc.
 
 #include "game_mcts/tournament_server/sandbox/worker/docker_backend.h"
 
@@ -11,21 +12,6 @@
 
 namespace tournament_arena {
 namespace {
-
-TEST(ShellQuoteTest, QuotesEverything) {
-  EXPECT_EQ(ShellQuote("plain"), "'plain'");
-  EXPECT_EQ(ShellQuote("a b"), "'a b'");
-  EXPECT_EQ(ShellQuote("it's"), "'it'\\''s'");
-  EXPECT_EQ(ShellQuote(""), "''");
-  EXPECT_EQ(ShellQuote("$HOME `id` \"x\""), "'$HOME `id` \"x\"'");
-}
-
-TEST(SanitizeContainerNameTest, ReplacesInvalidCharacters) {
-  // Docker names: [a-zA-Z0-9][a-zA-Z0-9_.-]*
-  EXPECT_EQ(SanitizeContainerName("order-1.a_b"), "order-1.a_b");
-  EXPECT_EQ(SanitizeContainerName("order/1: x"), "order-1--x");
-  EXPECT_EQ(SanitizeContainerName("a b"), "a-b");
-}
 
 // These assert the in-container overlay form explicitly. It is the fallback
 // now -- a host-mounted overlay leaves nothing for the script to assemble --

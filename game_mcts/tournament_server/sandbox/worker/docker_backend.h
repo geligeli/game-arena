@@ -43,19 +43,14 @@
 #include <string>
 #include <vector>
 
+#include "game_mcts/tournament_server/sandbox/common/docker.h"
 #include "game_mcts/tournament_server/sandbox/worker/sandbox_backend.h"
 
 namespace tournament_arena {
 
-// Fixed mount points inside the containers.
-inline constexpr char kDockerLowerMount[] = "/repo_lower";  // read-only clone
-inline constexpr char kDockerPatchMount[] =
-    "/patches";  // read-only order files
-inline constexpr char kDockerWorkspace[] =
-    "/workspace";  // overlay merge, repo root
-inline constexpr char kDockerScratch[] = "/sandbox";  // upper/work, HOME
-inline constexpr char kDockerOutputBaseMount[] = "/output_base";
-inline constexpr char kDockerDiskCacheMount[] = "/disk_cache";
+// The fixed in-container mount points (kLowerMount, kPatchMount, kWorkspace,
+// kScratch, kOutputBaseMount, kDiskCacheMount) live in sandbox/common/docker.h
+// so the runner and this backend cannot spell them differently.
 
 struct DockerBackendConfig {
   // A local git checkout, mounted read-only into every container. Must be a
@@ -96,13 +91,8 @@ struct DockerBackendConfig {
   int pids_limit = 512;  // 0: unlimited
 };
 
-// Single-quote escaping for embedding an arbitrary string into the
-// container's /bin/sh -c script.
-auto ShellQuote(const std::string &value) -> std::string;
-
-// Docker container names are [a-zA-Z0-9][a-zA-Z0-9_.-]*; anything else in an
-// order id becomes '-'. The result needs no further escaping.
-auto SanitizeContainerName(const std::string &value) -> std::string;
+// Single-quote escaping (sandbox_common::ShellQuote) and name sanitisation
+// (sandbox_common::SanitizeContainerName) come from sandbox/common/docker.h.
 
 // The container-name prefix a slot uses for an order. Every container the
 // backend starts for it begins with this, which is what lets Cancel find them
@@ -176,9 +166,9 @@ class DockerBackend final : public SandboxBackend {
   // The workspace mount, which differs by overlay mode.
   auto WorkspaceMounts(int slot) const -> std::vector<std::string>;
 
-  // Clones the repo into the slot's lower dir on first use.
-  auto CloneSlot(int slot, std::string *error) -> bool;
-  // Clone plus fetch/checkout of |base_commit|, mirroring LocalBackend.
+  // Clones the repo into the slot's lower dir on first use, then fetches and
+  // force-checks out |base_commit| (worker/checkout.h), mirroring
+  // LocalBackend.
   auto PrepareCheckout(int slot, const std::string &base_commit,
                        std::string *error) -> bool;
   // Writes the order's files and generated BUILD under the slot's patch dir

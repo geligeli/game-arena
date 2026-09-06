@@ -20,21 +20,14 @@ TEST(IsSafePatchPathTest, RejectsEscapesAndEmpty) {
   EXPECT_FALSE(IsSafePatchPath("a/./b"));
 }
 
-TEST(ShellQuoteTest, WrapsInSingleQuotes) {
-  EXPECT_EQ(ShellQuote("//game_mcts/cpp:target"), "'//game_mcts/cpp:target'");
-  EXPECT_EQ(ShellQuote(""), "''");
-}
-
-TEST(ShellQuoteTest, EscapesEmbeddedSingleQuotes) {
-  EXPECT_EQ(ShellQuote("it's"), "'it'\\''s'");
-  // A quote-injection attempt must stay one literal argument.
-  EXPECT_EQ(ShellQuote("x'; rm -rf /; '"), "'x'\\''; rm -rf /; '\\'''");
-}
+// Shell quoting and the name-sanitising alphabet are tested in
+// sandbox/common/docker_test.cc; here only the runner's prefix.
 
 TEST(ContainerNameTest, StaysWithinDockerAlphabet) {
   EXPECT_EQ(ContainerName("order-123"), "sbr-order-123");
   EXPECT_EQ(ContainerName("a/b c:d"), "sbr-a-b-c-d");
-  EXPECT_EQ(ContainerName("with_underscore.and.dot"), "sbr-with_underscore.and.dot");
+  EXPECT_EQ(ContainerName("with_underscore.and.dot"),
+            "sbr-with_underscore.and.dot");
 }
 
 TEST(ContainerNameTest, StartsAlphanumericEvenForOddIdentifiers) {

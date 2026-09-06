@@ -16,6 +16,8 @@ cc_library(
     deps = [
         "//game_mcts/common/process",
         "//game_mcts/tournament_server/proto:sandbox_runner_cc_grpc",
+        "//game_mcts/tournament_server/sandbox/common:docker",
+        "//game_mcts/tournament_server/sandbox/common:files",
         "@abseil-cpp//absl/log",
         "@grpc//:grpc++",
     ],
