@@ -1,0 +1,8 @@
+# The examples are separate bazel workspaces, each with its own MODULE.bazel.
+# A nested MODULE.bazel is not a package-loading boundary, so without this the
+# parent's //... descends into them and fails: their labels (//game:connect4,
+# //bots:bot_api) only resolve inside their own workspace.
+#
+# Build them from their own directory: cd examples/connect4 && bazel test //...
+examples/knapsack
+examples/connect4

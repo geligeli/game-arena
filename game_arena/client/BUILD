@@ -4,6 +4,19 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
+# The client half of the Play stream, with the game left out. A bot for any
+# problem is this plus one function; see examples/.
+cc_library(
+    name = "play_loop",
+    srcs = ["play_loop.cc"],
+    hdrs = ["play_loop.h"],
+    deps = [
+        "//game_arena/proto:tournament_broker_cc_grpc",
+        "@abseil-cpp//absl/log",
+        "@grpc//:grpc++",
+    ],
+)
+
 # The reference client: connects to a broker, asks the registry what the game's
 # legal moves look like, and plays uniformly at random. Game-agnostic -- it
 # only ever handles serialized states and actions.
@@ -16,6 +29,7 @@ cc_library(
     srcs = ["random_client.cc"],
     alwayslink = 1,
     deps = [
+        ":play_loop",
         "//game_arena/proto:tournament_broker_cc_grpc",
         "//game_arena/referee:game_registry",
         "@abseil-cpp//absl/flags:flag",

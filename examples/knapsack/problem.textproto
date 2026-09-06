@@ -1,0 +1,104 @@
+# A graded problem: pack the knapsack well.
+#
+# The smallest complete example of the graded shape. There is no game, no
+# registry and no referee -- the arena builds a submission, runs one command,
+# and reads the numbers that command leaves in $ARENA_REPORT.
+#
+#   bazel run @game_arena//game_arena/server:problem_server -- \
+#       --problem_config=$PWD/problem.textproto \
+#       --data_dir=$PWD/.arena_data \
+#       --clients=$PWD/clients.textproto
+
+problem_id: "knapsack"
+display_name: "Knapsack"
+description:
+  "Pack items into a knapsack. Each instance is `N C` followed by N lines of "
+  "`value weight`; take items whose total weight is at most C and whose total "
+  "value is as high as possible.\n"
+  "\n"
+  "A submission is one `cc_binary` named `solve` under "
+  "`solutions/<your-id>/`. It takes an instance path as its only argument and "
+  "prints the indices of the items it packs, one per line.\n"
+  "\n"
+  "Score is the mean percentage of the known optimum across all cases, so 100 "
+  "is exact. An infeasible answer -- over capacity, a repeated index, junk on "
+  "stdout -- scores zero for that case; a crash or a timeout does too.\n"
+
+# Every path below is relative to THIS directory, because this directory is the
+# problem's repo root: the sandbox worker clones a repo and runs bazel at its
+# root, so a problem's workspace has to be that root. Living inside game-arena
+# is a convenience for reading the two examples side by side -- to run it on a
+# fleet, point repo.url at a checkout whose root is this directory.
+repo {
+  url: "/large_nfs/game-arena/examples/knapsack"
+  base_commit: "HEAD"
+}
+
+submission {
+  max_patch_bytes: 262144
+  max_files: 16
+  # A solution lives in its own directory and touches nothing else. In
+  # particular not the grader, and not the cases it is scored on.
+  allow_paths: "solutions/**"
+
+  files_submit_dir: "solutions"
+  harness {
+    # Nothing to link: a solution here is a standalone program. The generated
+    # BUILD still needs a main, and for this problem the submission provides
+    # it, so the harness names the submission's own source. See
+    # examples/knapsack/README.md.
+    api_dep: "@game_arena//game_arena/grader:report"
+    main_src: "solve.cc"
+  }
+}
+
+build {
+  targets: "//grader:grade"
+  targets: "//solutions/{submission_id}:solve"
+  timeout_s: 600
+}
+
+sandbox {
+  image: "takumi.city/jax-cpu-training:latest"
+  memory_limit_mb: 4096
+  # A grader run has no business reaching the network.
+  network: NETWORK_NONE
+  require_container: true
+}
+
+grade {
+  argv: "bazel-bin/grader/grade"
+  argv: "--solution=bazel-bin/solutions/{submission_id}/solve"
+  argv: "--cases=cases"
+  # Scoring is deterministic here, so one run is the answer. A problem measuring
+  # time would raise this and aggregate MIN.
+  repeats: 1
+  aggregate: MIN
+  metrics {
+    name: "score"
+    direction: MAXIMIZE
+    primary: true
+    unit: "%"
+  }
+  metrics {
+    name: "solved"
+    direction: MAXIMIZE
+  }
+  metrics {
+    name: "infeasible"
+    direction: MINIMIZE
+  }
+  timeout_s: 300
+}
+
+ranking {
+  kind: METRIC
+  metric_name: "score"
+}
+
+clients {
+  default_quota {
+    max_active_evaluations: 1
+    max_queued_jobs: 4
+  }
+}

@@ -1,0 +1,23 @@
+# A worked example: a graded problem with a custom grader.
+#
+# Its own bazel workspace, not part of game-arena's build, because that is what
+# a real problem repo is. The only thing tying it to the arena is the bazel_dep
+# below and the labels in problem.textproto.
+
+module(
+    name = "knapsack_problem",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "rules_cc", version = "0.2.14")
+bazel_dep(name = "abseil-cpp", version = "20250814.1")
+
+# The grader links two arena libraries: one to write the report the worker
+# reads, one to run the submission under a timeout. Neither is required -- a
+# grader that shells out and printfs its JSON needs no dependency on the arena
+# at all -- but a C++ grader may as well not hand-roll them.
+bazel_dep(name = "game_arena", version = "0.1.0")
+local_path_override(
+    module_name = "game_arena",
+    path = "../..",
+)

@@ -66,6 +66,19 @@ these are compiled into the coordinator.
 namespace. The coordinator stores submissions, schedules them and publishes
 standings; the moment it can referee a match, someone will make it.
 
+## Examples
+
+Two complete problems live in [`examples/`](examples), one of each shape, each
+its own bazel workspace:
+
+- [`examples/knapsack`](examples/knapsack) — a **graded** problem. A grader you
+  write scores each submission; no game, no registry, no referee.
+- [`examples/connect4`](examples/connect4) — a **tournament** problem. Your own
+  game linked into the arena's referee, submissions rated by ELO.
+
+Neither is referenced from anything under `game_arena/`, which is the point.
+Start there if you are adding a problem.
+
 ## Build
 
 Bazel 8.x (Bzlmod). No configuration needed — the repo depends on nothing

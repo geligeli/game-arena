@@ -1,0 +1,99 @@
+# A tournament problem: write a Connect Four bot, get rated against everyone
+# else's.
+#
+# Every path below is relative to THIS directory, because this directory is the
+# problem's repo root: the sandbox worker clones a repo and runs bazel at its
+# root, so a problem's workspace has to be that root. Living inside game-arena
+# is a convenience for reading the two examples side by side -- to run it on a
+# fleet, point repo.url at a checkout whose root is this directory.
+#
+#   bazel run @game_arena//game_arena/server:problem_server -- \
+#       --problem_config=$PWD/problem.textproto \
+#       --data_dir=$PWD/.arena_data --clients=$PWD/clients.textproto
+
+problem_id: "connect4"
+display_name: "Connect Four"
+description:
+  "Write a Connect Four bot and have it rated against every other "
+  "submission.\n"
+  "\n"
+  "Submit one header defining:\n"
+  "\n"
+  "    auto ChooseColumn(const bot::Board &board, std::mt19937 &gen) -> int;\n"
+  "\n"
+  "Start from `bots/reference/strategy.h`. Return a column 0-6 with room in "
+  "it; an illegal move loses the game on the spot, because the referee "
+  "validates every action.\n"
+  "\n"
+  "You are placed against `builtin:random` and `builtin:greedy` first, then "
+  "matched against other submissions.\n"
+
+repo {
+  url: "/large_nfs/game-arena/examples/connect4"
+  base_commit: "HEAD"
+}
+
+submission {
+  # A strategy is one header. A patch far larger than that is a mistake worth
+  # catching before it reaches the fleet.
+  max_patch_bytes: 262144
+  max_files: 16
+  allow_paths: "bots/submissions/**"
+
+  # Solutions are new files in their own directory, so agents may submit that
+  # shape directly and the coordinator turns it into an add-only patch --
+  # generated BUILD included, which is what keeps the dependency list below
+  # enforceable. A hand-written patch is still accepted, under the same
+  # allow_paths.
+  files_submit_dir: "bots/submissions"
+  harness {
+    # These are this repo's labels. The arena has no opinion about them; it
+    # writes exactly these into the BUILD it generates per submission.
+    api_dep: "//bots:bot_api"
+    main_src: "//bots:bot_main.cc"
+    bot_deps: "//bots:bot_deps"
+  }
+
+  # A strategy may reach for the rules and nothing else. Not the arena, not the
+  # referee, not another submission.
+  allowed_dep_prefixes: "//game:connect4"
+}
+
+build {
+  # The referee builds alongside the bot: a submission that somehow breaks the
+  # rules library fails to build rather than reaching a match.
+  targets: "//game:match_referee"
+  targets: "//bots/submissions/{submission_id}:bot"
+  timeout_s: 1200
+}
+
+sandbox {
+  image: "takumi.city/jax-cpu-training:latest"
+  memory_limit_mb: 4096
+  # The two bots must reach their referee, and nothing else.
+  network: NETWORK_INTERNAL_BRIDGE
+  require_container: true
+}
+
+match {
+  game: "connect4"
+  referee_target: "//game:match_referee"
+  games_per_order: 10
+  placement_opponents: "builtin:random"
+  placement_opponents: "builtin:greedy"
+  turn_timeout_ms: 5000
+  # Without a whole-game budget the per-turn clock bounds nothing: a slow
+  # strategy can burn the full turn budget on every one of 42 moves.
+  game_time_budget_ms: 60000
+  max_moves_per_game: 100
+  timeout_s: 900
+}
+
+ranking { kind: ELO }
+
+clients {
+  default_quota {
+    max_active_evaluations: 1
+    max_queued_jobs: 4
+  }
+}

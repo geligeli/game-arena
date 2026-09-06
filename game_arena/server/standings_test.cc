@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <set>
 #include <string>
 
 #include "game_arena/server/elo_standings.h"
@@ -151,6 +152,42 @@ TEST_F(EloStandingsTest, RanksReadyCandidatesBestFirst) {
   EXPECT_EQ(rows[0].candidate_id, strong);
   EXPECT_EQ(rows[1].candidate_id, weak);
   EXPECT_EQ(standings_->Rank(1).size(), 1u);
+}
+
+// The development broker has no candidate store and no problem: it serves
+// whatever game its registry was linked with. It passes an empty problem_id,
+// which used to match no rating store key at all, so its leaderboard was
+// always empty however many games were played.
+TEST_F(EloStandingsTest, EmptyProblemIdRanksEveryProblemInTheStore) {
+  tournament_broker::EloStore store(dir_ / "ratings.pb");
+  store.RecordResult("connect4", "alice", "builtin:random", 1.0);
+  store.RecordResult("nim", "bob", "builtin:random", 1.0);
+
+  EloStandings all(&store, /*candidates=*/nullptr, /*problem_id=*/"");
+  const auto rows = all.Rank(0);
+
+  std::set<std::string> ranked;
+  for (const auto &row : rows) {
+    ranked.insert(row.candidate_id);
+    EXPECT_GT(row.score, 0.0)
+        << row.candidate_id
+        << " ranked with no rating: the row was read under the wrong problem";
+  }
+  EXPECT_TRUE(ranked.contains("alice"));
+  EXPECT_TRUE(ranked.contains("bob"));
+  EXPECT_TRUE(ranked.contains("builtin:random"));
+}
+
+// A real problem still sees only its own players.
+TEST_F(EloStandingsTest, ANamedProblemIdStillFiltersToThatProblem) {
+  tournament_broker::EloStore store(dir_ / "ratings.pb");
+  store.RecordResult("connect4", "alice", "builtin:random", 1.0);
+  store.RecordResult("nim", "bob", "builtin:random", 1.0);
+
+  EloStandings only(&store, /*candidates=*/nullptr, "connect4");
+  for (const auto &row : only.Rank(0)) {
+    EXPECT_NE(row.candidate_id, "bob") << "nim's players leaked into connect4";
+  }
 }
 
 class MetricStandingsTest : public ::testing::Test {

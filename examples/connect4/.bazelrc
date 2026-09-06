@@ -1,0 +1,60 @@
+build --cxxopt='-std=c++23'
+build --host_cxxopt='-std=c++23'
+build --copt=-fdiagnostics-color=always
+build --define=absl=1
+
+# Enable all warnings and make them fatal for project files.
+build --cxxopt=-Wall
+build --cxxopt=-Wextra
+build --cxxopt=-Werror
+build --host_cxxopt=-Wall
+build --host_cxxopt=-Wextra
+build --host_cxxopt=-Werror
+# External dependencies are exempt: silence their warnings entirely so the
+# fatal project warnings above don't break third-party code.
+build --per_file_copt='external/.*@-w'
+build --host_per_file_copt='external/.*@-w'
+
+# Every config below sets --platform_suffix so it gets its own output directory
+# (bazel-out/k8-fastbuild-<suffix>). Without it they all share k8-fastbuild and
+# each switch discards the previous config's cached artifacts.
+
+# Opt-in: compile for the exact host CPU (enables POPCNT/BMI/AVX2, removes
+# software popcount fallbacks). Faster MCTS rollouts, but the resulting
+# binaries may not run on older or different CPUs.
+build:native --platform_suffix=native
+build:native --copt=-march=native
+
+build:asan --platform_suffix=asan
+build:asan --strip=never
+build:asan --copt=-fsanitize=address
+build:asan --copt=-O0
+build:asan --copt=-g
+build:asan --copt=-fno-omit-frame-pointer
+build:asan --linkopt=-fsanitize=address
+build:asan --action_env=ASAN_OPTIONS=detect_leaks=1:color=always
+
+build:msan --platform_suffix=msan
+build:msan --strip=never
+build:msan --copt=-fsanitize=memory
+build:msan --copt=-O0
+build:msan --copt=-fsanitize-memory-track-origins
+build:msan --copt=-fsanitize-memory-use-after-dtor
+build:msan --copt=-fno-omit-frame-pointer
+build:msan --linkopt=-fsanitize=memory
+build:msan --action_env=MSAN_OPTIONS=poison_in_dtor=1
+
+build:tsan --platform_suffix=tsan
+build:tsan --strip=never
+build:tsan --copt=-fsanitize=thread
+build:tsan --copt=-fno-omit-frame-pointer
+build:tsan --linkopt=-fsanitize=thread
+build:tsan --action_env=TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
+
+build:ubsan --platform_suffix=ubsan
+build:ubsan --strip=never
+build:ubsan --copt=-fsanitize=undefined
+build:ubsan --copt=-O0
+build:ubsan --copt=-fno-omit-frame-pointer
+build:ubsan --linkopt=-fsanitize=undefined
+build:ubsan --action_env=UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1

@@ -19,6 +19,7 @@
 #include "absl/flags/parse.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
+#include "game_arena/client/play_loop.h"
 #include "game_arena/proto/tournament_broker.grpc.pb.h"
 #include "game_arena/referee/game_registry.h"
 
@@ -28,61 +29,6 @@ ABSL_FLAG(std::string, game, "", "Registry key of the game to play (required)");
 ABSL_FLAG(std::string, opponent, "any",
           "any | builtin:random | builtin:mcts | builtin:minimax | ...");
 ABSL_FLAG(int, games, 1, "Number of games to play");
-
-namespace {
-
-auto PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
-                 const std::string &name, const std::string &game,
-                 const std::string &opponent,
-                 const tournament_broker::BuiltinFn &policy,
-                 std::mt19937 &gen) -> bool {
-  grpc::ClientContext context;
-  auto stream = stub->Play(&context);
-
-  tournament_broker::proto::ClientMessage hello_msg;
-  auto *hello = hello_msg.mutable_hello();
-  hello->set_player_name(name);
-  hello->set_game(game);
-  hello->set_opponent(opponent);
-  if (!stream->Write(hello_msg)) {
-    LOG(ERROR) << "Could not send hello";
-    return false;
-  }
-
-  tournament_broker::proto::ServerMessage server_msg;
-  while (stream->Read(&server_msg)) {
-    if (server_msg.has_game_start()) {
-      const auto &start = server_msg.game_start();
-      LOG(INFO) << "Game " << start.game_id() << " started as seat "
-                << start.seat() << " vs " << start.opponent_name();
-    } else if (server_msg.has_your_turn()) {
-      tournament_broker::proto::ClientMessage reply;
-      reply.mutable_action()->set_action(
-          policy(server_msg.your_turn().state(), gen));
-      if (!stream->Write(reply)) {
-        LOG(ERROR) << "Stream died while sending action";
-        return false;
-      }
-    } else if (server_msg.has_game_over()) {
-      const auto &over = server_msg.game_over();
-      LOG(INFO) << "Game over: "
-                << tournament_broker::proto::GameOver::Result_Name(
-                       over.result())
-                << " (reason: " << over.reason() << "), new ELO "
-                << over.new_elo();
-      break;  // One game per stream; half-close so the server handler exits.
-    }
-  }
-  stream->WritesDone();
-  const grpc::Status status = stream->Finish();
-  if (!status.ok()) {
-    LOG(ERROR) << "Play RPC failed: " << status.error_message();
-    return false;
-  }
-  return true;
-}
-
-}  // namespace
 
 auto main(int argc, char **argv) -> int {
   absl::ParseCommandLine(argc, argv);
@@ -113,10 +59,9 @@ auto main(int argc, char **argv) -> int {
   auto stub = tournament_broker::proto::TournamentBroker::NewStub(channel);
 
   std::mt19937 gen(std::random_device{}());
-  bool ok = true;
-  for (int i = 0; i < absl::GetFlag(FLAGS_games) && ok; ++i) {
-    ok = PlayOneGame(stub.get(), name, game, absl::GetFlag(FLAGS_opponent),
-                     *policy, gen);
-  }
-  return ok ? 0 : 1;
+  return tournament_client::PlayGames(stub.get(), name, game,
+                                      absl::GetFlag(FLAGS_opponent),
+                                      absl::GetFlag(FLAGS_games), *policy, gen)
+             ? 0
+             : 1;
 }

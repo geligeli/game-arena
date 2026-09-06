@@ -39,6 +39,12 @@ class EloStandings final : public Standings {
   auto has(const std::string &candidate_id) const -> bool override;
 
  private:
+  // Get() for a rating filed under a problem other than problem_id_. Only
+  // Rank() with an empty problem_id_ needs it: there the problem comes from
+  // each rating store key rather than from this object.
+  auto GetIn(const std::string &problem_id,
+             const std::string &candidate_id) const -> Standing;
+
   tournament_broker::EloStore *elo_store_;  // not owned
   const CandidateStore *candidates_;        // not owned
   const std::string problem_id_;

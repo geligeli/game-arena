@@ -12,3 +12,7 @@ mcp_servers/.venv/
 # Generated Python gRPC stubs for the arena MCP server (see
 # mcp_servers/arena_mcp/make_stubs.sh).
 mcp_servers/arena_mcp/_pb/
+
+# The examples are separate workspaces built on demand; their lockfiles are
+# regenerated from MODULE.bazel and only add churn here.
+examples/*/MODULE.bazel.lock

@@ -56,7 +56,12 @@ void EloStandings::Record(const std::string &candidate_id,
 }
 
 auto EloStandings::Get(const std::string &candidate_id) const -> Standing {
-  const auto rating = elo_store_->Get(problem_id_, candidate_id);
+  return GetIn(problem_id_, candidate_id);
+}
+
+auto EloStandings::GetIn(const std::string &problem_id,
+                         const std::string &candidate_id) const -> Standing {
+  const auto rating = elo_store_->Get(problem_id, candidate_id);
   Standing standing;
   standing.candidate_id = candidate_id;
   standing.score = rating.elo();
@@ -83,14 +88,23 @@ auto EloStandings::Rank(int limit) const -> std::vector<Standing> {
   } else {
     // No submission registry: rank whoever has played. The rating store keys
     // are "<problem>\t<player>".
+    //
+    // An empty problem_id_ means "every problem in the store". The development
+    // broker passes exactly that, because it is not serving a problem at all --
+    // it is serving whatever game its registry was linked with, and filtering
+    // on "" against keys like "connect4\tsomebody" matched nothing, so its
+    // leaderboard was always empty.
     const tournament_broker::proto::RatingStore snapshot =
         elo_store_->Snapshot();
     for (const auto &[key, rating] : snapshot.ratings()) {
       const auto tab = key.find('\t');
-      if (tab == std::string::npos || key.substr(0, tab) != problem_id_) {
+      if (tab == std::string::npos) {
         continue;
       }
-      rows.push_back(Get(key.substr(tab + 1)));
+      if (!problem_id_.empty() && key.substr(0, tab) != problem_id_) {
+        continue;
+      }
+      rows.push_back(GetIn(key.substr(0, tab), key.substr(tab + 1)));
     }
   }
   std::sort(rows.begin(), rows.end(), [](const Standing &a, const Standing &b) {
