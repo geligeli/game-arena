@@ -23,10 +23,25 @@ from pathlib import Path
 import grpc
 from mcp.server.fastmcp import FastMCP
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "_pb"))
-from game_mcts.tournament_server.proto import arena_pb2, arena_pb2_grpc  # noqa: E402
+# The venv flow loads hand-generated stubs from _pb/; under `bazel run` the
+# stubs come from //game_mcts/tournament_server/proto:arena_py instead, and
+# _pb must stay off the path (resolve() follows runfiles symlinks back into
+# the checkout, where _pb may hold stubs for a different protobuf runtime).
+if "BUILD_WORKSPACE_DIRECTORY" not in os.environ:
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "_pb"))
+try:
+    from game_mcts.tournament_server.proto import arena_pb2, arena_pb2_grpc  # noqa: E402
+except ImportError:  # bazel runfiles layout: flat stubs from :arena_py
+    import arena_pb2  # type: ignore
+    import arena_pb2_grpc  # type: ignore
 
-REPO_ROOT = Path(os.environ.get("ARENA_MCP_REPO_ROOT", Path(__file__).resolve().parents[2]))
+# Under `bazel run`, BUILD_WORKSPACE_DIRECTORY points at the checkout.
+_repo_root = os.environ.get("ARENA_MCP_REPO_ROOT") or os.environ.get(
+    "BUILD_WORKSPACE_DIRECTORY"
+)
+REPO_ROOT = (
+    Path(_repo_root) if _repo_root else Path(__file__).resolve().parents[2]
+)
 ARENA_TARGET = os.environ.get("ARENA_MCP_TARGET", "localhost:50051")
 DEFAULT_AUTHOR = os.environ.get("ARENA_MCP_AUTHOR", "agent")
 

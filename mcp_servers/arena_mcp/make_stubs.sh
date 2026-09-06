@@ -1,9 +1,9 @@
 #!/bin/sh
 # Regenerates the arena's Python gRPC stubs into _pb/.
 #
-# Not a bazel rule: this workspace has py_proto_library but no Python gRPC
-# rules, and wiring them up is more machinery than a two-file codegen step
-# deserves. Re-run after changing game_mcts/tournament_server/proto/arena.proto.
+# Only needed for the venv flow (see mcp_servers/README.md): under bazel the
+# stubs come from //game_mcts/tournament_server/proto:arena_py. Re-run after
+# changing game_mcts/tournament_server/proto/arena.proto.
 set -e
 
 here=$(cd "$(dirname "$0")" && pwd)
