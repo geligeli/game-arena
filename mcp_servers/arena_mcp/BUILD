@@ -10,7 +10,7 @@ py_binary(
     srcs = ["server.py"],
     deps = [
         "//game_arena/proto:arena_py",
-        "@mcp_pip_deps//grpcio",
-        "@mcp_pip_deps//mcp",
+        "@arena_mcp_pip_deps//grpcio",
+        "@arena_mcp_pip_deps//mcp",
     ],
 )

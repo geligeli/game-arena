@@ -11,7 +11,7 @@ return extracted compiler errors rather than the bazel log. Start with
 ## Running under bazel (no venv needed)
 
 A `py_binary` on the hermetic 3.12 toolchain with pinned pip deps from
-`requirements.txt` (`pip.parse`, hub `@mcp_pip_deps`):
+`requirements.txt` (`pip.parse`, hub `@arena_mcp_pip_deps`):
 
 ```sh
 bazel run //mcp_servers/arena_mcp:server
