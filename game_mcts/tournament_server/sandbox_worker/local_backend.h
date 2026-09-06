@@ -11,8 +11,10 @@
 // serialise on bazel's workspace lock.
 //
 // Isolation here is resource limits and timeouts, not a security boundary.
-// Candidate code is compiled and run as the worker's own user; treat
-// submissions as trusted until the docker backend is in use.
+// Candidate code is compiled and run as the worker's own user. The docker
+// backend (docker_backend.h) adds container and memory isolation, but is
+// still not a security boundary: containers keep host networking so the bot
+// can reach the broker, and the build image is trusted.
 
 #include <filesystem>
 #include <string>
@@ -46,7 +48,7 @@ class LocalBackend final : public SandboxBackend {
 
   // Prepares |slots| checkouts up front, so the first order does not pay for
   // the clone. Returns false with *error set when the repo cannot be cloned.
-  auto Warmup(int slots, std::string *error) -> bool;
+  auto Warmup(int slots, std::string *error) -> bool override;
 
  private:
   auto SlotDir(int slot) const -> std::filesystem::path;

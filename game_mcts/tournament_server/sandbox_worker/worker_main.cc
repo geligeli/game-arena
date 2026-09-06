@@ -32,6 +32,7 @@
 #include "absl/log/log.h"
 #include "absl/strings/str_split.h"
 #include "game_mcts/tournament_server/arena.grpc.pb.h"
+#include "game_mcts/tournament_server/sandbox_worker/docker_backend.h"
 #include "game_mcts/tournament_server/sandbox_worker/local_backend.h"
 
 ABSL_FLAG(std::string, server, "localhost:50051",
@@ -47,8 +48,11 @@ ABSL_FLAG(std::string, work_dir, "/tmp/arena_sandbox",
 ABSL_FLAG(std::string, disk_cache, "",
           "Shared bazel --disk_cache across slots; defaults to "
           "<work_dir>/disk_cache");
-ABSL_FLAG(std::string, backend, "local", "local (docker is not wired up yet)");
-ABSL_FLAG(std::string, bazel, "bazel", "bazel binary");
+ABSL_FLAG(std::string, backend, "local", "How orders are executed: local or docker");
+ABSL_FLAG(std::string, docker_image, "",
+          "Image for --backend=docker; must contain bazel matching the repo's "
+          "MODULE.bazel.lock (required with --backend=docker)");
+ABSL_FLAG(std::string, bazel, "bazel", "bazel binary (local backend)");
 ABSL_FLAG(std::string, git, "git", "git binary");
 ABSL_FLAG(std::string, bazel_flags, "",
           "Comma-separated extra bazel flags, e.g. --config=native");
@@ -57,6 +61,8 @@ ABSL_FLAG(int, reconnect_delay_s, 5,
 
 namespace {
 
+using tournament_arena::DockerBackend;
+using tournament_arena::DockerBackendConfig;
 using tournament_arena::LocalBackend;
 using tournament_arena::LocalBackendConfig;
 using tournament_arena::OrderOutcome;
@@ -200,36 +206,65 @@ auto main(int argc, char **argv) -> int {
     LOG(ERROR) << "Missing required --repo=<path or git url>";
     return 2;
   }
-  if (absl::GetFlag(FLAGS_backend) != "local") {
-    LOG(ERROR) << "Unsupported --backend='" << absl::GetFlag(FLAGS_backend)
-               << "' (only 'local' is wired up)";
-    return 2;
-  }
 
   const int slots = std::max(1, absl::GetFlag(FLAGS_slots));
   const std::string worker_id = absl::GetFlag(FLAGS_worker_id).empty()
                                     ? DefaultWorkerId()
                                     : absl::GetFlag(FLAGS_worker_id);
 
-  LocalBackendConfig backend_config;
-  backend_config.repo_url = absl::GetFlag(FLAGS_repo);
-  backend_config.work_dir = absl::GetFlag(FLAGS_work_dir);
-  backend_config.disk_cache =
-      absl::GetFlag(FLAGS_disk_cache).empty()
-          ? backend_config.work_dir / "disk_cache"
-          : std::filesystem::path(absl::GetFlag(FLAGS_disk_cache));
-  backend_config.bazel = absl::GetFlag(FLAGS_bazel);
-  backend_config.git = absl::GetFlag(FLAGS_git);
-  if (!absl::GetFlag(FLAGS_bazel_flags).empty()) {
-    backend_config.bazel_flags =
-        absl::StrSplit(absl::GetFlag(FLAGS_bazel_flags), ',', absl::SkipEmpty());
+  std::unique_ptr<SandboxBackend> backend;
+  if (absl::GetFlag(FLAGS_backend) == "local") {
+    LocalBackendConfig backend_config;
+    backend_config.repo_url = absl::GetFlag(FLAGS_repo);
+    backend_config.work_dir = absl::GetFlag(FLAGS_work_dir);
+    backend_config.disk_cache =
+        absl::GetFlag(FLAGS_disk_cache).empty()
+            ? backend_config.work_dir / "disk_cache"
+            : std::filesystem::path(absl::GetFlag(FLAGS_disk_cache));
+    backend_config.bazel = absl::GetFlag(FLAGS_bazel);
+    backend_config.git = absl::GetFlag(FLAGS_git);
+    if (!absl::GetFlag(FLAGS_bazel_flags).empty()) {
+      backend_config.bazel_flags =
+          absl::StrSplit(absl::GetFlag(FLAGS_bazel_flags), ',', absl::SkipEmpty());
+    }
+    backend = std::make_unique<LocalBackend>(std::move(backend_config));
+  } else if (absl::GetFlag(FLAGS_backend) == "docker") {
+    if (absl::GetFlag(FLAGS_docker_image).empty()) {
+      LOG(ERROR) << "--backend=docker requires --docker_image=<image>";
+      return 2;
+    }
+    const std::filesystem::path repo(absl::GetFlag(FLAGS_repo));
+    if (!std::filesystem::is_directory(repo)) {
+      LOG(ERROR) << "--backend=docker needs --repo as a local path (it is "
+                    "mounted into the containers), got '"
+                 << absl::GetFlag(FLAGS_repo) << "'";
+      return 2;
+    }
+    DockerBackendConfig backend_config;
+    backend_config.repo_dir = repo;
+    backend_config.work_dir = absl::GetFlag(FLAGS_work_dir);
+    backend_config.disk_cache =
+        absl::GetFlag(FLAGS_disk_cache).empty()
+            ? backend_config.work_dir / "disk_cache"
+            : std::filesystem::path(absl::GetFlag(FLAGS_disk_cache));
+    backend_config.docker_image = absl::GetFlag(FLAGS_docker_image);
+    backend_config.git = absl::GetFlag(FLAGS_git);
+    if (!absl::GetFlag(FLAGS_bazel_flags).empty()) {
+      backend_config.bazel_flags =
+          absl::StrSplit(absl::GetFlag(FLAGS_bazel_flags), ',', absl::SkipEmpty());
+    }
+    backend = std::make_unique<DockerBackend>(std::move(backend_config));
+  } else {
+    LOG(ERROR) << "Unsupported --backend='" << absl::GetFlag(FLAGS_backend)
+               << "' (local or docker)";
+    return 2;
   }
 
-  LocalBackend backend(backend_config);
   LOG(INFO) << "Worker '" << worker_id << "' warming up " << slots
-            << " slot(s) from " << backend_config.repo_url;
+             << " slot(s) from " << absl::GetFlag(FLAGS_repo) << " via the "
+             << backend->name() << " backend";
   std::string error;
-  if (!backend.Warmup(slots, &error)) {
+  if (!backend->Warmup(slots, &error)) {
     LOG(ERROR) << "Cannot prepare slots: " << error;
     return 1;
   }
@@ -246,14 +281,14 @@ auto main(int argc, char **argv) -> int {
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id(worker_id);
     hello.mutable_hello()->set_slots(slots);
-    hello.mutable_hello()->set_backend(backend.name());
+    hello.mutable_hello()->set_backend(backend->name());
     if (!stream->Write(hello)) {
       LOG(WARNING) << "Cannot reach the arena at "
                    << absl::GetFlag(FLAGS_server) << "; retrying";
     } else {
       LOG(INFO) << "Attached to " << absl::GetFlag(FLAGS_server) << " as '"
                 << worker_id << "' with " << slots << " slot(s)";
-      WorkerSession session(&backend, stream.get(), slots);
+      WorkerSession session(backend.get(), stream.get(), slots);
       proto::FleetMessage message;
       while (stream->Read(&message)) {
         if (message.has_order()) {

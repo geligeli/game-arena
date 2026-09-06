@@ -4,11 +4,12 @@
 // How a work order is actually executed: check out the tree, patch the
 // candidate in, build it, run the bot against the broker.
 //
-// One interface, two intended implementations. `local` runs the steps as
-// subprocesses with resource limits and timeouts -- enough to stop a runaway
-// candidate, not a security boundary. `docker` will run the same steps inside
-// a container. The worker loop knows only this interface, so adding the
-// second backend does not touch scheduling, reporting or the fleet protocol.
+// One interface, two implementations. `local` runs the steps as subprocesses
+// with resource limits and timeouts -- enough to stop a runaway candidate,
+// not a security boundary. `docker` runs the same steps in throwaway
+// containers over a per-slot overlay (see docker_backend.h). The worker loop
+// knows only this interface, so a backend swap does not touch scheduling,
+// reporting or the fleet protocol.
 
 #include <string>
 
@@ -42,6 +43,15 @@ class SandboxBackend {
                         const proto::WorkOrder &order) -> OrderOutcome = 0;
 
   virtual auto name() const -> std::string = 0;
+
+  // Prepares per-slot state up front, so the first order does not pay for it.
+  // Default: the backend has no per-slot state to prepare. Returns false with
+  // *error set when the worker cannot serve orders at all.
+  virtual auto Warmup(int slots, std::string *error) -> bool {
+    (void)slots;
+    (void)error;
+    return true;
+  }
 };
 
 }  // namespace tournament_arena

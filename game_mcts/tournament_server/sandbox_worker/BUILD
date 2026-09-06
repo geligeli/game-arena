@@ -45,10 +45,26 @@ cc_library(
     ],
 )
 
+# The docker backend: same order steps as local_backend, but each phase runs in
+# a throwaway container over a per-slot overlay (host does the git work).
+cc_library(
+    name = "docker_backend",
+    srcs = ["docker_backend.cc"],
+    hdrs = ["docker_backend.h"],
+    deps = [
+        ":build_log",
+        ":candidate_build",
+        ":sandbox_backend",
+        "//game_mcts/cpp/process",
+        "@abseil-cpp//absl/log",
+    ],
+)
+
 cc_binary(
     name = "sandbox_worker",
     srcs = ["worker_main.cc"],
     deps = [
+        ":docker_backend",
         ":local_backend",
         ":sandbox_backend",
         "//game_mcts/tournament_server:arena_cc_grpc",
@@ -76,6 +92,29 @@ cc_test(
     srcs = ["build_log_test.cc"],
     deps = [
         ":build_log",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# The pure helpers: quoting, name sanitisation and the exact entrypoint script
+# handed to /bin/sh, asserted without a docker daemon.
+cc_test(
+    name = "docker_backend_test",
+    srcs = ["docker_backend_test.cc"],
+    deps = [
+        ":docker_backend",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# End-to-end against fake `docker` and `git` scripts -- no daemon needed.
+# Covers the mounts, the entrypoint scripts, host-side checkout, build failure
+# reporting, run timeouts and patch-path validation.
+cc_test(
+    name = "docker_backend_integration_test",
+    srcs = ["docker_backend_integration_test.cc"],
+    deps = [
+        ":docker_backend",
         "@googletest//:gtest_main",
     ],
 )

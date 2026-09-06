@@ -32,6 +32,13 @@ bazel run //game_mcts/tournament_server:tournament_server -- \
 # 2. One or more workers, here or on any other host with the repo and bazel.
 bazel run //game_mcts/tournament_server/sandbox_worker:sandbox_worker -- \
     --server=<arena-host>:50051 --repo=/large_nfs/game-mcts --slots=2
+
+# Same worker, but each build and run happens in a throwaway container.
+# --repo is mounted into the containers, so it must be a local path; the image
+# must carry the bazel that matches the repo's MODULE.bazel.lock.
+bazel run //game_mcts/tournament_server/sandbox_worker:sandbox_worker -- \
+    --server=<arena-host>:50051 --repo=/large_nfs/game-mcts --slots=2 \
+    --backend=docker --docker_image=<image-with-bazel>
 ```
 
 `--broker_advertise` matters as soon as a worker is not on the arena's host: it
@@ -70,8 +77,14 @@ holding a slot and producing no game.
 ## Isolation, honestly
 
 The `local` backend gives **resource limits and timeouts, not a security
-boundary**. Candidate code is compiled and run as the worker's own user, and a
-submission can do anything that user can. What is actually enforced:
+boundary**: candidate code is compiled and run as the worker's own user, and a
+submission can do anything that user can. The `docker` backend (`--backend=docker
+--docker_image=<image>`) runs each phase — build, then run — in a throwaway
+container over the slot's overlay, caps the run with `--memory`, and kills the
+named container when a phase times out. But the containers use
+`--network=host` (the bot must dial the broker, and a cold bazel may need the
+module cache) and a trusted image, so it is **isolation, still not a security
+boundary**. What is enforced in both:
 
 - Submitted paths must be relative, free of `..`, and end in
   `.h/.hpp/.cc/.cpp/.inl`; the generated BUILD refuses to name a file that was
@@ -85,14 +98,18 @@ submission can do anything that user can. What is actually enforced:
 - Per-game and per-turn clocks on the broker side, so a slow strategy loses
   rather than stalling the tournament.
 
-Treat submissions as trusted until the `docker` backend exists. There is also
-**no authentication**: identity is a bare player name over insecure gRPC, so
-anything that can reach the broker can play as any name.
+Treat submissions as trusted until there is a real boundary — a private
+network, seccomp, an unprivileged image. There is also **no authentication**:
+identity is a bare player name over insecure gRPC, so anything that can reach
+the broker can play as any name.
 
 ## Slots, checkouts and build cost
 
 Each worker slot owns a persistent checkout and a persistent bazel
 `--output_base`, reused across orders; all slots share one `--disk_cache`.
+The docker backend keeps the same layout: the checkout stays on the host (git
+runs there) and is mounted as the lowerdir of a per-order overlay, and the
+`--output_base` is bind-mounted into both containers.
 This is the difference between a candidate build taking seconds and taking
 minutes — a fresh output base re-analyses the whole workspace and relinks every
 dependency, while a warm one compiles only the submitted files. Slots never
