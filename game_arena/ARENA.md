@@ -109,6 +109,14 @@ holding a slot and producing no game.
 
 ## Isolation, honestly
 
+Both backends are the same engine now, differently configured:
+`game_arena/sandbox/exec` runs a job of phases and steps and knows nothing
+about orders, and `sandbox/worker/order_job.h` is what turns an order into
+one. The dev runner (`sandbox/runner`) runs on it too, which is how it stopped
+being the un-hardened counterexample -- it passed `--cap-add SYS_ADMIN` with
+no network restriction while the fleet dropped every capability. Isolation is
+one function that every container goes through.
+
 The `local` backend gives **resource limits and timeouts, not a security
 boundary**: candidate code is compiled and run as the worker's own user. It
 refuses an order whose problem sets `sandbox.require_container`, which any

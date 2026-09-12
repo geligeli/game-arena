@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 #include <thread>
 
 #include "game_arena/sandbox/exec/process_engine.h"
@@ -253,6 +254,64 @@ TEST_F(OrderRunnerProcessTest, RefusesAnOrderThatRequiresAContainer) {
 
 // Cancelling something that is not running must be harmless: the stream thread
 // does not know whether a slot has already finished.
+TEST_F(OrderRunnerProcessTest, RefusesAnOrderForAnotherMachineClass) {
+  // A wall-clock number from the wrong kind of host is worse than no number:
+  // it looks like a result. This is what stops a leaderboard from ranking the
+  // fleet instead of the submissions.
+  OrderJobConfig config;
+  config.source_repo = (root_ / "origin").string();
+  config.work_dir = root_ / "work_mc";
+  config.git = (root_ / "git").string();
+  config.bazel = (root_ / "bazel").string();
+  OrderRunner bench(engine_.get(), config, "bench-c7i");
+  std::string error;
+  ASSERT_TRUE(bench.Warmup(1, &error)) << error;
+
+  proto::WorkOrder order =
+      MakeOrder("#!/usr/bin/env bash\nexit 0\n", 1, proto::GradeOrder::MIN);
+  order.mutable_grade()->set_require_machine_class("bench-m7i");
+
+  const OrderOutcome refused = bench.RunOrder(0, order, {});
+  EXPECT_NE(refused.error.find("requires machine_class 'bench-m7i'"),
+            std::string::npos)
+      << refused.error;
+  EXPECT_NE(refused.error.find("bench-c7i"), std::string::npos);
+  EXPECT_FALSE(refused.build_ok);
+
+  // The matching class runs normally.
+  order.mutable_grade()->set_require_machine_class("bench-c7i");
+  EXPECT_EQ(bench.RunOrder(0, order, {}).error.find("machine_class"),
+            std::string::npos);
+}
+
+TEST_F(OrderRunnerProcessTest, AnUnsetMachineClassCannotSatisfyARequirement) {
+  // A worker started without --machine_class must not silently pass for one.
+  proto::WorkOrder order =
+      MakeOrder("#!/usr/bin/env bash\nexit 0\n", 1, proto::GradeOrder::MIN);
+  order.mutable_grade()->set_require_machine_class("bench-c7i");
+
+  const OrderOutcome refused = runner_->RunOrder(0, order, {});
+  EXPECT_NE(refused.error.find("this worker is 'unset'"), std::string::npos)
+      << refused.error;
+}
+
+TEST_F(OrderRunnerProcessTest, ReportsEveryPhaseItReaches) {
+  std::vector<proto::OrderProgress::Phase> seen;
+  runner_->RunOrder(
+      0, MakeOrder("#!/usr/bin/env bash\nprintf '{\"metrics\": {\"wall_ms\": 1}}' > \"$ARENA_REPORT\"\n",
+                   1, proto::GradeOrder::MIN),
+      [&seen](const std::string &, proto::OrderProgress::Phase phase) {
+        seen.push_back(phase);
+      });
+
+  // CLONING and RUNNING were dead enum values before the engine reported its
+  // phases: the worker sent one BUILDING guess before anything had started.
+  ASSERT_GE(seen.size(), 3u);
+  EXPECT_EQ(seen[0], proto::OrderProgress::CLONING);
+  EXPECT_EQ(seen[1], proto::OrderProgress::BUILDING);
+  EXPECT_EQ(seen.back(), proto::OrderProgress::RUNNING);
+}
+
 TEST_F(OrderRunnerProcessTest, CancelIsANoOpForAnUnknownOrder) {
   runner_->Cancel("never-heard-of-it");
   const OrderOutcome outcome = runner_->RunOrder(

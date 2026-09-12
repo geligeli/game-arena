@@ -13,7 +13,8 @@ Read `README.md` first, then `game_arena/ARENA.md` (the submission loop) and
 ```
 game_arena/proto/      wire protocols; the coordinator's contract
 game_arena/server/     coordinator: submissions, scheduling, standings, HTTP
-game_arena/sandbox/    common/ (docker mechanics), worker/ (fleet), runner/
+game_arena/sandbox/    exec/ (the execution engine), common/ (docker mechanics),
+                       worker/ (the fleet's own policy), runner/ (dev tool)
 game_arena/referee/    match loop + broker protocol; entry points as libraries
 game_arena/client/     the generic reference client
 game_arena/testgame/   Nim: the arena's own game and reference registry
@@ -46,6 +47,32 @@ both invisible to the symbol-level test because they were strings.
   `GameSession` and `arena_testgame::`. It must keep passing.
 - Use `game_arena/testgame` (Nim) for arena-side coverage. If a test needs a
   real game to be meaningful, it belongs in a consumer repo, not here.
+
+## The other seam
+
+`game_arena/sandbox/exec` runs things in a sandbox and must not learn what the
+sandbox is for. No order, candidate, submission, game, referee, ELO or metric
+may enter it -- and no bazel semantics beyond argv that happens to start with
+"bazel". It keeps its own job description (`sandbox_job.proto`) beside itself
+rather than in `proto/`, so the property is checkable by reading one BUILD
+file:
+
+```sh
+bazel query 'somepath(//game_arena/sandbox/exec/..., //game_arena/proto/...)'
+bazel query 'somepath(//game_arena/sandbox/exec/..., //game_arena/server/...)'
+bazel query 'somepath(//game_arena/sandbox/exec/..., //game_arena/sandbox/worker/...)'
+```
+
+All three must stay empty. The arena's own answer to "what is an order" lives
+above it, in `sandbox/worker/order_job.h` (an order becomes a job),
+`order_outcome.h` (a result becomes an outcome) and `order_runner.h` (the
+gates), written once for both engines.
+
+Isolation is one function, `exec/isolation.h`, and no path through the
+container engine builds a `docker run` without it. That is what keeps the
+claims in `ARENA.md` true of the dev runner as well as the fleet; before it,
+the hardening was a private method of one backend and the runner was the
+un-hardened counterexample.
 
 ## Build / test / run
 
@@ -89,7 +116,10 @@ bazel test --config=asan //game_arena/...
 - Do not let a game, a problem, or a consumer repo's labels into
   `server/`, `sandbox/`, `proto/` or `referee/` — as code or as a string.
 - Do not bump proto field numbers or "fix" them: `proto/` is the contract with
-  every deployed worker and client.
+  every deployed worker and client. That rule is about the contract, not the
+  directory: `sandbox/exec/sandbox_job.proto` and
+  `sandbox/runner/sandbox_service.proto` pass between libraries in one process
+  and are free to change.
 - Do not use `#pragma once`, do not hand-write a guard without the
   `GAME_ARENA_` prefix, do not commit unformatted code (pre-commit handles it).
 - Do not commit `bazel-*` symlinks/outputs, `compile_commands.json`, `.cache`,
