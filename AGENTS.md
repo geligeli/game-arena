@@ -19,7 +19,7 @@ game_arena/referee/    match loop + broker protocol; entry points as libraries
 game_arena/client/     the generic reference client
 game_arena/testgame/   Nim: the arena's own game and reference registry
 game_arena/problems/   nim.textproto
-game_arena/tools/      arena_admin
+game_arena/tools/      arena_admin, arena_cli
 game_arena/common/     subprocess wrapper
 ```
 

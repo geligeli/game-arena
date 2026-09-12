@@ -12,7 +12,8 @@ namespace tournament_arena {
 
 ArenaService::ArenaService(CandidateStore *candidates, Scheduler *scheduler,
                            Standings *standings, std::string base_commit,
-                           bool graded, proto::ProblemInfo problem_info,
+                           bool graded, std::string game,
+                           proto::ProblemInfo problem_info,
                            const ClientRegistry *clients,
                            int default_list_limit)
     : candidates_(candidates),
@@ -20,6 +21,7 @@ ArenaService::ArenaService(CandidateStore *candidates, Scheduler *scheduler,
       standings_(standings),
       base_commit_(std::move(base_commit)),
       graded_(graded),
+      game_(std::move(game)),
       problem_info_(std::move(problem_info)),
       clients_(clients),
       default_list_limit_(default_list_limit) {}
@@ -107,6 +109,11 @@ auto ArenaService::Submit(grpc::ServerContext *context,
   proto::SubmitRequest attributed = *request;
   if (!identity.client_id.empty()) {
     attributed.set_author(identity.client_id);
+  }
+  // One server runs one problem, so the game is the problem's, not the
+  // submitter's: an empty one would otherwise reach the referee as --game="".
+  if (attributed.game().empty()) {
+    attributed.set_game(game_);
   }
 
   const auto candidate = candidates_->Create(attributed, base_commit_, &error);

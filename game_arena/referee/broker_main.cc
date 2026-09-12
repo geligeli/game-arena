@@ -43,7 +43,7 @@ bazel run //game_arena/referee:broker_server -- \
 #include "game_arena/server/http_leaderboard.h"
 
 ABSL_FLAG(int, grpc_port, 50051, "Port for the gRPC tournament broker");
-ABSL_FLAG(int, http_port, 8080, "Port for the HTTP leaderboard");
+ABSL_FLAG(int, http_port, 8090, "Port for the HTTP leaderboard");
 ABSL_FLAG(std::string, data_dir, "tournament_data",
           "Directory for ratings.pb and games/ history");
 ABSL_FLAG(int, turn_timeout_ms, 10000,

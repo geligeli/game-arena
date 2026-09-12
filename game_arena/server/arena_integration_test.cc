@@ -72,7 +72,8 @@ class ArenaIntegrationTest : public ::testing::Test {
     clients_ = MakeClients();
     arena_ = std::make_unique<ArenaService>(
         store_.get(), scheduler_.get(), standings_.get(), "deadbeef",
-        /*graded=*/false, proto::ProblemInfo{}, clients_.get());
+        /*graded=*/false, /*game=*/"risk2", proto::ProblemInfo{},
+        clients_.get());
     fleet_ = std::make_unique<FleetService>(scheduler_.get());
 
     grpc::ServerBuilder builder;
@@ -258,6 +259,29 @@ TEST_F(ArenaIntegrationTest, AnyAgentCanReadAnyCandidatesSource) {
   const grpc::Status status =
       arena_stub_->GetSource(&missing_context, request, &nothing);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::NOT_FOUND);
+}
+
+TEST_F(ArenaIntegrationTest, UnstatedGameDefaultsToTheProblems) {
+  // One server runs one problem, so a submission that does not name a game
+  // gets the problem's -- an empty game would reach the referee as --game="".
+  proto::SubmitRequest request;
+  request.set_display_name("No Game Stated");
+  request.set_entry_header("strategy.h");
+  auto *file = request.add_files();
+  file->set_path("strategy.h");
+  file->set_content("// bot\n");
+
+  grpc::ClientContext context;
+  proto::SubmitResponse submitted;
+  ASSERT_TRUE(arena_stub_->Submit(&context, request, &submitted).ok());
+
+  grpc::ClientContext get_context;
+  proto::GetCandidateRequest get_request;
+  get_request.set_candidate_id(submitted.candidate_id());
+  proto::Candidate candidate;
+  ASSERT_TRUE(
+      arena_stub_->GetCandidate(&get_context, get_request, &candidate).ok());
+  EXPECT_EQ(candidate.game(), "risk2");
 }
 
 TEST_F(ArenaIntegrationTest, RejectedSubmissionExplainsItself) {

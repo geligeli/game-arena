@@ -18,7 +18,7 @@ game_arena/
   client/     the generic reference client
   testgame/   Nim: the arena's own game, and the reference registry
   problems/   nim.textproto, the reference problem
-  tools/      arena_admin
+  tools/      arena_admin, arena_cli
   common/     small subprocess wrapper
 ```
 

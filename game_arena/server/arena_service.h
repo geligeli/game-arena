@@ -33,12 +33,15 @@ class ArenaService final : public proto::Arena::Service {
   // submission so a rating stays attributable to a known revision.
   // |graded| says which shape EvaluateRequest must take, so an agent sending
   // the wrong one gets told rather than getting a default that means nothing.
+  // |game| is the problem's game (empty for a graded problem): one server
+  // runs one problem, so a submission that does not name a game gets this
+  // one -- the game is not the submitter's to state.
   // |clients| may be null, which leaves writes ungated: a server with no
   // client registry has nobody to authenticate against. The startup log says
   // so, loudly.
   ArenaService(CandidateStore *candidates, Scheduler *scheduler,
                Standings *standings, std::string base_commit, bool graded,
-               proto::ProblemInfo problem_info = {},
+               std::string game, proto::ProblemInfo problem_info = {},
                const ClientRegistry *clients = nullptr,
                int default_list_limit = 50);
 
@@ -87,6 +90,7 @@ class ArenaService final : public proto::Arena::Service {
   Standings *standings_;        // not owned
   const std::string base_commit_;
   const bool graded_;
+  const std::string game_;
   // Served verbatim by GetProblem; built once at startup from the config.
   const proto::ProblemInfo problem_info_;
   const ClientRegistry *clients_;  // not owned, may be null

@@ -17,3 +17,19 @@ cc_binary(
         "@abseil-cpp//absl/log:initialize",
     ],
 )
+
+# A human's client for the Arena service: submit a candidate, poll its job,
+# read standings and rivals' source. Same RPCs as the MCP server, driven from
+# a shell instead of an agent.
+cc_binary(
+    name = "arena_cli",
+    srcs = ["arena_cli.cc"],
+    deps = [
+        "//game_arena/proto:arena_cc_grpc",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/flags:parse",
+        "@abseil-cpp//absl/log:globals",
+        "@abseil-cpp//absl/log:initialize",
+        "@grpc//:grpc++",
+    ],
+)

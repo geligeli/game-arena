@@ -56,7 +56,7 @@ ABSL_FLAG(std::string, problem_config, "",
           "game_arena/problems/ for the shipped ones");
 ABSL_FLAG(int, grpc_port, 50051,
           "Port for the Arena and SandboxFleet services");
-ABSL_FLAG(int, http_port, 8080, "Port for the HTTP leaderboard");
+ABSL_FLAG(int, http_port, 8090, "Port for the HTTP leaderboard");
 ABSL_FLAG(std::string, data_dir, "tournament_data",
           "Directory for submissions, ratings.pb and games/");
 ABSL_FLAG(std::string, base_commit, "",
@@ -295,6 +295,9 @@ auto main(int argc, char **argv) -> int {
 
   tournament_arena::ArenaService arena(&candidates, &scheduler, standings.get(),
                                        problem->repo().base_commit(), graded,
+                                       problem->has_match()
+                                           ? problem->match().game()
+                                           : "",
                                        std::move(info), clients.get());
   tournament_arena::FleetService fleet(&scheduler);
 
