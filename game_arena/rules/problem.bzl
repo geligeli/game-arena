@@ -15,7 +15,10 @@ That call defines, in the calling package:
       the registry linked with the arena's entry points (only with `registry`)
   :config_test     `bazel test` -- the config parses and is consistent
   :tournament      `bazel run //:tournament -- [--no_container]` -- a coordinator
-                   and local workers, on this checkout
+                   and local workers, on this checkout. `--image=TAG` builds
+                   that as a docker image instead: the arena's binaries and
+                   this repo, to `docker run` on any host with a docker socket
+                   and the sandbox image
   :kit             `bazel run //:kit -- --out=DIR --server=HOST:PORT --mint=ID`
                    -- a participant's workspace: kit_files, the arena's CLI and
                    MCP server, a README and a token. Their own environment,
@@ -94,11 +97,20 @@ def arena_problem(name, config, registry = None, kit_files = [], visibility = No
         args = base_args + ["check", config_arg],
         visibility = visibility,
     )
+    # The kit's file list travels in the environment rather than in args, so a
+    # participant's own `-- --out=...` arguments are not mixed in with it. The
+    # tournament target carries it too: `up --image` bakes it into the image,
+    # where `kit` runs without the macro.
+    kit_env = {
+        "ARENA_KIT_FILES": " ".join(["$(rootpaths %s)" % f for f in kit_files]),
+        "ARENA_KIT_REGISTRY": registry or "",
+    }
     sh_binary(
         name = "tournament",
         srcs = [run],
-        data = base_data,
+        data = base_data + kit_files,
         args = base_args + ["up", config_arg],
+        env = kit_env,
         visibility = visibility,
     )
     sh_binary(
@@ -109,19 +121,12 @@ def arena_problem(name, config, registry = None, kit_files = [], visibility = No
         visibility = visibility,
     )
 
-    # The kit's file list travels in the environment rather than in args, so a
-    # participant's own `-- --out=...` arguments are not mixed in with it.
-    kit_args = base_args + ["kit", config_arg]
-    if registry:
-        kit_args.append("--registry=%s" % registry)
     sh_binary(
         name = "kit",
         srcs = [run],
         data = base_data + kit_files,
-        args = kit_args,
-        env = {
-            "ARENA_KIT_FILES": " ".join(["$(rootpaths %s)" % f for f in kit_files]),
-        },
+        args = base_args + ["kit", config_arg],
+        env = kit_env,
         visibility = visibility,
     )
 

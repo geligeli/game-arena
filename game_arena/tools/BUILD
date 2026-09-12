@@ -41,8 +41,7 @@ cc_binary(
     name = "arena_tournament",
     srcs = ["arena_tournament.cc"],
     data = [
-        "//game_arena/kit:Dockerfile",
-        "//game_arena/sandbox/image:Dockerfile",
+        "//game_arena/image:Dockerfile",
         "//game_arena/sandbox/worker:sandbox_worker",
         "//game_arena/server:problem_server",
     ],

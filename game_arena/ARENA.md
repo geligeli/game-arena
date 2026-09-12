@@ -46,15 +46,36 @@ bazel run //:tournament -- --no_container    # the same on a host without docker
 bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
 bazel run //:kit -- --mint=bob --image=TAG   # the same, as a docker image
 bazel run //:sandbox_image                   # the image sandbox.image names
+bazel run //:tournament -- --image=TAG       # the tournament, as a docker image
 ```
 
 `tournament` writes the effective config and all state under
 `~/.arena/<problem_id>` (`$ARENA_STATE_DIR` to move it), starts
-`problem_server` on it, waits for the port, starts `--workers` local
-`sandbox_worker`s, and forwards Ctrl-C to all of them. `--no_container`
-clears `sandbox.image` in that derived config and says so loudly: the
-committed config stays what a real run uses. Or by hand, which is what those
-run:
+`problem_server` on it with a client registry (created empty: writes always
+need a token, and `kit --mint` adds one and has the coordinator reload),
+waits for the port, starts `--workers` local `sandbox_worker`s, and forwards
+Ctrl-C to all of them. `--no_container` clears `sandbox.image` in that
+derived config and says so loudly: the committed config stays what a real
+run uses.
+
+`--image=TAG` builds the same thing as a docker image instead of running it:
+the arena's binaries built from the problem's workspace, the problem repo for
+the workers to clone, git and the docker CLI, and no toolchain. It runs on
+any host with a docker socket and the sandbox image on that daemon:
+
+```sh
+docker run -d --name c4-arena --restart=unless-stopped -p 50051:50051 -p 8090:8090 \
+    -v /var/run/docker.sock:/var/run/docker.sock -v c4-arena:/var/arena TAG
+docker exec -it c4-arena arena_tournament kit --mint=bob --server=HOST:50051 \
+    --image=REG/kit-bob --push                   # a participant, from inside
+docker run -d -v /var/run/docker.sock:/var/run/docker.sock \
+    -e ARENA_VOLUME_PREFIX=w2 TAG sandbox_worker --server=HOST:50051   # more capacity
+```
+
+Inside, `arena_tournament up` is what `docker run` starts, and `kit` works
+because the image carries `kit_files` and the registry label in its
+environment. State is the `/var/arena` volume. Or by hand, which is what all
+of those run:
 
 ```sh
 # 1. The coordinator. One server per problem; --problem_config says which.
@@ -194,8 +215,8 @@ The image is still trusted — it carries bazel and the toolchain — and the
 network being closed means the image must carry the repo's external
 dependencies, since a module fetch will fail. That failure is correct: it is
 a submission depending on something the problem did not offer.
-`bazel run //:sandbox_image` builds such an image from
-`game_arena/sandbox/image/Dockerfile`: a small toolchain base, `bazel vendor`
+`bazel run //:sandbox_image` builds such an image from the `sandbox` target
+of `game_arena/image/Dockerfile`: a small toolchain base, `bazel vendor`
 of the problem's `MODULE.bazel` into `/opt/arena/vendor`, and a system
 bazelrc pointing bazel at it. A `game_arena` overridden with a local path is
 copied into the image too, with a warning, because `bazel vendor` only
@@ -304,7 +325,9 @@ not a set of usable credentials. `SIGHUP` reloads it; a reload that fails to
 parse keeps the running set rather than locking everyone out.
 
 Without `--clients` the server logs a warning and leaves writes open, which is
-fine for a single-agent loop and nothing else. It is a bearer token over
+fine for a single-agent loop and nothing else; `arena_tournament up` never
+runs it that way, and `kit --mint` does the mint and the reload in one step.
+It is a bearer token over
 whatever transport the operator configured — if that is insecure gRPC, the
 token is visible on the path, and terminating TLS in front is the operator's
 job.

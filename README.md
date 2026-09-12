@@ -105,6 +105,7 @@ bazel run //:tournament -- --no_container            # a coordinator + a local w
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
 bazel run //:kit -- --mint=bob --server=$(hostname):50051 --image=REG/kit-bob --push
 bazel run //:sandbox_image                           # the offline sandbox image
+bazel run //:tournament -- --image=REG/c4-arena --push   # the tournament, deployable
 bazel build //:connect4                              # every binary a tournament needs
 ```
 
@@ -115,7 +116,11 @@ token in `arena.env` and `mcp.json`. The grader, the cases and the tournament
 config stay behind. `--image=TAG` also builds that workspace into a docker
 image with the toolchain and a completed build, so a participant (or their
 agent) starts with `docker run -it TAG` and is ready to submit; `docker run -i
-TAG bazel run //:mcp_server` is the MCP server on stdio. `scripts/new_problem.sh match|graded <dir>` scaffolds a
+TAG bazel run //:mcp_server` is the MCP server on stdio. `tournament --image`
+does the same for the coordinator and its workers: one image to `docker run`
+on any host with a docker socket and the sandbox image, with `docker exec ...
+arena_tournament kit --mint=bob` to admit participants from inside. See
+`game_arena/ARENA.md`. `scripts/new_problem.sh match|graded <dir>` scaffolds a
 new repo from an example.
 
 ## Build

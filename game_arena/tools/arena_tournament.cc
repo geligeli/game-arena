@@ -4,6 +4,7 @@
 bazel run //:tournament -- [--no_container] [--workers=2]
 bazel run //:kit -- --out=/srv/kits/alice --server=arena:50051 --mint=alice
 bazel run //:kit -- --mint=bob --server=arena:50051 --image=registry/kit-bob
+bazel run //:tournament -- --image=registry/c4-arena --push
 bazel run //:sandbox_image -- [--push]
 bazel test //:config_test
 
@@ -16,7 +17,9 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 //
 //   up      a coordinator and N local workers on this checkout. The committed
 //           config stays the truth; --no_container derives a loudly-labelled
-//           copy with no image, for a host without docker.
+//           copy with no image, for a host without docker. With --image, the
+//           same as a docker image: the arena's binaries and the problem, to
+//           `docker run` on any host with a docker socket.
 //   kit     a participant's workspace: the files the problem names, the
 //           arena's CLI and MCP server reachable through @game_arena, a README
 //           from the config, and a freshly minted token. With --image, the
@@ -26,6 +29,11 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 //           :config_test runs.
 //   image   the problem's sandbox image: toolchain + vendored deps, so builds
 //           run with no network.
+//
+// Inside the tournament image the tool runs installed, not under bazel:
+// ARENA_HOME points at the arena's files laid out as in its tree, and
+// ARENA_PROBLEM_CONFIG names the config, so `arena_tournament up` and `kit`
+// need no flags there.
 //
 // The tool knows what a problem *config* is, never what a problem is made of.
 // Every label, file and name here arrives from the caller.
@@ -67,8 +75,9 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 #include "rules_cc/cc/runfiles/runfiles.h"
 
 ABSL_FLAG(std::string, problem_config, "",
-          "The problem's .textproto (required). Relative to the workspace "
-          "root under `bazel run`, else to the current directory");
+          "The problem's .textproto (required; default $ARENA_PROBLEM_CONFIG). "
+          "Relative to the workspace root under `bazel run`, else to the "
+          "current directory");
 
 // up
 ABSL_FLAG(std::string, data_dir, "",
@@ -85,9 +94,10 @@ ABSL_FLAG(bool, no_container, false,
           "unsandboxed as you. For a dev loop on a host without docker; "
           "never for anything whose numbers are compared");
 ABSL_FLAG(std::string, clients, "",
-          "up/kit: the client registry. up passes it to the coordinator; kit "
-          "--mint appends to it. Default: <data_dir>/clients.textproto, used "
-          "by up only if it exists");
+          "up/kit: the client registry. up passes it to the coordinator, "
+          "creating it empty if it does not exist; kit --mint appends to it "
+          "and tells the coordinator to reload. Default: "
+          "<data_dir>/clients.textproto");
 
 // kit
 ABSL_FLAG(std::string, out, "",
@@ -104,7 +114,8 @@ ABSL_FLAG(std::string, token, "",
           "kit: bake this existing token in instead of minting one");
 ABSL_FLAG(std::string, registry, "",
           "kit: label of the problem's GameRegistry() library, for a local "
-          "broker in the kit. Supplied by the arena_problem macro");
+          "broker in the kit. Supplied by the arena_problem macro; default "
+          "$ARENA_KIT_REGISTRY");
 ABSL_FLAG(std::string, arena_override, "",
           "kit: write a .bazelrc.local pointing @game_arena at this local "
           "checkout, for a participant on the same host");
@@ -113,18 +124,19 @@ ABSL_FLAG(bool, check, false,
 ABSL_FLAG(bool, force, false, "kit: write into a non-empty --out");
 ABSL_FLAG(std::string, image, "",
           "kit: also build a docker image of the kit with this tag: the "
-          "toolchain, the kit, and a completed `bazel build //...`. --push "
-          "pushes it");
+          "toolchain, the kit, and a completed `bazel build //...`. "
+          "up: instead of running, build a docker image of the tournament "
+          "with this tag: the coordinator, the workers and the problem, for "
+          "any host with a docker socket. --push pushes either");
 
 // image
 ABSL_FLAG(std::string, tag, "",
           "image: tag to build. Default: the config's sandbox.image");
-ABSL_FLAG(bool, push, false, "image, kit --image: docker push the result");
+ABSL_FLAG(bool, push, false, "image, --image: docker push the result");
 ABSL_FLAG(std::string, bazel_version, "",
-          "image, kit --image: bazel release to install. Default: the repo's "
+          "image, --image: bazel release to install. Default: the repo's "
           ".bazelversion when it names a release, else the Dockerfile's");
-ABSL_FLAG(std::string, docker, "docker",
-          "image, kit --image: the docker binary");
+ABSL_FLAG(std::string, docker, "docker", "image, --image: the docker binary");
 
 namespace {
 
@@ -132,8 +144,10 @@ namespace proto = tournament_arena::proto;
 using rules_cc::cc::runfiles::Runfiles;
 
 volatile std::sig_atomic_t g_stop_requested = 0;
+volatile std::sig_atomic_t g_reload_requested = 0;
 
 extern "C" void OnStopSignal(int /*signum*/) { g_stop_requested = 1; }
+extern "C" void OnReloadSignal(int /*signum*/) { g_reload_requested = 1; }
 
 auto EnvOr(const char *name, std::string fallback) -> std::string {
   const char *value = std::getenv(name);
@@ -259,7 +273,9 @@ auto LocalRepoDir(const proto::ProblemConfig &config)
 
 auto LoadConfig(std::filesystem::path *config_path)
     -> std::optional<proto::ProblemConfig> {
-  const std::string flag = absl::GetFlag(FLAGS_problem_config);
+  const std::string flag = absl::GetFlag(FLAGS_problem_config).empty()
+                               ? EnvOr("ARENA_PROBLEM_CONFIG", "")
+                               : absl::GetFlag(FLAGS_problem_config);
   if (flag.empty()) {
     LOG(ERROR) << "--problem_config is required";
     return std::nullopt;
@@ -277,12 +293,14 @@ auto LoadConfig(std::filesystem::path *config_path)
 // Runfiles
 // ---------------------------------------------------------------------------
 
+// The arena's files: under bazel, from runfiles; installed (the tournament
+// image), from $ARENA_HOME, where they are laid out as in the arena's tree.
 class ArenaRunfiles {
  public:
-  explicit ArenaRunfiles(const char *argv0) {
+  explicit ArenaRunfiles(const char *argv0) : home_(EnvOr("ARENA_HOME", "")) {
     std::string error;
     runfiles_.reset(Runfiles::Create(argv0, BAZEL_CURRENT_REPOSITORY, &error));
-    if (!runfiles_) {
+    if (!runfiles_ && home_.empty()) {
       LOG(WARNING) << "runfiles unavailable: " << error;
     }
   }
@@ -290,6 +308,9 @@ class ArenaRunfiles {
   // A file of the game_arena module, by workspace-relative path.
   auto Locate(const std::string &path) const -> std::filesystem::path {
     std::vector<std::string> candidates;
+    if (!home_.empty()) {
+      candidates.push_back((std::filesystem::path(home_) / path).string());
+    }
     if (runfiles_) {
       candidates.push_back(runfiles_->Rlocation("game_arena/" + path));
       candidates.push_back(runfiles_->Rlocation("_main/" + path));
@@ -310,7 +331,11 @@ class ArenaRunfiles {
     return {};
   }
 
+  // Installed rather than under bazel.
+  auto installed() const -> bool { return !home_.empty(); }
+
  private:
+  std::string home_;
   std::unique_ptr<Runfiles> runfiles_;
 };
 
@@ -381,8 +406,204 @@ auto RunCheck() -> int {
 }
 
 // ---------------------------------------------------------------------------
+// docker
+// ---------------------------------------------------------------------------
+
+// Where the problem overrides game_arena with a local checkout, if it does:
+// --override_module in .bazelrc.local (which, as a flag, beats the file), or
+// MODULE.bazel's local_path_override.
+auto LocalArenaOverride(const std::filesystem::path &root)
+    -> std::optional<std::filesystem::path> {
+  for (const char *rc : {".bazelrc.local", ".bazelrc"}) {
+    if (const auto text = ReadFile(root / rc)) {
+      static const std::regex kFlag(R"(--override_module=game_arena=(\S+))");
+      std::smatch m;
+      if (std::regex_search(*text, m, kFlag)) {
+        return (root / m[1].str()).lexically_normal();
+      }
+    }
+  }
+  if (const auto module = ReadFile(root / "MODULE.bazel")) {
+    static const std::regex kOverride(
+        R"re(local_path_override\(\s*module_name\s*=\s*"game_arena"[^)]*?path\s*=\s*"([^"]+)")re");
+    std::smatch m;
+    if (std::regex_search(*module, m, kOverride)) {
+      return (root / m[1].str()).lexically_normal();
+    }
+  }
+  return std::nullopt;
+}
+
+// The bazel release the repo pins in .bazelversion, if it names one, else
+// --bazel_version, else empty (the Dockerfile's default).
+auto BazelVersionFor(const std::filesystem::path &root) -> std::string {
+  std::string version = absl::GetFlag(FLAGS_bazel_version);
+  if (version.empty()) {
+    if (const auto text = ReadFile(root / ".bazelversion")) {
+      const std::string trimmed(absl::StripAsciiWhitespace(*text));
+      static const std::regex kRelease(R"(\d+\.\d+\.\d+)");
+      if (std::regex_match(trimmed, kRelease)) {
+        version = trimmed;
+      }
+    }
+  }
+  return version;
+}
+
+// `docker build --target |target|` of the arena's Dockerfile with |context| as
+// the build context, tagged |tag|, then `docker push` under --push. A local
+// game_arena override found in |context| goes in as a second build context,
+// since its host path does not exist inside the build. |build_args| are
+// NAME=value pairs; |contexts| further name=path build contexts.
+auto DockerBuild(const std::filesystem::path &dockerfile,
+                 const std::string &target, const std::string &tag,
+                 const std::filesystem::path &context,
+                 const std::vector<std::string> &build_args,
+                 const std::vector<std::string> &contexts = {}) -> bool {
+  std::vector<std::string> args = {
+      "build", "--file", dockerfile.string(), "--target", target, "--tag", tag};
+  for (const std::string &named : contexts) {
+    args.push_back("--build-context");
+    args.push_back(named);
+  }
+  const std::string bazel_version = BazelVersionFor(context);
+  if (!bazel_version.empty()) {
+    args.push_back("--build-arg");
+    args.push_back("BAZEL_VERSION=" + bazel_version);
+  }
+  for (const std::string &arg : build_args) {
+    args.push_back("--build-arg");
+    args.push_back(arg);
+  }
+  if (const auto override = LocalArenaOverride(context)) {
+    if (!std::filesystem::exists(*override / "MODULE.bazel")) {
+      LOG(ERROR) << "game_arena is overridden with " << override->string()
+                 << ", which is not a bazel module here. Pin a git commit in "
+                    "MODULE.bazel, or point --arena_override at a checkout "
+                    "that exists on this host";
+      return false;
+    }
+    LOG(WARNING) << "game_arena is overridden with the local checkout "
+                 << override->string()
+                 << "; a copy of it goes into the image. Pin a git commit in "
+                    "MODULE.bazel for an image that does not depend on this "
+                    "host";
+    args.push_back("--build-context");
+    args.push_back("game_arena=" + override->string());
+  }
+  args.push_back(context.string());
+
+  std::printf("docker %s\n", absl::StrJoin(args, " ").c_str());
+  std::fflush(stdout);
+  const std::string docker = absl::GetFlag(FLAGS_docker);
+  int code = RunInherit(docker, args, context);
+  if (code != 0) {
+    LOG(ERROR) << "docker build failed (exit " << code << ")";
+    return false;
+  }
+  if (absl::GetFlag(FLAGS_push)) {
+    code = RunInherit(docker, {"push", tag}, context);
+    if (code != 0) {
+      LOG(ERROR) << "docker push failed (exit " << code << ")";
+      return false;
+    }
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // up
 // ---------------------------------------------------------------------------
+
+auto Hostname() -> std::string {
+  char name[256] = {};
+  if (::gethostname(name, sizeof(name) - 1) != 0) {
+    return "host";
+  }
+  return name;
+}
+
+// Runs a command with its output discarded; the exit code, -1 if it could not
+// start.
+auto RunQuiet(const std::string &executable,
+              const std::vector<std::string> &arguments) -> int {
+  process::ChildOptions options;
+  options.stdout_path = "/dev/null";
+  options.stderr_path = "/dev/null";
+  auto child = process::Child::Start(executable, arguments, options);
+  return child ? child->Wait() : -1;
+}
+
+// The tournament as an image: the arena's binaries built from this workspace,
+// the repo for the workers to clone, and the sandbox reached through a
+// mounted docker socket. Built from the problem's workspace root, as the
+// sandbox image is.
+auto BuildTournamentImage(const ArenaRunfiles &runfiles,
+                          const proto::ProblemConfig &config,
+                          const std::filesystem::path &config_path,
+                          const std::string &tag) -> int {
+  const std::filesystem::path dockerfile =
+      runfiles.Locate("game_arena/image/Dockerfile");
+  if (dockerfile.empty()) {
+    return 1;
+  }
+  const std::filesystem::path root = WorkspaceRoot();
+  if (!std::filesystem::exists(root / "MODULE.bazel") ||
+      !std::filesystem::exists(root / ".git")) {
+    LOG(ERROR) << root
+               << " is not a git repository with a MODULE.bazel; the "
+                  "tournament image is built from the problem's workspace, "
+                  "and its workers clone it";
+    return 1;
+  }
+  if (config.sandbox().image().empty()) {
+    LOG(ERROR) << "sandbox.image is empty. The tournament image carries no "
+                  "toolchain: its workers build every submission in the "
+                  "sandbox image, so the problem has to name one";
+    return 1;
+  }
+  std::error_code ec;
+  const std::filesystem::path config_rel =
+      std::filesystem::relative(config_path, root, ec);
+  if (ec || config_rel.empty() || config_rel.string().rfind("..", 0) == 0) {
+    LOG(ERROR) << "the config " << config_path << " is not inside " << root;
+    return 1;
+  }
+  const std::string registry = absl::GetFlag(FLAGS_registry).empty()
+                                   ? EnvOr("ARENA_KIT_REGISTRY", "")
+                                   : absl::GetFlag(FLAGS_registry);
+  std::printf(
+      "Building %s from %s (the arena's binaries, from this workspace)...\n",
+      tag.c_str(), root.c_str());
+  std::fflush(stdout);
+  if (!DockerBuild(dockerfile, "tournament", tag, root,
+                   {"PROBLEM_ID=" + config.problem_id(),
+                    "PROBLEM_CONFIG=" + config_rel.string(),
+                    "ARENA_KIT_FILES=" + EnvOr("ARENA_KIT_FILES", ""),
+                    "ARENA_KIT_REGISTRY=" + registry},
+                   {"arena_image=" + dockerfile.parent_path().string()})) {
+    return 1;
+  }
+  const std::string name = config.problem_id() + "-arena";
+  std::printf(
+      "\nBuilt %s%s. Run it on any host with a docker socket and the sandbox "
+      "image %s on that daemon:\n\n"
+      "  docker run -d --name %s --restart=unless-stopped \\\n"
+      "      -p 50051:50051 -p 8090:8090 \\\n"
+      "      -v /var/run/docker.sock:/var/run/docker.sock -v %s:/var/arena "
+      "%s\n\n"
+      "Then, per participant (mints a token and reloads the registry):\n\n"
+      "  docker exec -it %s arena_tournament kit --mint=<client_id> "
+      "--server=<host>:50051 [--image=REG/kit-<client_id> --push]\n\n"
+      "And one more worker, anywhere with a socket and the sandbox image:\n\n"
+      "  docker run -d -v /var/run/docker.sock:/var/run/docker.sock "
+      "-e ARENA_VOLUME_PREFIX=<unique> %s sandbox_worker "
+      "--server=<host>:50051\n",
+      tag.c_str(), absl::GetFlag(FLAGS_push) ? " and pushed it" : "",
+      config.sandbox().image().c_str(), name.c_str(), name.c_str(), tag.c_str(),
+      name.c_str(), tag.c_str());
+  return 0;
+}
 
 auto RunUp(const ArenaRunfiles &runfiles) -> int {
   std::filesystem::path config_path;
@@ -394,6 +615,11 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
   if (!CheckConfig(*config, &error)) {
     LOG(ERROR) << config_path.string() << ": " << error;
     return 1;
+  }
+
+  if (!absl::GetFlag(FLAGS_image).empty()) {
+    return BuildTournamentImage(runfiles, *config, config_path,
+                                absl::GetFlag(FLAGS_image));
   }
 
   const std::filesystem::path server_bin =
@@ -426,6 +652,12 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
   } else if (config->sandbox().image().empty()) {
     LOG(WARNING) << "sandbox.image is empty: orders run on the process "
                     "engine, unsandboxed";
+  } else if (!process::ResolveExecutable(absl::GetFlag(FLAGS_docker)).empty() &&
+             RunQuiet(absl::GetFlag(FLAGS_docker),
+                      {"image", "inspect", config->sandbox().image()}) != 0) {
+    LOG(WARNING) << "the sandbox image " << config->sandbox().image()
+                 << " is not on this docker daemon; every order will fail "
+                    "until it is (`bazel run //:sandbox_image`, or a pull)";
   }
   std::string effective_text;
   google::protobuf::TextFormat::PrintToString(*config, &effective_text);
@@ -450,27 +682,38 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
     }
   }
 
+  // Always gated: an empty registry is one nobody can write to, and
+  // `kit --mint` adds a client and reloads it. A coordinator with no registry
+  // takes any token from anyone on the port, which is never what a deployed
+  // one should do, and on a dev host costs one `kit --mint` to avoid.
   std::filesystem::path clients = absl::GetFlag(FLAGS_clients).empty()
                                       ? data_dir / "clients.textproto"
                                       : Resolve(absl::GetFlag(FLAGS_clients));
-  const bool gated = std::filesystem::exists(clients);
+  if (!std::filesystem::exists(clients) &&
+      !WriteFile(clients,
+                 "# Client registry: one `client { ... }` per participant.\n"
+                 "# `arena_tournament kit --mint=<id>` appends here.\n")) {
+    LOG(ERROR) << "cannot create " << clients;
+    return 1;
+  }
 
   const int grpc_port = absl::GetFlag(FLAGS_grpc_port);
   const int http_port = absl::GetFlag(FLAGS_http_port);
-  std::vector<std::string> server_args = {
+  const std::vector<std::string> server_args = {
       "--problem_config=" + effective.string(),
       "--data_dir=" + data_dir.string(),
       absl::StrCat("--grpc_port=", grpc_port),
       absl::StrCat("--http_port=", http_port),
+      "--clients=" + clients.string(),
   };
-  if (gated) {
-    server_args.push_back("--clients=" + clients.string());
-  }
 
   struct sigaction action {};
   action.sa_handler = OnStopSignal;
   ::sigaction(SIGINT, &action, nullptr);
   ::sigaction(SIGTERM, &action, nullptr);
+  struct sigaction reload {};
+  reload.sa_handler = OnReloadSignal;
+  ::sigaction(SIGHUP, &reload, nullptr);
 
   auto server = process::Child::Start(server_bin.string(), server_args,
                                       process::ChildOptions{});
@@ -478,6 +721,9 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
     LOG(ERROR) << "cannot start " << server_bin;
     return 1;
   }
+  // For `kit --mint` to find the coordinator and have it reload the registry.
+  const std::filesystem::path pid_file = data_dir / "problem_server.pid";
+  WriteFile(pid_file, absl::StrCat(server->pid(), "\n"));
   if (!WaitForPort(grpc_port, std::chrono::seconds(60))) {
     LOG(ERROR) << "problem_server did not open port " << grpc_port;
     server->Stop(std::chrono::seconds(5));
@@ -486,12 +732,17 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
 
   std::vector<process::Child> workers;
   const int worker_count = std::max(1, absl::GetFlag(FLAGS_workers));
+  // Each worker's cache volumes are its own: two workers sharing an output
+  // base would corrupt it.
+  const std::string volume_prefix =
+      EnvOr("ARENA_VOLUME_PREFIX", "arena-" + Hostname());
   for (int i = 0; i < worker_count; ++i) {
     process::ChildOptions options;
     options.extra_env = {
         "ARENA_WORK_DIR=" + (data_dir / "work" / std::to_string(i)).string(),
         "ARENA_SLOTS=" + EnvOr("ARENA_SLOTS", "1"),
         absl::StrCat("ARENA_WORKER_ID=local-", i),
+        absl::StrCat("ARENA_VOLUME_PREFIX=", volume_prefix, "-", i),
     };
     auto worker = process::Child::Start(
         worker_bin.string(), {absl::StrCat("--server=localhost:", grpc_port)},
@@ -508,26 +759,31 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
       "\n"
       "%s is up.\n"
       "  leaderboard   http://localhost:%d/\n"
-      "  arena         localhost:%d   (%s)\n"
+      "  arena         localhost:%d   (writes need a token from %s)\n"
       "  state         %s\n"
       "  workers       %d local, %s\n"
       "\n"
-      "A participant's kit:\n"
-      "  bazel run //:kit -- --mint=<client_id> --server=<this host>:%d\n"
+      "A participant's kit (mints a token and reloads the registry):\n"
+      "  %s kit --mint=<client_id> --server=<this host>:%d%s\n"
       "\n"
-      "Ctrl-C stops everything.\n\n",
+      "%s stops everything.\n\n",
       config->display_name().empty() ? config->problem_id().c_str()
                                      : config->display_name().c_str(),
-      http_port, grpc_port,
-      gated ? "writes need a token from the registry" : "writes open",
-      data_dir.c_str(), worker_count,
+      http_port, grpc_port, clients.c_str(), data_dir.c_str(), worker_count,
       config->sandbox().image().empty() ? "process engine (unsandboxed)"
                                         : "docker engine",
-      grpc_port);
+      runfiles.installed() ? "docker exec <container> arena_tournament"
+                           : "bazel run //:kit --",
+      grpc_port, runfiles.installed() ? " [--image=REG/kit-<client_id>]" : "",
+      runfiles.installed() ? "docker stop" : "Ctrl-C");
   std::fflush(stdout);
 
   int status = 0;
   while (!g_stop_requested) {
+    if (g_reload_requested) {
+      g_reload_requested = 0;
+      server->Signal(SIGHUP);
+    }
     if (const auto code = server->Poll()) {
       LOG(ERROR) << "problem_server exited with " << *code;
       status = 1;
@@ -553,6 +809,7 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
     worker.Stop(std::chrono::seconds(10));
   }
   server->Stop(std::chrono::seconds(10));
+  std::filesystem::remove(pid_file, ec);
   return status;
 }
 
@@ -728,93 +985,6 @@ auto JsonEscape(std::string_view s) -> std::string {
   return out;
 }
 
-// Where the problem overrides game_arena with a local checkout, if it does:
-// MODULE.bazel's local_path_override, or --override_module in .bazelrc.local.
-auto LocalArenaOverride(const std::filesystem::path &root)
-    -> std::optional<std::filesystem::path> {
-  if (const auto module = ReadFile(root / "MODULE.bazel")) {
-    static const std::regex kOverride(
-        R"re(local_path_override\(\s*module_name\s*=\s*"game_arena"[^)]*?path\s*=\s*"([^"]+)")re");
-    std::smatch m;
-    if (std::regex_search(*module, m, kOverride)) {
-      return (root / m[1].str()).lexically_normal();
-    }
-  }
-  for (const char *rc : {".bazelrc.local", ".bazelrc"}) {
-    if (const auto text = ReadFile(root / rc)) {
-      static const std::regex kFlag(R"(--override_module=game_arena=(\S+))");
-      std::smatch m;
-      if (std::regex_search(*text, m, kFlag)) {
-        return (root / m[1].str()).lexically_normal();
-      }
-    }
-  }
-  return std::nullopt;
-}
-
-// The bazel release the repo pins in .bazelversion, if it names one, else
-// --bazel_version, else empty (the Dockerfile's default).
-auto BazelVersionFor(const std::filesystem::path &root) -> std::string {
-  std::string version = absl::GetFlag(FLAGS_bazel_version);
-  if (version.empty()) {
-    if (const auto text = ReadFile(root / ".bazelversion")) {
-      const std::string trimmed(absl::StripAsciiWhitespace(*text));
-      static const std::regex kRelease(R"(\d+\.\d+\.\d+)");
-      if (std::regex_match(trimmed, kRelease)) {
-        version = trimmed;
-      }
-    }
-  }
-  return version;
-}
-
-// `docker build` of |dockerfile| with |context| as the build context, tagged
-// |tag|, then `docker push` under --push. A local game_arena override found in
-// |context| goes in as a second build context, since its host path does not
-// exist inside the build. |build_args| are NAME=value pairs.
-auto DockerBuild(const std::filesystem::path &dockerfile,
-                 const std::string &tag, const std::filesystem::path &context,
-                 const std::vector<std::string> &build_args) -> bool {
-  std::vector<std::string> args = {"build", "--file", dockerfile.string(),
-                                   "--tag", tag};
-  const std::string bazel_version = BazelVersionFor(context);
-  if (!bazel_version.empty()) {
-    args.push_back("--build-arg");
-    args.push_back("BAZEL_VERSION=" + bazel_version);
-  }
-  for (const std::string &arg : build_args) {
-    args.push_back("--build-arg");
-    args.push_back(arg);
-  }
-  if (const auto override = LocalArenaOverride(context)) {
-    LOG(WARNING) << "game_arena is overridden with the local checkout "
-                 << override->string()
-                 << "; a copy of it goes into the image. Pin a git commit in "
-                    "MODULE.bazel for an image that does not depend on this "
-                    "host";
-    args.push_back("--build-context");
-    args.push_back("game_arena=" + override->string());
-  }
-  args.push_back(context.string());
-
-  std::printf("docker %s\n", absl::StrJoin(args, " ").c_str());
-  std::fflush(stdout);
-  const std::string docker = absl::GetFlag(FLAGS_docker);
-  int code = RunInherit(docker, args, context);
-  if (code != 0) {
-    LOG(ERROR) << "docker build failed (exit " << code << ")";
-    return false;
-  }
-  if (absl::GetFlag(FLAGS_push)) {
-    code = RunInherit(docker, {"push", tag}, context);
-    if (code != 0) {
-      LOG(ERROR) << "docker push failed (exit " << code << ")";
-      return false;
-    }
-  }
-  return true;
-}
-
 auto RunKit(const ArenaRunfiles &runfiles) -> int {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
@@ -889,9 +1059,18 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
     }
     std::printf("Minted a token for '%s' into %s.\n", client_id.c_str(),
                 clients.c_str());
-    std::printf(
-        "A coordinator already running on that registry needs a SIGHUP; one "
-        "started without --clients accepts any token.\n");
+    // The coordinator `up` started on that registry, if it is running here:
+    // tell it, so the token works now rather than after a restart.
+    const auto pid_text =
+        ReadFile(clients.parent_path() / "problem_server.pid");
+    const pid_t pid = pid_text ? std::atoi(pid_text->c_str()) : 0;
+    if (pid > 0 && ::kill(pid, SIGHUP) == 0) {
+      std::printf("The coordinator (pid %d) is reloading it.\n", pid);
+    } else {
+      std::printf(
+          "A coordinator already running on that registry needs a SIGHUP to "
+          "see it (`docker kill -s HUP <container>` for a deployed one).\n");
+    }
   }
 
   // The workspace skeleton, as the problem has it.
@@ -924,7 +1103,9 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
 
   const std::string server = absl::GetFlag(FLAGS_server);
   const std::string http = absl::GetFlag(FLAGS_http);
-  const std::string registry = absl::GetFlag(FLAGS_registry);
+  const std::string registry = absl::GetFlag(FLAGS_registry).empty()
+                                   ? EnvOr("ARENA_KIT_REGISTRY", "")
+                                   : absl::GetFlag(FLAGS_registry);
 
   WriteFile(out / "BUILD", KitBuildFile(registry));
   WriteFile(out / "ARENA.md",
@@ -1008,7 +1189,7 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
     return 0;
   }
   const std::filesystem::path dockerfile =
-      runfiles.Locate("game_arena/kit/Dockerfile");
+      runfiles.Locate("game_arena/image/Dockerfile");
   if (dockerfile.empty()) {
     return 1;
   }
@@ -1024,7 +1205,7 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
       "time takes a while)...\n",
       image.c_str());
   std::fflush(stdout);
-  if (!DockerBuild(dockerfile, image, out,
+  if (!DockerBuild(dockerfile, "kit", image, out,
                    {"ARENA_SERVER=" + server, "ARENA_HTTP=" + http,
                     "ARENA_TOKEN=" + token, "ARENA_CLIENT_ID=" + client_id})) {
     return 1;
@@ -1066,7 +1247,7 @@ auto RunImage(const ArenaRunfiles &runfiles) -> int {
     return 1;
   }
   const std::filesystem::path dockerfile =
-      runfiles.Locate("game_arena/sandbox/image/Dockerfile");
+      runfiles.Locate("game_arena/image/Dockerfile");
   if (dockerfile.empty()) {
     return 1;
   }
@@ -1077,7 +1258,7 @@ auto RunImage(const ArenaRunfiles &runfiles) -> int {
     return 1;
   }
 
-  if (!DockerBuild(dockerfile, tag, root, {})) {
+  if (!DockerBuild(dockerfile, "sandbox", tag, root, {})) {
     return 1;
   }
 
@@ -1093,7 +1274,7 @@ void PrintUsage() {
   std::fprintf(stderr,
                "usage: arena_tournament <up|kit|check|image> "
                "--problem_config=<path> [flags]\n"
-               "  up      run a coordinator and local workers\n"
+               "  up      run a coordinator and local workers (--image)\n"
                "  kit     write a participant's workspace (--out, --mint, "
                "--image)\n"
                "  check   validate the config\n"
