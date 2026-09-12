@@ -143,8 +143,8 @@ TEST_F(ContainerEngineTest, ABuildPhaseEmitsTheSameArgvTheWorkerDoesToday) {
   build->set_timeout_s(1800);
   *build->add_argv() = Word("bazel", true);
   *build->add_argv() = Word("--output_base=/output_base", true);
-  *build->add_argv() = Word("--disk_cache=/disk_cache", true);
   *build->add_argv() = Word("build", true);
+  *build->add_argv() = Word("--disk_cache=/disk_cache", true);
   *build->add_argv() = Word("//solutions/c-ok:bot", false);
 
   const proto::JobResult result = engine_->Run(job, nullptr);
@@ -211,8 +211,7 @@ TEST_F(ContainerEngineTest, AMatchPhaseJoinsItsStepsOnAPrivateBridge) {
             std::string::npos)
       << log;
   EXPECT_NE(log.find("--network saw-0-ok-1-net"), std::string::npos);
-  EXPECT_NE(log.find("docker network rm saw-0-ok-1-net"),
-            std::string::npos);
+  EXPECT_NE(log.find("docker network rm saw-0-ok-1-net"), std::string::npos);
   // The referee runs detached and is kept, so its verdict can be asked for.
   EXPECT_NE(log.find("--name saw-0-ok-1-referee -d"), std::string::npos) << log;
   EXPECT_EQ(RunArgvFor("saw-0-ok-1-referee").find("--rm"), std::string::npos);

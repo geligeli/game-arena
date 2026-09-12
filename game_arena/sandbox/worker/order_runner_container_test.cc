@@ -369,10 +369,12 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   EXPECT_EQ(log.find("mount -t overlay"), std::string::npos)
       << "the container should not be mounting anything:\n"
       << log;
+  // --output_base before the command, --disk_cache after it: one is a bazel
+  // startup option and the other is not, and the container path used to get
+  // that wrong -- which is why it never built anything.
   ExpectLogContains(log,
-                    "exec bazel --output_base=/output_base "
-                    "--disk_cache=/disk_cache "
-                    "build '//solutions/"
+                    "exec bazel --output_base=/output_base build "
+                    "--disk_cache=/disk_cache '//solutions/"
                     "c-ok:bot'");
 
   // The match runs on its own egress-free network, torn down afterwards.

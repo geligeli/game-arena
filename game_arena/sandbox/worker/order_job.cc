@@ -43,12 +43,11 @@ auto SlotDir(const OrderJobConfig &config, int slot) -> std::filesystem::path {
 auto Isolation(const OrderJobConfig &config, bool container) -> sx::Isolation {
   sx::Isolation isolation;
   if (!container) {
-    // The process engine has no image and no cgroups; the one limit it can
-    // apply is an address-space cap on the step itself.
-    if (config.memory_limit_mb > 0) {
-      isolation.set_address_space_limit_bytes(
-          static_cast<std::uint64_t>(config.memory_limit_mb) * 1024 * 1024);
-    }
+    // No image and no cgroups. The one limit this engine can apply is an
+    // address-space cap, and it goes on the steps that run submitted code
+    // rather than here -- see SolutionIsolation. A cap on the build would be
+    // a cap on bazel, whose JVM reserves far more address space than any
+    // limit a problem means for a solution, and it dies at startup.
     return isolation;
   }
   isolation.set_image(config.image);
@@ -71,6 +70,19 @@ auto Isolation(const OrderJobConfig &config, bool container) -> sx::Isolation {
     isolation.set_allow_new_privileges(true);
     isolation.set_writable_rootfs(true);
     isolation.add_add_capabilities("SYS_ADMIN");
+  }
+  return isolation;
+}
+
+// The isolation for a step that runs the submission itself: the problem's
+// memory limit, as an address-space cap the process engine can enforce. Not
+// applied to the build, for the reason in Isolation() above.
+auto SolutionIsolation(const OrderJobConfig &config, bool container,
+                       const sx::Isolation &base) -> sx::Isolation {
+  sx::Isolation isolation = base;
+  if (!container && config.memory_limit_mb > 0) {
+    isolation.set_address_space_limit_bytes(
+        static_cast<std::uint64_t>(config.memory_limit_mb) * 1024 * 1024);
   }
   return isolation;
 }
@@ -199,14 +211,19 @@ void AddBuildPhase(int slot, const proto::WorkOrder &order,
   } else {
     *build->add_argv() = Quoted(config.bazel);
   }
+  // --output_base is a startup option and belongs before the command;
+  // --disk_cache and the problem's extra flags are command options and belong
+  // after it. Getting that wrong is not a style question: bazel aborts with
+  // "Unknown startup option", which is how the container path turned out
+  // never to have built anything.
   *build->add_argv() = Verbatim("--output_base=" + paths.output_base);
+  *build->add_argv() = Verbatim("build");
   if (!paths.disk_cache.empty()) {
     *build->add_argv() = Verbatim("--disk_cache=" + paths.disk_cache);
   }
   for (const std::string &flag : config.bazel_flags) {
     *build->add_argv() = Quoted(flag);
   }
-  *build->add_argv() = Verbatim("build");
   // One build, every target: both sides of a match and the referee share an
   // analysis pass and, more importantly, one consistent tree.
   for (const proto::Side *side : SidesOf(order)) {
@@ -219,8 +236,8 @@ void AddBuildPhase(int slot, const proto::WorkOrder &order,
   }
 }
 
-void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
-                   bool container,
+void AddMatchPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
+                   const BuildPaths &paths, bool container,
                    const sandbox_exec::Capabilities &capabilities,
                    sx::Job *job) {
   const int run_timeout_s =
@@ -306,11 +323,12 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
   sx::Step *bot = phase->mutable_foreground();
   bot->set_name("bot");
   bot->set_timeout_s(run_timeout_s);
+  *bot->mutable_isolation() = SolutionIsolation(config, container, *isolation);
   add_bot(bot, order.candidate(), order.opponent_spec());
 }
 
-void AddGradePhases(const proto::WorkOrder &order, bool container,
-                    sx::Job *job) {
+void AddGradePhases(const proto::WorkOrder &order, const OrderJobConfig &config,
+                    bool container, sx::Job *job) {
   const proto::GradeOrder &grade = order.grade();
   const int repeats = std::max(1, grade.repeats());
   const int timeout_s =
@@ -330,6 +348,8 @@ void AddGradePhases(const proto::WorkOrder &order, bool container,
     sx::Step *step = phase->mutable_foreground();
     step->set_name("grade");
     step->set_timeout_s(timeout_s);
+    *step->mutable_isolation() =
+        SolutionIsolation(config, container, *isolation);
     // Exported rather than fixed, so the command needs no knowledge of the
     // sandbox's directory layout.
     // The engine resolves {{scratch}} to wherever the step can write: a
@@ -376,9 +396,9 @@ auto JobForOrder(int slot, const proto::WorkOrder &order,
   AddBuildPhase(slot, order, config, paths, container, job);
 
   if (order.has_grade()) {
-    AddGradePhases(order, container, job);
+    AddGradePhases(order, config, container, job);
   } else {
-    AddMatchPhase(order, paths, container, capabilities, job);
+    AddMatchPhase(order, config, paths, container, capabilities, job);
   }
   return true;
 }

@@ -280,9 +280,34 @@ TEST(JobForOrderTest, WithoutASandboxThePatchIsAppliedOnTheHost) {
 
   EXPECT_EQ(job.workspace().overlay(), sx::Workspace::OVERLAY_NONE);
   EXPECT_EQ(job.workspace().patch(), sx::Workspace::PATCH_HOST);
-  // No image, no cgroups: the one limit this engine can apply is on the step.
   EXPECT_TRUE(job.isolation().image().empty());
-  EXPECT_GT(job.isolation().address_space_limit_bytes(), 0u);
+}
+
+TEST(JobForOrderTest, TheMemoryCapIsOnTheSolutionAndNotOnTheBuild) {
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(JobForOrder(0, MatchOrder(), Config(), ProcessCapabilities(),
+                          &job, &error));
+
+  // A cap on the build is a cap on bazel, whose JVM reserves far more address
+  // space than any limit a problem means for a solution -- it dies at
+  // startup. The old local backend passed 0 here for exactly this reason, and
+  // hoisting the limit to the job put it back.
+  EXPECT_EQ(job.phases(0).foreground().isolation().address_space_limit_bytes(),
+            0u);
+  EXPECT_EQ(job.isolation().address_space_limit_bytes(), 0u);
+  EXPECT_GT(job.phases(1).foreground().isolation().address_space_limit_bytes(),
+            0u);
+}
+
+TEST(JobForOrderTest, AContainersMemoryLimitIsACgroupNotAnAddressSpaceCap) {
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(JobForOrder(0, MatchOrder(), Config(), ContainerCapabilities(),
+                          &job, &error));
+
+  EXPECT_EQ(job.isolation().memory_limit_mb(), 4096u);
+  EXPECT_EQ(job.isolation().address_space_limit_bytes(), 0u);
 }
 
 }  // namespace

@@ -28,6 +28,20 @@ namespace {
 using sandbox_common::ReadFile;
 using sandbox_common::TailOf;
 
+// A step's isolation, or the phase's, or the job's. Same precedence the
+// container engine uses: a step's isolation replaces rather than merges, so
+// half-overridden isolation cannot read as tight and not be.
+auto EffectiveIsolation(const proto::Job &job, const proto::Phase &phase,
+                        const proto::Step &step) -> proto::Isolation {
+  if (step.isolation().ByteSizeLong() > 0) {
+    return step.isolation();
+  }
+  if (phase.isolation().ByteSizeLong() > 0) {
+    return phase.isolation();
+  }
+  return job.isolation();
+}
+
 void Fail(proto::Status *status, proto::Status::Code code,
           const std::string &message, const std::string &phase,
           const std::string &step) {
@@ -242,7 +256,7 @@ auto ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
       argv.front(), {argv.begin() + 1, argv.end()},
       foreground.cwd().empty() ? tree : std::filesystem::path(foreground.cwd()),
       log_dir, foreground.name(), std::chrono::seconds(foreground.timeout_s()),
-      job.isolation().address_space_limit_bytes(),
+      EffectiveIsolation(job, phase, foreground).address_space_limit_bytes(),
       [this, &job, &tracked](pid_t pgid) {
         tracked = pgid;
         Track(job.id(), pgid);

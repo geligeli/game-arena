@@ -38,9 +38,9 @@ TEST(EntrypointScriptTest, ReproducesTheBuildScript) {
   step.set_applies_patches(true);
   *step.add_argv() = Word("bazel", true);
   *step.add_argv() = Word("--output_base=/output_base", true);
+  *step.add_argv() = Word("build", true);
   *step.add_argv() = Word("--disk_cache=/disk_cache", true);
   *step.add_argv() = Word("--config=native", false);
-  *step.add_argv() = Word("build", true);
   *step.add_argv() = Word("//problem/x:c-1:bot", false);
 
   const std::string script = EntrypointScript(ws, step);
@@ -56,9 +56,11 @@ TEST(EntrypointScriptTest, ReproducesTheBuildScript) {
       << script;
   // The interleaving of quoted and unquoted words is why a token carries its
   // own quoting rather than the step having a command half and an args half.
-  EXPECT_NE(script.find("exec bazel --output_base=/output_base "
+  // --output_base is a startup option, so it precedes the command;
+  // --disk_cache and the problem's flags are command options and follow it.
+  EXPECT_NE(script.find("exec bazel --output_base=/output_base build "
                         "--disk_cache=/disk_cache '--config=native' "
-                        "build '//problem/x:c-1:bot'"),
+                        "'//problem/x:c-1:bot'"),
             std::string::npos)
       << script;
 }
