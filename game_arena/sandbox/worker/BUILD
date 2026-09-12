@@ -65,19 +65,6 @@ cc_test(
     ],
 )
 
-# The host-side git work both backends do per slot: clone once, then fetch
-# and force-checkout the order's base commit. Shared so the two backends
-# cannot drift into running the same order on different trees.
-cc_library(
-    name = "checkout",
-    srcs = ["checkout.cc"],
-    hdrs = ["checkout.h"],
-    deps = [
-        "//game_arena/sandbox/common:step",
-        "//game_arena/sandbox/common:text",
-    ],
-)
-
 cc_library(
     name = "sandbox_backend",
     hdrs = ["sandbox_backend.h"],
@@ -91,7 +78,7 @@ cc_library(
     deps = [
         "//game_arena/common/kv_options",
         ":build_log",
-        ":checkout",
+        "//game_arena/sandbox/exec:checkout",
         ":match_tally",
         ":grade_policy",
         "//game_arena/common/metric_report",
@@ -114,7 +101,7 @@ cc_library(
     deps = [
         "//game_arena/common/kv_options",
         ":build_log",
-        ":checkout",
+        "//game_arena/sandbox/exec:checkout",
         ":match_tally",
         ":grade_policy",
         "//game_arena/common/metric_report",

@@ -1,0 +1,259 @@
+syntax = "proto3";
+
+// What to run in a sandbox, and what came back.
+//
+// This is the engine's own vocabulary, and the reason it is here rather than
+// in game_arena/proto: nothing in this file names an arena, an order, a
+// submission, a candidate or a game, and //game_arena/sandbox/exec depends on
+// no target under //game_arena/proto. The rule attached to that package --
+// "the contract with every deployed worker and client" -- is about arena.proto
+// and is not true of a job description handed between two libraries in one
+// process.
+package sandbox_exec.proto;
+
+// ---------------------------------------------------------------------------
+// Isolation
+// ---------------------------------------------------------------------------
+
+message Tmpfs {
+  string target = 1;   // "/tmp"
+  string options = 2;  // "exec"; empty leaves the engine's default
+}
+
+// What a sandbox is allowed to do.
+//
+// Every field that loosens the sandbox expresses a *relaxation*, so proto3's
+// zero value is the hardened one: a job that sets nothing gets no
+// capabilities, no new privileges, a read-only root and no network. A field
+// added here later therefore cannot quietly weaken a caller written before
+// it, which is the property game_arena/ARENA.md's isolation section claims.
+message Isolation {
+  string image = 1;  // container engines only
+
+  uint32 memory_limit_mb = 2;  // 0: unlimited
+  double cpus = 3;             // 0: unlimited
+  uint32 pids_limit = 4;       // 0: unlimited
+  string run_as_user = 5;      // "1000:1000"; empty: the image's default
+
+  enum Network {
+    // No interface at all.
+    NETWORK_NONE = 0;
+    // A bridge private to this phase, with no egress: the steps of the phase
+    // reach each other and nothing else.
+    NETWORK_PHASE_BRIDGE = 1;
+    // Deliberate outbound access. A build that can fetch can also exfiltrate.
+    NETWORK_EGRESS = 2;
+  }
+  Network network = 6;
+
+  // --- relaxations ---
+  bool writable_rootfs = 7;       // false -> --read-only
+  bool keep_default_caps = 8;     // false -> --cap-drop ALL
+  bool allow_new_privileges = 9;  // false -> no-new-privileges
+  // Granted on top of the drop, which is tighter than not dropping. The
+  // in-sandbox overlay needs SYS_ADMIN and nothing else does.
+  repeated string add_capabilities = 10;
+  repeated Tmpfs tmpfs = 11;
+  // Process engines: RLIMIT_AS, so an over-allocating child fails its own
+  // allocation rather than pushing the host into swap.
+  uint64 address_space_limit_bytes = 12;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace
+// ---------------------------------------------------------------------------
+
+message Mount {
+  // A host path as the sandbox's *daemon* resolves it. The engine never opens
+  // this: under docker-outside-of-docker it names a filesystem this process
+  // cannot see. Paths the engine itself reads or writes are named separately
+  // below.
+  string source = 1;
+  string target = 2;  // inside the sandbox
+  bool readonly = 3;
+}
+
+message StagedFile {
+  string path = 1;  // relative, with no "." or ".." component
+  bytes content = 2;
+}
+
+// The tree a job runs against.
+message Workspace {
+  string source_repo = 1;  // git URL or local path; empty: nothing to clone
+  string lower_dir = 2;    // the engine's clone, or the tree itself
+  string base_commit = 3;  // empty: leave the tree where it is
+  string git = 4;          // empty -> "git"
+
+  enum Overlay {
+    // The engine mounts overlayfs itself and binds the merged tree in. The
+    // zero value, because it is the one that needs no capability in the
+    // sandbox.
+    OVERLAY_HOST = 0;
+    // The entrypoint mounts it. Needs SYS_ADMIN, so a sandbox running
+    // submitted build code this way is not a boundary.
+    OVERLAY_IN_SANDBOX = 1;
+    // No overlay: run in lower_dir, or the image carries the tree.
+    OVERLAY_NONE = 2;
+  }
+  Overlay overlay = 5;
+  string upper_dir = 6;       // overlay upper/work parent, and the scratch dir
+  string merged_dir = 7;      // OVERLAY_HOST: where the merge is mounted
+  string mount_binary = 8;    // empty -> "mount"
+  string umount_binary = 9;   // empty -> "umount"
+
+  string staging_dir = 10;  // engine-local; where staged_files are written
+  repeated StagedFile staged_files = 11;
+
+  enum Patch {
+    PATCH_NONE = 0;
+    // git apply --check, then git apply, on the host before anything starts.
+    PATCH_HOST = 1;
+    // git apply inside the entrypoint, before the step runs.
+    PATCH_IN_ENTRYPOINT = 2;
+    // cp -a the staging tree over the workspace, for files that are not a
+    // diff.
+    PATCH_COPY_IN_ENTRYPOINT = 3;
+  }
+  Patch patch = 12;
+  repeated string patch_files = 13;  // names under staging_dir, in order
+
+  // Persistent directories the job wants at fixed points inside the sandbox.
+  // Order is preserved: it is the order the flags come out in, and a
+  // reordering is a diff nobody can read.
+  repeated Mount mounts = 14;
+  string sandbox_work_dir = 15;  // cwd for every step; empty -> the merge root
+}
+
+// ---------------------------------------------------------------------------
+// Steps and phases
+// ---------------------------------------------------------------------------
+
+message Endpoint {
+  // The port the other steps of this phase reach this one on. Usable when the
+  // sandbox gives the step its own network namespace, so nothing can collide.
+  int32 port = 1;
+  // Otherwise the step binds a free port and writes it to the file the engine
+  // substitutes for {{port_file}} in its argv. The engine waits for a number
+  // to appear before starting anything that names this step as a peer.
+  bool discover_via_port_file = 2;
+  int32 discover_timeout_s = 3;  // 0 -> 60
+}
+
+// One word of a step's command line.
+message Token {
+  string text = 1;
+  // Emitted into a shell entrypoint without quoting: for the words that are
+  // not data -- a program name, a subcommand -- and for paths the engine
+  // composed itself. Everything else is quoted, which is the safe default and
+  // so the zero value. A process engine ignores this; there is no shell.
+  bool verbatim = 2;
+}
+
+message Step {
+  // Log tag, sandbox-name suffix, and the handle {{peer:<name>}} resolves.
+  // Empty names the sandbox exactly Job.id, which is what a one-step job
+  // wants.
+  string name = 1;
+
+  // The command line, word by word. Per-token quoting rather than a
+  // command/args split because the entrypoints this replaces genuinely
+  // interleave the two:
+  //   exec bazel --output_base=/output_base '--config=native' build '//x:y'
+  repeated Token argv = 2;
+
+  map<string, string> env = 4;  // exported in a script; execve env otherwise
+  string cwd = 5;               // empty -> Workspace.sandbox_work_dir
+  int32 timeout_s = 6;          // 0: no limit
+
+  Isolation isolation = 7;  // overrides the phase's
+  Endpoint endpoint = 8;    // set when other steps of the phase dial this one
+
+  // Paths under {{scratch}} read back into StepResult.collected. How a job
+  // gets a file home without the engine knowing what the file means.
+  repeated string collect_files = 9;
+
+  // Leave the sandbox in place after the step exits, so its output can still
+  // be asked for. The engine removes it at the end of the phase either way.
+  bool keep_after_exit = 10;
+
+  // Apply the workspace's staged patches before this step's command runs.
+  // Set on the first step that runs in the workspace; the ones after it
+  // inherit the patched tree through the overlay, which is why a graded run's
+  // container does not re-apply what its build container already did.
+  //
+  // Only meaningful for PATCH_IN_ENTRYPOINT and PATCH_COPY_IN_ENTRYPOINT --
+  // PATCH_HOST has already happened before any step starts.
+  bool applies_patches = 11;
+}
+
+message Phase {
+  string name = 1;
+  // Started first and left running. A background step carrying an Endpoint is
+  // waited for -- its address discovered -- before the foreground step runs.
+  repeated Step background = 2;
+  // The step whose exit ends the phase.
+  Step foreground = 3;
+  Isolation isolation = 4;    // default for every step of the phase
+  int32 drain_timeout_s = 5;  // wait on the background steps after; 0 -> 60
+}
+
+message Job {
+  // The engine's only handle on this job: the cancel token, and the prefix
+  // every sandbox it creates is named from. Opaque -- an engine never parses
+  // it.
+  string id = 1;
+  Workspace workspace = 2;
+  Isolation isolation = 3;    // default for every phase
+  repeated Phase phases = 4;  // in order; the first failure stops the job
+  string log_dir = 5;         // engine-local; captured output lands here
+}
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
+
+// Why the engine could not run the job, as opposed to a step that ran and
+// failed. A step exiting 1 is the job's business; a missing docker binary is
+// the engine's.
+message Status {
+  enum Code {
+    OK = 0;
+    INVALID_JOB = 1;       // no phases, no image, a staged path that escapes
+    TOOL_MISSING = 2;      // the docker/git binary could not be run
+    WORKSPACE_FAILED = 3;  // clone, checkout, overlay, staging, patch
+    NETWORK_FAILED = 4;    // the phase bridge could not be created
+    START_FAILED = 5;      // the sandbox would not start
+    ENDPOINT_FAILED = 6;   // a peer never published an address
+    CANCELLED = 7;
+  }
+  Code code = 1;
+  string message = 2;  // human text, already trimmed
+  string phase = 3;
+  string step = 4;
+}
+
+message StepResult {
+  string name = 1;
+  bool started = 2;  // false: the engine never got it running
+  // 128+signal when signalled, and 124 when the engine's own timeout fired --
+  // the convention timeout(1) uses, so a numeric-only consumer is not lied
+  // to. |timed_out| is the fact; prefer it.
+  int32 exit_code = 3;
+  bool timed_out = 4;
+  int32 timeout_s = 5;  // what the engine actually enforced
+  string stdout = 6;
+  string stderr = 7;
+  map<string, bytes> collected = 8;
+  string peer_address = 9;
+}
+
+message PhaseResult {
+  string name = 1;
+  repeated StepResult steps = 2;  // background first, then the foreground one
+}
+
+message JobResult {
+  Status status = 1;
+  repeated PhaseResult phases = 2;
+}

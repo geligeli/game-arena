@@ -10,10 +10,12 @@ auto RunStep(const std::string &executable,
              const std::filesystem::path &log_dir, const std::string &tag,
              std::chrono::seconds timeout,
              std::size_t address_space_limit_bytes,
-             const std::function<void(pid_t)> &on_started) -> StepResult {
+             const std::function<void(pid_t)> &on_started,
+             const std::vector<std::string> &env) -> StepResult {
   process::RunOptions options;
   options.on_started = on_started;
   options.cwd = cwd;
+  options.env = env;
   options.stdout_path = log_dir / (tag + ".out");
   options.stderr_path = log_dir / (tag + ".err");
   options.timeout = timeout;

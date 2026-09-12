@@ -24,9 +24,9 @@
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/common/step.h"
 #include "game_arena/sandbox/common/text.h"
+#include "game_arena/sandbox/exec/checkout.h"
 #include "game_arena/sandbox/worker/bot_launch.h"
 #include "game_arena/sandbox/worker/build_log.h"
-#include "game_arena/sandbox/worker/checkout.h"
 #include "game_arena/sandbox/worker/grade_policy.h"
 #include "game_arena/sandbox/worker/match_tally.h"
 
@@ -97,7 +97,8 @@ auto LocalBackend::PrepareCheckout(int slot, const std::string &base_commit,
                                    std::string *error) -> bool {
   const std::filesystem::path repo = RepoDir(slot);
   const std::filesystem::path logs = SlotDir(slot) / "logs";
-  if (!EnsureClone(config_.git, config_.repo_url, repo, logs, error)) {
+  if (!sandbox_exec::EnsureClone(config_.git, config_.repo_url, repo, logs,
+                                 error)) {
     return false;
   }
 
@@ -115,7 +116,8 @@ auto LocalBackend::PrepareCheckout(int slot, const std::string &base_commit,
     return false;
   }
 
-  return SyncToCommit(config_.git, repo, base_commit, logs, error);
+  return sandbox_exec::SyncToCommit(config_.git, repo, base_commit, logs,
+                                    error);
 }
 
 auto LocalBackend::ApplySide(int slot, const proto::Side &side,

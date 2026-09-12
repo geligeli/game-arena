@@ -1,4 +1,4 @@
-#include "game_arena/sandbox/worker/checkout.h"
+#include "game_arena/sandbox/exec/checkout.h"
 
 #include <chrono>
 #include <system_error>
@@ -6,7 +6,7 @@
 #include "game_arena/sandbox/common/step.h"
 #include "game_arena/sandbox/common/text.h"
 
-namespace tournament_arena {
+namespace sandbox_exec {
 
 using sandbox_common::TailOf;
 
@@ -54,4 +54,4 @@ auto SyncToCommit(const std::string &git, const std::filesystem::path &repo,
   return true;
 }
 
-}  // namespace tournament_arena
+}  // namespace sandbox_exec

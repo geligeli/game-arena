@@ -9,9 +9,9 @@
 #include "game_arena/common/process/process.h"
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/common/text.h"
+#include "game_arena/sandbox/exec/checkout.h"
 #include "game_arena/sandbox/worker/bot_launch.h"
 #include "game_arena/sandbox/worker/build_log.h"
-#include "game_arena/sandbox/worker/checkout.h"
 #include "game_arena/sandbox/worker/grade_policy.h"
 #include "game_arena/sandbox/worker/match_tally.h"
 
@@ -148,8 +148,8 @@ auto DockerBackend::Warmup(int slots, std::string *error) -> bool {
                config_.work_dir.string() + ": " + ec.message();
       return false;
     }
-    if (!EnsureClone(config_.git, config_.repo_dir, RepoDir(slot),
-                     SlotDir(slot) / "logs", error)) {
+    if (!sandbox_exec::EnsureClone(config_.git, config_.repo_dir, RepoDir(slot),
+                                   SlotDir(slot) / "logs", error)) {
       return false;
     }
   }
@@ -159,9 +159,10 @@ auto DockerBackend::Warmup(int slots, std::string *error) -> bool {
 auto DockerBackend::PrepareCheckout(int slot, const std::string &base_commit,
                                     std::string *error) -> bool {
   const std::filesystem::path logs = SlotDir(slot) / "logs";
-  return EnsureClone(config_.git, config_.repo_dir, RepoDir(slot), logs,
-                     error) &&
-         SyncToCommit(config_.git, RepoDir(slot), base_commit, logs, error);
+  return sandbox_exec::EnsureClone(config_.git, config_.repo_dir, RepoDir(slot),
+                                   logs, error) &&
+         sandbox_exec::SyncToCommit(config_.git, RepoDir(slot), base_commit,
+                                    logs, error);
 }
 
 auto DockerBackend::StageCandidate(int slot, const proto::WorkOrder &order,

@@ -29,13 +29,18 @@ struct StepResult {
 // Runs |executable| with output captured to <log_dir>/<tag>.{out,err} and a
 // wall-clock timeout. |on_started| publishes the child's process group, so a
 // caller can abort a step it is not the one waiting on.
+// |env| replaces the caller's environment rather than adding to it, the way
+// RunOptions does; empty inherits. Last in the list, out of the order it
+// reads in, so that adding it did not renumber the arguments of every
+// existing call site.
 auto RunStep(const std::string &executable,
              const std::vector<std::string> &args,
              const std::filesystem::path &cwd,
              const std::filesystem::path &log_dir, const std::string &tag,
              std::chrono::seconds timeout,
              std::size_t address_space_limit_bytes = 0,
-             const std::function<void(pid_t)> &on_started = {}) -> StepResult;
+             const std::function<void(pid_t)> &on_started = {},
+             const std::vector<std::string> &env = {}) -> StepResult;
 
 }  // namespace sandbox_common
 

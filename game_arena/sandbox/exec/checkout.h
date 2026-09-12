@@ -1,14 +1,17 @@
-#ifndef GAME_ARENA_GAME_ARENA_SANDBOX_WORKER_CHECKOUT_H
-#define GAME_ARENA_GAME_ARENA_SANDBOX_WORKER_CHECKOUT_H
+#ifndef GAME_ARENA_GAME_ARENA_SANDBOX_EXEC_CHECKOUT_H
+#define GAME_ARENA_GAME_ARENA_SANDBOX_EXEC_CHECKOUT_H
 
-// The host-side git work both backends do per slot: clone once, then fetch
-// and force-checkout the order's base commit. Shared so the two backends
-// cannot drift into running the same order on different trees.
+// The git work a workspace needs before anything runs: clone once, then
+// fetch and force-checkout the commit the job names.
+//
+// Always on the host, never in the sandbox -- so the tree a sandbox sees is
+// already at the right commit and no sandbox needs credentials, a network, or
+// write access to a .git directory.
 
 #include <filesystem>
 #include <string>
 
-namespace tournament_arena {
+namespace sandbox_exec {
 
 // Clones |source| into |dest| on first use -- an existing .git means the
 // clone is already there. --local hardlinks the object store instead of
@@ -28,6 +31,6 @@ auto SyncToCommit(const std::string &git, const std::filesystem::path &repo,
                   const std::filesystem::path &log_dir,
                   std::string *error) -> bool;
 
-}  // namespace tournament_arena
+}  // namespace sandbox_exec
 
-#endif  // GAME_ARENA_GAME_ARENA_SANDBOX_WORKER_CHECKOUT_H
+#endif  // GAME_ARENA_GAME_ARENA_SANDBOX_EXEC_CHECKOUT_H
