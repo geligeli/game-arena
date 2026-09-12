@@ -294,6 +294,15 @@ auto RunCommand(const std::string& executable,
     if (!options.cwd.empty() && ::chdir(options.cwd.c_str()) == -1) {
       _exit(127);
     }
+    if (!options.stdin_path.empty()) {
+      const int fd = ::open(options.stdin_path.c_str(), O_RDONLY);
+      if (fd == -1 || ::dup2(fd, STDIN_FILENO) == -1) {
+        _exit(127);
+      }
+      if (fd != STDIN_FILENO) {
+        ::close(fd);
+      }
+    }
     if (!RedirectStream(
             options.stdout_path.empty() ? "/dev/null" : options.stdout_path,
             STDOUT_FILENO) ||

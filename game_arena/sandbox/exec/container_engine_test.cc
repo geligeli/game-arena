@@ -1,8 +1,8 @@
 // The engine against a fake docker, asserting the whole command line.
 //
-// The first test here is the hinge of the whole refactor: a job shaped like
-// the one the fleet worker runs has to produce the *same* `docker run` argv
-// that sandbox/worker's own golden test pins. If these two agree, moving the
+// The first test here is the hinge: a job shaped like the one the fleet
+// worker runs has to produce the *same* `docker run` argv that
+// sandbox/worker's own golden test pins. If these two agree, moving the
 // worker onto this engine cannot change what reaches the daemon.
 
 #include "game_arena/sandbox/exec/container_engine.h"
@@ -48,14 +48,6 @@ class ContainerEngineTest : public ::testing::Test {
                                      std::filesystem::perms::group_exec |
                                      std::filesystem::perms::others_exec);
 
-    std::ofstream mount(root_ / "mount");
-    mount << "#!/usr/bin/env bash\nexit 0\n";
-    mount.close();
-    std::filesystem::permissions(root_ / "mount",
-                                 std::filesystem::perms::owner_all |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec);
-
     ContainerEngineConfig config;
     config.docker = (root_ / "docker").string();
     engine_ = std::make_unique<ContainerEngine>(config);
@@ -87,30 +79,32 @@ class ContainerEngineTest : public ::testing::Test {
     return log.substr(start, end - start);
   }
 
-  // A workspace laid out the way the fleet worker lays out a slot.
+  // A workspace laid out the way the fleet worker lays out a slot: the tree
+  // and the staged patch on this side, the persistent output base a volume.
   auto SlotWorkspace() -> proto::Workspace {
     proto::Workspace ws;
-    ws.set_lower_dir((root_ / "lower").string());
-    ws.set_upper_dir((root_ / "overlay").string());
-    ws.set_merged_dir((root_ / "merged").string());
+    ws.set_tree_dir((root_ / "lower").string());
     ws.set_staging_dir((root_ / "patches").string());
-    ws.set_overlay(proto::Workspace::OVERLAY_HOST);
-    ws.set_mount_binary((root_ / "mount").string());
-    ws.set_umount_binary((root_ / "mount").string());
+    proto::StagedFile *patch = ws.add_staged_files();
+    patch->set_path("c-ok.diff");
+    patch->set_content("a patch");
+    ws.add_patch_files("c-ok.diff");
     ws.set_patch(proto::Workspace::PATCH_IN_ENTRYPOINT);
     ws.set_sandbox_work_dir("/workspace");
 
     proto::Mount *output_base = ws.add_mounts();
-    output_base->set_source((root_ / "bazel_output_base").string());
+    output_base->set_kind(proto::Mount::VOLUME);
+    output_base->set_source("arena-slot0-output_base");
     output_base->set_target("/output_base");
-    proto::Mount *patches = ws.add_mounts();
-    patches->set_source((root_ / "patches").string());
-    patches->set_target("/patches");
-    patches->set_readonly(true);
-    proto::Mount *disk_cache = ws.add_mounts();
-    disk_cache->set_source((root_ / "disk_cache").string());
-    disk_cache->set_target("/disk_cache");
     return ws;
+  }
+
+  auto DiskCacheVolume() -> proto::Mount {
+    proto::Mount disk_cache;
+    disk_cache.set_kind(proto::Mount::VOLUME);
+    disk_cache.set_source("arena-disk_cache");
+    disk_cache.set_target("/disk_cache");
+    return disk_cache;
   }
 
   auto HardenedIsolation() -> proto::Isolation {
@@ -141,6 +135,7 @@ TEST_F(ContainerEngineTest, ABuildPhaseEmitsTheSameArgvTheWorkerDoesToday) {
   build->set_name("build");
   build->set_applies_patches(true);
   build->set_timeout_s(1800);
+  *build->add_mounts() = DiskCacheVolume();
   *build->add_argv() = Word("bazel", true);
   *build->add_argv() = Word("--output_base=/output_base", true);
   *build->add_argv() = Word("build", true);
@@ -152,28 +147,156 @@ TEST_F(ContainerEngineTest, ABuildPhaseEmitsTheSameArgvTheWorkerDoesToday) {
       << result.status().message();
 
   // Byte for byte what //game_arena/sandbox/worker's
-  // WholeDockerRunArgvIsPinned expects, with this test's paths.
+  // WholeDockerRunArgvIsPinned expects. Not one bind mount: the tree, the
+  // patches and scratch are the job's own volumes, the caches persistent
+  // ones.
   EXPECT_EQ(RunArgvFor("saw-0-argv-1-build"),
             "docker run --rm --name saw-0-argv-1-build "
             "--cap-drop ALL --security-opt no-new-privileges --read-only "
             "--tmpfs /tmp:exec --memory 4096m --pids-limit 512 "
             "--network none "
-            "--mount type=bind,source=" +
-                (root_ / "merged").string() +
-                ",target=/workspace "
-                "--mount type=bind,source=" +
-                (root_ / "overlay").string() +
-                ",target=/sandbox "
-                "--mount type=bind,source=" +
-                (root_ / "bazel_output_base").string() +
-                ",target=/output_base "
-                "--mount type=bind,source=" +
-                (root_ / "patches").string() +
-                ",target=/patches,readonly "
-                "--mount type=bind,source=" +
-                (root_ / "disk_cache").string() +
-                ",target=/disk_cache "
-                "--entrypoint /bin/sh fake-image:1");
+            "--mount type=volume,source=saw-0-argv-1-ws,target=/workspace "
+            "--mount type=volume,source=saw-0-argv-1-scratch,target=/sandbox "
+            "--mount type=volume,source=arena-slot0-output_base,"
+            "target=/output_base "
+            "--mount type=volume,source=saw-0-argv-1-patches,"
+            "target=/patches,readonly "
+            "--mount type=volume,source=arena-disk_cache,target=/disk_cache "
+            "--entrypoint /bin/sh fake-image:1");
+}
+
+TEST_F(ContainerEngineTest, TheWorkspaceIsLoadedThroughTheDaemonNotMounted) {
+  proto::Job job;
+  job.set_id("saw-0-load-1");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_workspace() = SlotWorkspace();
+  *job.mutable_isolation() = HardenedIsolation();
+  proto::Phase *phase = job.add_phases();
+  phase->set_name("build");
+  proto::Step *build = phase->mutable_foreground();
+  build->set_name("build");
+  build->set_applies_patches(true);
+  *build->add_mounts() = DiskCacheVolume();
+  *build->add_argv() = Word("./x", false);
+
+  ASSERT_EQ(engine_->Run(job, nullptr).status().code(), proto::Status::OK);
+
+  const std::string log = Log();
+  // Fresh volumes for the job, then a loader that exists to be copied into:
+  // the tree as a tar on stdin (`cp -`), the staged files from the staging
+  // dir, both read by the docker *client* on this side.
+  const auto volume = log.find("docker volume create saw-0-load-1-ws");
+  const auto create = log.find(
+      "docker create --name saw-0-load-1-load "
+      "--network none "
+      "--mount type=volume,source=saw-0-load-1-ws,"
+      "target=/workspace "
+      "--mount type=volume,source=saw-0-load-1-patches,"
+      "target=/patches "
+      "--mount type=volume,source=saw-0-load-1-scratch,"
+      "target=/sandbox "
+      "--mount type=volume,source=arena-slot0-output_"
+      "base,target=/output_base "
+      "--mount type=volume,source=arena-disk_cache,"
+      "target=/disk_cache "
+      "--entrypoint /bin/sh fake-image:1 -c chown -R "
+      "0:0 /workspace /patches /sandbox\n"
+      "chown 0:0 /output_base\n"
+      "chown 0:0 /disk_cache\n");
+  const auto tree = log.find("docker cp - saw-0-load-1-load:/workspace");
+  const auto patches = log.find("docker cp " + (root_ / "patches").string() +
+                                "/. saw-0-load-1-load:/patches");
+  const auto start = log.find("docker start -a saw-0-load-1-load");
+  const auto run = log.find("docker run --rm --name saw-0-load-1-build");
+  // Removed at the end -- and cleared up front too, in case a killed job left
+  // one behind, which is why this looks for the last removal.
+  const auto removed = log.rfind("docker volume rm -f saw-0-load-1-ws");
+  ASSERT_NE(volume, std::string::npos) << log;
+  ASSERT_NE(create, std::string::npos) << log;
+  ASSERT_NE(tree, std::string::npos) << log;
+  ASSERT_NE(patches, std::string::npos) << log;
+  ASSERT_NE(start, std::string::npos) << log;
+  ASSERT_NE(run, std::string::npos) << log;
+  ASSERT_NE(removed, std::string::npos) << log;
+  EXPECT_LT(volume, create);
+  EXPECT_LT(create, tree);
+  EXPECT_LT(tree, patches);
+  EXPECT_LT(patches, start);
+  EXPECT_LT(start, run);
+  EXPECT_LT(run, removed);
+  EXPECT_EQ(log.find("type=bind"), std::string::npos) << log;
+  // The tar itself is not left behind.
+  EXPECT_FALSE(std::filesystem::exists(root_ / "logs" / "tree.tar"));
+}
+
+TEST_F(ContainerEngineTest, TheLoaderHandsTheTreeToTheSandboxUser) {
+  proto::Job job;
+  job.set_id("saw-0-user-1");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_workspace() = SlotWorkspace();
+  *job.mutable_isolation() = HardenedIsolation();
+  job.mutable_isolation()->set_run_as_user("1000:1000");
+  proto::Phase *phase = job.add_phases();
+  phase->set_name("build");
+  proto::Step *build = phase->mutable_foreground();
+  build->set_name("build");
+  *build->add_mounts() = DiskCacheVolume();
+  *build->add_argv() = Word("./x", false);
+
+  ASSERT_EQ(engine_->Run(job, nullptr).status().code(), proto::Status::OK);
+
+  // Copied-in files keep the worker's ownership; the loader's one job is to
+  // chown them, and the (possibly fresh) persistent volumes' roots, to
+  // whoever the steps run as. Not a bind mount's: that directory is the
+  // host's.
+  const std::string log = Log();
+  EXPECT_NE(log.find("-c chown -R 1000:1000 /workspace /patches /sandbox\n"
+                     "chown 1000:1000 /output_base\n"
+                     "chown 1000:1000 /disk_cache\n"),
+            std::string::npos)
+      << log;
+}
+
+TEST_F(ContainerEngineTest, CollectedFilesAreCopiedOutOfTheKeptContainer) {
+  // A fake docker whose `cp` out of a container writes a report.
+  std::ofstream docker(root_ / "docker");
+  docker << "#!/usr/bin/env bash\n"
+         << "echo \"docker $*\" >> \"" << (root_ / "docker.log").string()
+         << "\"\n"
+         << "case \"$1\" in\n"
+         << "  cp) case \"$2\" in *:/sandbox/report.json) "
+            "echo '{\"metrics\":{\"x\":1}}' > \"$3\";; esac;;\n"
+         << "esac\n"
+         << "exit 0\n";
+  docker.close();
+
+  proto::Job job;
+  job.set_id("saw-0-collect-1");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_workspace() = SlotWorkspace();
+  *job.mutable_isolation() = HardenedIsolation();
+  proto::Phase *phase = job.add_phases();
+  phase->set_name("grade");
+  proto::Step *grade = phase->mutable_foreground();
+  grade->set_name("grade");
+  grade->add_collect_files("report.json");
+  *grade->add_argv() = Word("./bench", false);
+
+  const proto::JobResult result = engine_->Run(job, nullptr);
+  ASSERT_EQ(result.status().code(), proto::Status::OK);
+  ASSERT_EQ(result.phases_size(), 1);
+  const auto &collected = result.phases(0).steps(0).collected();
+  ASSERT_EQ(collected.count("report.json"), 1u);
+  EXPECT_NE(collected.at("report.json").find("\"x\":1"), std::string::npos);
+  // Kept rather than --rm'd, so its scratch could still be asked for; then
+  // removed with the rest.
+  const std::string log = Log();
+  EXPECT_EQ(RunArgvFor("saw-0-collect-1-grade").find("--rm"),
+            std::string::npos);
+  EXPECT_NE(log.find("docker cp saw-0-collect-1-grade:/sandbox/report.json"),
+            std::string::npos)
+      << log;
+  EXPECT_NE(log.find("docker rm -f saw-0-collect-1-grade"), std::string::npos);
 }
 
 TEST_F(ContainerEngineTest, AMatchPhaseJoinsItsStepsOnAPrivateBridge) {
@@ -258,6 +381,7 @@ TEST_F(ContainerEngineTest, EveryContainerIsHardened) {
     EXPECT_NE(line.find("--read-only"), std::string::npos) << line;
     EXPECT_EQ(line.find("SYS_ADMIN"), std::string::npos) << line;
     EXPECT_EQ(line.find("--network host"), std::string::npos) << line;
+    EXPECT_EQ(line.find("type=bind"), std::string::npos) << line;
     ++seen;
     at = log.find("docker run", end);
   }
@@ -325,6 +449,19 @@ TEST_F(ContainerEngineTest, AJobNeedsAPhase) {
   job.set_log_dir((root_ / "logs").string());
   const proto::JobResult result = engine_->Run(job, nullptr);
   EXPECT_EQ(result.status().code(), proto::Status::INVALID_JOB);
+}
+
+TEST_F(ContainerEngineTest, AJobNeedsAnImageToLoadWith) {
+  proto::Job job;
+  job.set_id("noimage");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_workspace() = SlotWorkspace();
+  proto::Phase *phase = job.add_phases();
+  phase->set_name("build");
+  *phase->mutable_foreground()->add_argv() = Word("./x", false);
+  const proto::JobResult result = engine_->Run(job, nullptr);
+  EXPECT_EQ(result.status().code(), proto::Status::INVALID_JOB);
+  EXPECT_EQ(Log().find("docker"), std::string::npos);
 }
 
 TEST_F(ContainerEngineTest, CancelIsANoOpForAJobItIsNotRunning) {

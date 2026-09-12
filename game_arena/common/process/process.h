@@ -53,6 +53,7 @@ struct RunOptions {
   std::vector<std::string> env;       // empty: inherit the caller's
   std::filesystem::path stdout_path;  // empty: /dev/null
   std::filesystem::path stderr_path;  // empty: /dev/null
+  std::filesystem::path stdin_path;   // empty: inherit the caller's
   // Wall-clock limit. Zero waits indefinitely. On expiry the child's whole
   // process group is signalled, not just the child: build tools spawn trees,
   // and killing only the parent leaves the workers running.

@@ -53,9 +53,8 @@ class ProcessEngineTest : public ::testing::Test {
     job.set_id(id);
     job.set_log_dir((root_ / "logs").string());
     proto::Workspace *ws = job.mutable_workspace();
-    ws->set_lower_dir((root_ / "tree").string());
-    ws->set_upper_dir((root_ / "scratch").string());
-    ws->set_overlay(proto::Workspace::OVERLAY_NONE);
+    ws->set_tree_dir((root_ / "tree").string());
+    ws->set_scratch_dir((root_ / "scratch").string());
     return job;
   }
 

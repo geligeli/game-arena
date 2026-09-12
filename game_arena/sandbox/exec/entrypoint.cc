@@ -11,20 +11,6 @@ namespace {
 
 using sandbox_common::ShellQuote;
 
-auto PreludeFor(const proto::Workspace &workspace) -> std::string {
-  switch (workspace.overlay()) {
-    case proto::Workspace::OVERLAY_IN_SANDBOX:
-      return sandbox_common::OverlayMountScript();
-    case proto::Workspace::OVERLAY_HOST:
-      return sandbox_common::HostOverlayPrelude();
-    case proto::Workspace::OVERLAY_NONE:
-      // Nothing to assemble, but bazel still insists on a writable HOME.
-      return sandbox_common::ScratchSetupScript();
-    default:
-      return sandbox_common::HostOverlayPrelude();
-  }
-}
-
 auto WorkDirOf(const proto::Workspace &workspace,
                const proto::Step &step) -> std::string {
   if (!step.cwd().empty()) {
@@ -52,7 +38,9 @@ auto RenderArgv(const proto::Step &step) -> std::string {
 auto EntrypointScript(const proto::Workspace &workspace,
                       const proto::Step &step) -> std::string {
   std::string script = "set -eu\n";
-  script += PreludeFor(workspace);
+  // The tree and the scratch dir are mounted; the one thing left to arrange
+  // is a HOME bazel can write to.
+  script += sandbox_common::ScratchPrelude();
 
   if (step.applies_patches() &&
       workspace.patch() == proto::Workspace::PATCH_COPY_IN_ENTRYPOINT) {

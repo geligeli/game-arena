@@ -186,7 +186,6 @@ TEST_F(SchedulerTest, EveryOrderCarriesTheProblemsSandboxAndTree) {
   config.max_moves_per_game = 100;
   config.sandbox.set_image("registry/arena-build:1");
   config.sandbox.set_memory_limit_mb(2048);
-  config.sandbox.set_host_overlay(true);
   EloStandings standings(elo_.get(), store_.get(), "risk2");
   Scheduler scheduler(config, store_.get(), elo_.get(), &standings);
 
@@ -202,7 +201,6 @@ TEST_F(SchedulerTest, EveryOrderCarriesTheProblemsSandboxAndTree) {
   EXPECT_EQ(order.bazel_flags(0), "--config=native");
   EXPECT_EQ(order.sandbox().image(), "registry/arena-build:1");
   EXPECT_EQ(order.sandbox().memory_limit_mb(), 2048u);
-  EXPECT_TRUE(order.sandbox().host_overlay());
   // The referee's own limits, which used to reach it as its flag defaults
   // however the problem was configured.
   EXPECT_EQ(order.turn_timeout_ms(), 5000u);

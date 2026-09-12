@@ -50,8 +50,8 @@ message Isolation {
   bool writable_rootfs = 7;       // false -> --read-only
   bool keep_default_caps = 8;     // false -> --cap-drop ALL
   bool allow_new_privileges = 9;  // false -> no-new-privileges
-  // Granted on top of the drop, which is tighter than not dropping. The
-  // in-sandbox overlay needs SYS_ADMIN and nothing else does.
+  // Granted on top of the drop, which is tighter than not dropping. Nothing
+  // the engine itself does needs one.
   repeated string add_capabilities = 10;
   repeated Tmpfs tmpfs = 11;
   // Process engines: RLIMIT_AS, so an over-allocating child fails its own
@@ -64,11 +64,19 @@ message Isolation {
 // ---------------------------------------------------------------------------
 
 message Mount {
-  // A host path as the sandbox's *daemon* resolves it. The engine never opens
-  // this: under docker-outside-of-docker it names a filesystem this process
-  // cannot see. Paths the engine itself reads or writes are named separately
-  // below.
-  string source = 1;
+  enum Kind {
+    // A directory on the daemon's host. |source| is a path as the *daemon*
+    // resolves it: the engine never opens it, and under docker-outside-of-
+    // docker it names a filesystem this process cannot see. The opt-in for a
+    // host that wants its build caches on a local disk it can inspect.
+    BIND = 0;
+    // A docker volume, by name. It lives with the daemon, so nothing about
+    // this process's filesystem has to be visible to it -- which is what
+    // makes a worker "anything with a docker socket". The default.
+    VOLUME = 1;
+  }
+  Kind kind = 4;
+  string source = 1;  // BIND: a host path; VOLUME: the volume's name
   string target = 2;  // inside the sandbox
   bool readonly = 3;
 }
@@ -79,37 +87,32 @@ message StagedFile {
 }
 
 // The tree a job runs against.
+//
+// A container engine never bind-mounts it: the tree is exported with tar and
+// copied into a per-job volume through the daemon, and every other path here
+// is one this process reads or writes itself. A process engine runs in
+// tree_dir directly.
 message Workspace {
   string source_repo = 1;  // git URL or local path; empty: nothing to clone
-  string lower_dir = 2;    // the engine's clone, or the tree itself
+  string tree_dir = 2;     // the engine's clone, or the tree itself
   string base_commit = 3;  // empty: leave the tree where it is
   string git = 4;          // empty -> "git"
+  string tar = 5;          // empty -> "tar"; how a container engine exports it
 
-  enum Overlay {
-    // The engine mounts overlayfs itself and binds the merged tree in. The
-    // zero value, because it is the one that needs no capability in the
-    // sandbox.
-    OVERLAY_HOST = 0;
-    // The entrypoint mounts it. Needs SYS_ADMIN, so a sandbox running
-    // submitted build code this way is not a boundary.
-    OVERLAY_IN_SANDBOX = 1;
-    // No overlay: run in lower_dir, or the image carries the tree.
-    OVERLAY_NONE = 2;
-  }
-  Overlay overlay = 5;
-  string upper_dir = 6;       // overlay upper/work parent, and the scratch dir
-  string merged_dir = 7;      // OVERLAY_HOST: where the merge is mounted
-  string mount_binary = 8;    // empty -> "mount"
-  string umount_binary = 9;   // empty -> "umount"
+  // Process engines: the writable directory a step collects files from.
+  // Container engines keep scratch in a volume and ignore this.
+  string scratch_dir = 6;
 
   string staging_dir = 10;  // engine-local; where staged_files are written
   repeated StagedFile staged_files = 11;
 
   enum Patch {
     PATCH_NONE = 0;
-    // git apply --check, then git apply, on the host before anything starts.
+    // git apply --check, then git apply, in tree_dir before anything starts.
+    // Process engines.
     PATCH_HOST = 1;
-    // git apply inside the entrypoint, before the step runs.
+    // git apply inside the entrypoint, before the step runs. The staged
+    // files reach the sandbox read-only at /patches.
     PATCH_IN_ENTRYPOINT = 2;
     // cp -a the staging tree over the workspace, for files that are not a
     // diff.
@@ -122,7 +125,7 @@ message Workspace {
   // Order is preserved: it is the order the flags come out in, and a
   // reordering is a diff nobody can read.
   repeated Mount mounts = 14;
-  string sandbox_work_dir = 15;  // cwd for every step; empty -> the merge root
+  string sandbox_work_dir = 15;  // cwd for every step; empty -> the tree root
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +229,7 @@ message Status {
     OK = 0;
     INVALID_JOB = 1;       // no phases, no image, a staged path that escapes
     TOOL_MISSING = 2;      // the docker/git binary could not be run
-    WORKSPACE_FAILED = 3;  // clone, checkout, overlay, staging, patch
+    WORKSPACE_FAILED = 3;  // clone, checkout, export, staging, patch, load
     NETWORK_FAILED = 4;    // the phase bridge could not be created
     START_FAILED = 5;      // the sandbox would not start
     ENDPOINT_FAILED = 6;   // a peer never published an address

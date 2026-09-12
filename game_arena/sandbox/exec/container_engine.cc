@@ -37,6 +37,50 @@ auto TimeoutOf(const proto::Step &step) -> std::chrono::seconds {
   return std::chrono::seconds(step.timeout_s());
 }
 
+// The job's own volumes: the tree, the staged files, and scratch.
+auto WorkspaceVolume(const proto::Job &job) -> std::string {
+  return SandboxName(job.id(), "ws");
+}
+auto PatchesVolume(const proto::Job &job) -> std::string {
+  return SandboxName(job.id(), "patches");
+}
+auto ScratchVolume(const proto::Job &job) -> std::string {
+  return SandboxName(job.id(), "scratch");
+}
+auto LoaderName(const proto::Job &job) -> std::string {
+  return SandboxName(job.id(), "load");
+}
+
+auto MountArg(const proto::Mount &mount) -> std::string {
+  return mount.kind() == proto::Mount::VOLUME
+             ? sandbox_common::VolumeMount(mount.source(), mount.target(),
+                                           mount.readonly())
+             : sandbox_common::BindMount(mount.source(), mount.target(),
+                                         mount.readonly());
+}
+
+// The `--mount` arguments every step of |job| gets, in order: the tree, the
+// scratch dir, then whatever the job asked for.
+auto WorkspaceMounts(const proto::Job &job) -> std::vector<std::string> {
+  std::vector<std::string> mounts = {
+      sandbox_common::VolumeMount(WorkspaceVolume(job),
+                                  sandbox_common::kWorkspace, false),
+      sandbox_common::VolumeMount(ScratchVolume(job), sandbox_common::kScratch,
+                                  false)};
+  for (const proto::Mount &mount : job.workspace().mounts()) {
+    mounts.push_back(MountArg(mount));
+  }
+  return mounts;
+}
+
+// True when a step needs the staged files at /patches.
+auto AppliesStagedFiles(const proto::Job &job,
+                        const proto::Step &step) -> bool {
+  return step.applies_patches() &&
+         job.workspace().patch() != proto::Workspace::PATCH_NONE &&
+         job.workspace().patch() != proto::Workspace::PATCH_HOST;
+}
+
 void Fail(proto::Status *status, proto::Status::Code code,
           const std::string &message, const std::string &phase,
           const std::string &step) {
@@ -73,8 +117,18 @@ auto ContainerEngine::Run(const proto::Job &job,
     return result;
   }
 
+  if (job.isolation().image().empty()) {
+    Fail(status, proto::Status::INVALID_JOB,
+         "a container job needs an image to load its workspace with", "", "");
+    return result;
+  }
+
   const std::filesystem::path log_dir(job.log_dir());
   if (!PrepareWorkspace(job.workspace(), log_dir, status)) {
+    return result;
+  }
+  if (!LoadWorkspace(job, status)) {
+    RemoveVolumes(job);
     return result;
   }
   if (observer != nullptr) {
@@ -95,7 +149,7 @@ auto ContainerEngine::Run(const proto::Job &job,
     }
   }
 
-  ReleaseWorkspace(job.workspace());
+  RemoveVolumes(job);
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (cancelled_.erase(job.id()) > 0) {
@@ -110,6 +164,146 @@ auto ContainerEngine::Run(const proto::Job &job,
     in_flight_.erase(job.id());
   }
   return result;
+}
+
+auto ContainerEngine::LoadWorkspace(const proto::Job &job,
+                                    proto::Status *status) -> bool {
+  const std::filesystem::path log_dir(job.log_dir());
+  const proto::Workspace &ws = job.workspace();
+
+  // A job killed mid-flight leaves its volumes behind under these names;
+  // clear them so a redelivered job starts from the tree, not from whatever
+  // the last attempt left in it.
+  RemoveVolumes(job);
+  for (const std::string &volume :
+       {WorkspaceVolume(job), PatchesVolume(job), ScratchVolume(job)}) {
+    const sandbox_common::StepResult made = sandbox_common::CreateVolume(
+        config_.docker, volume, log_dir, "volume_" + volume);
+    if (!made.run.started) {
+      Fail(status, proto::Status::TOOL_MISSING,
+           "cannot run docker ('" + config_.docker + "' not found)", "", "");
+      return false;
+    }
+    if (made.run.exit_code != 0) {
+      Fail(status, proto::Status::WORKSPACE_FAILED,
+           "cannot create volume " + volume + ": " + TailOf(made.output, 500),
+           "", "");
+      return false;
+    }
+  }
+
+  // The loader: a container that exists so the daemon has somewhere to copy
+  // into, and that runs once to hand the copied tree to the sandbox's user.
+  // Always, root included: the tar keeps the worker's ownership, and a
+  // sandbox drops every capability, so even root cannot write into someone
+  // else's directory there -- git apply then reports success and lands
+  // nothing. Its mounts are the job's volumes -- the persistent ones too, so
+  // a fresh one is owned by that user before a step tries to write to it --
+  // and never a bind mount, whose ownership is the host's business.
+  const std::string user = job.isolation().run_as_user().empty()
+                               ? "0:0"
+                               : job.isolation().run_as_user();
+  std::string script = "chown -R " + user + " " + sandbox_common::kWorkspace +
+                       " " + sandbox_common::kPatchMount + " " +
+                       sandbox_common::kScratch + "\n";
+  for (const proto::Mount &mount : ws.mounts()) {
+    if (mount.kind() == proto::Mount::VOLUME) {
+      script += "chown " + user + " " + mount.target() + "\n";
+    }
+  }
+  for (const proto::Phase &phase : job.phases()) {
+    for (const proto::Mount &mount : phase.foreground().mounts()) {
+      if (mount.kind() == proto::Mount::VOLUME) {
+        script += "chown " + user + " " + mount.target() + "\n";
+      }
+    }
+  }
+  sandbox_common::DockerRunSpec spec;
+  spec.name = LoaderName(job);
+  spec.image = job.isolation().image();
+  spec.script = script;
+  spec.create = true;
+  spec.network = "none";
+  spec.mounts = {sandbox_common::VolumeMount(WorkspaceVolume(job),
+                                             sandbox_common::kWorkspace, false),
+                 sandbox_common::VolumeMount(
+                     PatchesVolume(job), sandbox_common::kPatchMount, false),
+                 sandbox_common::VolumeMount(ScratchVolume(job),
+                                             sandbox_common::kScratch, false)};
+  for (const proto::Mount &mount : ws.mounts()) {
+    if (mount.kind() == proto::Mount::VOLUME) {
+      spec.mounts.push_back(MountArg(mount));
+    }
+  }
+  for (const proto::Phase &phase : job.phases()) {
+    for (const proto::Mount &mount : phase.foreground().mounts()) {
+      if (mount.kind() == proto::Mount::VOLUME) {
+        spec.mounts.push_back(MountArg(mount));
+      }
+    }
+  }
+
+  const std::string loader = LoaderName(job);
+  sandbox_common::RemoveContainer(config_.docker, loader);
+  const auto fail_load = [&](const std::string &what,
+                             const sandbox_common::StepResult &step) {
+    Fail(status, proto::Status::WORKSPACE_FAILED,
+         what + ": " + TailOf(step.output, 1000), "", "");
+    sandbox_common::RemoveContainer(config_.docker, loader);
+    return false;
+  };
+
+  const sandbox_common::StepResult created = sandbox_common::RunStep(
+      config_.docker, sandbox_common::DockerRunArgs(spec), /*cwd=*/{}, log_dir,
+      "load_create", std::chrono::seconds(120));
+  if (!created.run.started || created.run.exit_code != 0) {
+    return fail_load("cannot create the workspace loader", created);
+  }
+
+  if (!ws.tree_dir().empty()) {
+    const std::filesystem::path archive = log_dir / "tree.tar";
+    if (!ExportTree(ws, archive, log_dir, status)) {
+      sandbox_common::RemoveContainer(config_.docker, loader);
+      return false;
+    }
+    // `docker cp -` takes the tar on stdin: the client reads it, the daemon
+    // unpacks it, and no path has to be visible to both.
+    const sandbox_common::StepResult copied = sandbox_common::RunStep(
+        config_.docker, {"cp", "-", loader + ":" + sandbox_common::kWorkspace},
+        /*cwd=*/{}, log_dir, "load_tree", std::chrono::seconds(600), 0, {}, {},
+        archive);
+    std::error_code ec;
+    std::filesystem::remove(archive, ec);
+    if (!copied.run.started || copied.run.exit_code != 0) {
+      return fail_load("cannot load the tree into the sandbox", copied);
+    }
+  }
+  if (!ws.staging_dir().empty() && !ws.staged_files().empty()) {
+    const sandbox_common::StepResult copied = sandbox_common::RunStep(
+        config_.docker,
+        {"cp", ws.staging_dir() + "/.",
+         loader + ":" + sandbox_common::kPatchMount},
+        /*cwd=*/{}, log_dir, "load_patches", std::chrono::seconds(120));
+    if (!copied.run.started || copied.run.exit_code != 0) {
+      return fail_load("cannot load the staged files into the sandbox", copied);
+    }
+  }
+
+  const sandbox_common::StepResult ran = sandbox_common::RunStep(
+      config_.docker, {"start", "-a", loader}, /*cwd=*/{}, log_dir,
+      "load_start", std::chrono::seconds(600));
+  if (!ran.run.started || ran.run.exit_code != 0) {
+    return fail_load("the workspace loader failed", ran);
+  }
+  sandbox_common::RemoveContainer(config_.docker, loader);
+  return true;
+}
+
+void ContainerEngine::RemoveVolumes(const proto::Job &job) {
+  for (const std::string &volume :
+       {WorkspaceVolume(job), PatchesVolume(job), ScratchVolume(job)}) {
+    sandbox_common::RemoveVolume(config_.docker, volume);
+  }
 }
 
 auto ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
@@ -198,14 +392,19 @@ auto ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     spec.name = SandboxName(job.id(), step.name());
     spec.image = isolation.image();
     spec.script = EntrypointScript(job.workspace(), resolved);
-    spec.rm = !step.keep_after_exit();
+    // Kept when something has to be asked of it afterwards: its logs, or a
+    // file it was told to leave in scratch. Teardown removes it either way.
+    spec.rm = !step.keep_after_exit() && step.collect_files().empty();
     spec.detached = detached;
     spec.network = NetworkArg(isolation, network);
     spec.extra_args = IsolationArgs(isolation);
-    spec.mounts = WorkspaceMounts(job.workspace());
+    spec.mounts = WorkspaceMounts(job);
+    if (AppliesStagedFiles(job, step)) {
+      spec.mounts.push_back(sandbox_common::VolumeMount(
+          PatchesVolume(job), sandbox_common::kPatchMount, true));
+    }
     for (const proto::Mount &mount : step.mounts()) {
-      spec.mounts.push_back(sandbox_common::BindMount(
-          mount.source(), mount.target(), mount.readonly()));
+      spec.mounts.push_back(MountArg(mount));
     }
     return sandbox_common::DockerRunArgs(spec);
   };
@@ -289,8 +488,8 @@ auto ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     background_result->set_stderr(ReadFile(log_dir / (step.name() + ".err")));
   }
 
-  // Whatever the steps were asked to bring home, read off the scratch dir.
-  const std::filesystem::path scratch = ScratchDirOf(job.workspace());
+  // Whatever the steps were asked to bring home, copied out of the exited
+  // container's scratch through the daemon. The container was kept for this.
   for (proto::StepResult &step_result : *result->mutable_steps()) {
     const proto::Step *step = nullptr;
     for (const proto::Step *candidate : steps) {
@@ -303,7 +502,20 @@ auto ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
       continue;
     }
     for (const std::string &file : step->collect_files()) {
-      const std::string content = ReadFile(scratch / file);
+      const std::filesystem::path local =
+          log_dir / "collected" / step->name() / file;
+      std::error_code ec;
+      std::filesystem::create_directories(local.parent_path(), ec);
+      std::filesystem::remove(local, ec);
+      sandbox_common::RunStep(
+          config_.docker,
+          {"cp",
+           SandboxName(job.id(), step->name()) + ":" +
+               std::string(sandbox_common::kScratch) + "/" + file,
+           local.string()},
+          /*cwd=*/{}, log_dir, "collect_" + step->name(),
+          std::chrono::seconds(120));
+      const std::string content = ReadFile(local);
       if (!content.empty()) {
         (*step_result.mutable_collected())[file] = content;
       }

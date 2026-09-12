@@ -50,10 +50,12 @@ remote="$(git -C "${arena}" remote get-url origin 2>/dev/null || echo "")"
 commit="$(git -C "${arena}" rev-parse HEAD)"
 
 mkdir -p "${dest}"
-# Sources only: no bazel-* symlinks, no local state, no lockfile -- the lock
-# is regenerated for the git_override below on the first build.
-tar -C "${src}" --exclude='./bazel-*' --exclude='./.arena' \
-    --exclude='./MODULE.bazel.lock' -cf - . | tar -C "${dest}" -xf -
+# Sources only: no bazel-* symlinks, no local state. The lockfile comes along
+# and stays committed: the sandbox builds with no network, and without a lock
+# bazel re-resolves the module graph against the registry. The first local
+# build updates it for the override below; commit that too.
+tar -C "${src}" --exclude='./bazel-*' --exclude='./.arena' -cf - . \
+    | tar -C "${dest}" -xf -
 
 # Module name and problem id. The game itself keeps its name: it is the rules,
 # not the problem, and renaming it would mean editing C++ the author will
@@ -112,7 +114,6 @@ RC
 cat > "${dest}/.gitignore" <<GI
 bazel-*
 .bazelrc.local
-MODULE.bazel.lock
 GI
 
 git -C "${dest}" init -q

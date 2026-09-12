@@ -86,48 +86,27 @@ auto SandboxRunnerService::Run(grpc::ServerContext *context,
   job.set_log_dir((scratch / "logs").string());
 
   sx::Workspace *workspace = job.mutable_workspace();
-  workspace->set_lower_dir(config_.MountRepoDir().string());
-  workspace->set_upper_dir((config_.MountWorkDir() / container).string());
-  workspace->set_merged_dir((scratch / "merged").string());
+  workspace->set_tree_dir(config_.repo_dir.string());
   workspace->set_staging_dir((scratch / "patches").string());
   workspace->set_sandbox_work_dir(sandbox_common::kWorkspace);
-  if (config_.repo_dir.empty()) {
-    // Nothing to overlay: the image carries the repository.
-    workspace->set_overlay(sx::Workspace::OVERLAY_NONE);
-  } else {
-    workspace->set_overlay(config_.host_overlay
-                               ? sx::Workspace::OVERLAY_HOST
-                               : sx::Workspace::OVERLAY_IN_SANDBOX);
-  }
   // Staged files are copied onto the workspace rather than applied: what a
   // person hands this tool is a tree of files, not a diff.
   workspace->set_patch(sx::Workspace::PATCH_COPY_IN_ENTRYPOINT);
   for (const sx::StagedFile &file : request->files()) {
     *workspace->add_staged_files() = file;
   }
-  sx::Mount *patches = workspace->add_mounts();
-  patches->set_source(
-      (config_.MountWorkDir() / container / "patches").string());
-  patches->set_target(sandbox_common::kPatchMount);
-  patches->set_readonly(true);
 
+  // The same boundary the fleet worker has: nothing to mount, nothing to be
+  // privileged for.
   sx::Isolation *isolation = job.mutable_isolation();
   isolation->set_image(config_.docker_image);
   isolation->set_memory_limit_mb(config_.memory_limit_mb);
   isolation->set_cpus(config_.cpus);
   isolation->set_pids_limit(config_.pids_limit);
   isolation->set_run_as_user(config_.run_as_user);
-  if (workspace->overlay() == sx::Workspace::OVERLAY_IN_SANDBOX) {
-    // The relaxations the in-sandbox mount costs, stated rather than assumed.
-    isolation->set_keep_default_caps(true);
-    isolation->set_allow_new_privileges(true);
-    isolation->set_writable_rootfs(true);
-    isolation->add_add_capabilities("SYS_ADMIN");
-  } else {
-    sx::Tmpfs *tmpfs = isolation->add_tmpfs();
-    tmpfs->set_target("/tmp");
-    tmpfs->set_options("exec");
-  }
+  sx::Tmpfs *tmpfs = isolation->add_tmpfs();
+  tmpfs->set_target("/tmp");
+  tmpfs->set_options("exec");
 
   sx::Phase *phase = job.add_phases();
   phase->set_name("run");

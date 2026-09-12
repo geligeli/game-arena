@@ -1,7 +1,7 @@
 // End-to-end test of SandboxRunnerService against a fake `docker`: a shell
 // script that logs every invocation and emulates container behavior per
 // container name ("*block*" containers run until killed, "*fail3*" exits 3).
-// The overlay mount never actually happens, but the exact argv and entrypoint
+// Nothing is really loaded into a volume, but the exact argv and entrypoint
 // script handed to docker are asserted from the log.
 
 #include <grpcpp/grpcpp.h>
@@ -76,32 +76,28 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
            "\"\n"
            "cmd=\"$1\"; shift || true\n"
            "case \"$cmd\" in\n"
+           // The staged files reach the sandbox by `docker cp` from a
+           // directory this process wrote; the fake reports what it finds
+           // there, which is the difference between a loaded patch set and an
+           // empty one.
+           "  cp)\n"
+           "    case \"$2\" in\n"
+           "      *:/patches) src=\"${1%/.}\"\n"
+           "        echo \"patchsrc $(ls \"$src\" | tr '\\n' ' ')\" >> \"" +
+           (root_ / "docker.log").string() +
+           "\";;\n"
+           "    esac\n"
+           "    exit 0;;\n"
+           "  create|start|volume|rm|network|wait|logs)\n"
+           "    exit 0;;\n"
            "  run)\n"
-           "    name=\"\"; patchsrc=\"\"\n"
+           "    name=\"\"\n"
            "    while [ $# -gt 0 ]; do\n"
            "      case \"$1\" in\n"
            "        --name) name=\"$2\"; shift 2;;\n"
-           // The daemon resolves bind sources itself, so the fake reports
-           // what it finds at the one docker was pointed at: that is the
-           // difference between a mounted patch set and an empty directory.
-           "        --mount)\n"
-           "          case \"$2\" in\n"
-           "            *target=/patches,*) patchsrc=\"${2#*source=}\"\n"
-           "              patchsrc=\"${patchsrc%%,*}\";;\n"
-           "          esac\n"
-           "          shift 2;;\n"
            "        *) shift;;\n"
            "      esac\n"
            "    done\n"
-           "    if [ -d \"$patchsrc\" ]; then\n"
-           "      echo \"patchsrc $(ls \"$patchsrc\" | tr '\\n' ' ')\" >> \"" +
-           (root_ / "docker.log").string() +
-           "\"\n"
-           "    else\n"
-           "      echo \"patchsrc MISSING\" >> \"" +
-           (root_ / "docker.log").string() +
-           "\"\n"
-           "    fi\n"
            "    case \"$name\" in\n"
            "      *block*)\n"
            // bash execs a sole command, which would drop the marker from the
@@ -218,72 +214,35 @@ TEST_F(SandboxRunnerIntegrationTest, RunCapturesOutputAndInvocation) {
   EXPECT_EQ(response.stdout(), "fake stdout sbr-basic-1\n");
   EXPECT_EQ(response.stderr(), "fake stderr sbr-basic-1\n");
 
-  // The docker invocation and the entrypoint script, as logged by the fake.
+  // The docker invocations and the entrypoint script, as logged by the fake.
+  // The tree and the staged files are loaded into the run's own volumes
+  // through the daemon: no bind mount, no overlay, no capability -- the same
+  // boundary the fleet worker has, and no host path the daemon has to see.
   const std::string log = DockerLog();
-  ExpectLogContains(log, "--name sbr-basic-1");
-  ExpectLogContains(log, "--cap-add SYS_ADMIN");
+  ExpectLogContains(log, "docker cp - sbr-basic-1-load:/workspace");
   ExpectLogContains(log,
-                    "--mount type=bind,source=" + (root_ / "repo").string() +
-                        ",target=/repo_lower,readonly");
-  ExpectLogContains(log,
-                    "--mount type=bind,source=" +
+                    "docker cp " +
                         (root_ / "work" / "sbr-basic-1" / "patches").string() +
-                        ",target=/patches,readonly");
+                        "/. sbr-basic-1-load:/patches");
   // Docker was pointed at a directory that really holds the patches, not one
   // it had to conjure up.
   ExpectLogContains(log, "patchsrc problem");
+  ExpectLogContains(log, "--name sbr-basic-1 ");
+  ExpectLogContains(log, "--cap-drop ALL");
+  EXPECT_EQ(log.find("SYS_ADMIN"), std::string::npos) << log;
+  EXPECT_EQ(log.find("type=bind"), std::string::npos) << log;
+  ExpectLogContains(log,
+                    "--mount type=volume,source=sbr-basic-1-ws,"
+                    "target=/workspace");
+  ExpectLogContains(log,
+                    "--mount type=volume,source=sbr-basic-1-patches,"
+                    "target=/patches,readonly");
   ExpectLogContains(log, "--entrypoint /bin/sh fake-image:1 -c");
-  ExpectLogContains(log, "mount -t overlay overlay -o lowerdir=/repo_lower,");
+  EXPECT_EQ(log.find("mount -t overlay"), std::string::npos) << log;
+  ExpectLogContains(log, "cp -a /patches/. /workspace/");
   ExpectLogContains(log,
                     "exec bazel run '//problem/app:target' -- "
                     "'--flag=1' 'a b'");
-}
-
-// Docker-outside-of-docker: the daemon resolves bind sources in a tree this
-// process cannot see, so the host paths must reach docker's argv -- and only
-// docker's argv. The patches themselves are still written under work_dir,
-// where this process can write them.
-TEST_F(SandboxRunnerIntegrationTest, HostPathsRedirectOnlyTheBindMounts) {
-  SandboxRunnerConfig config;
-  config.docker_image = "fake-image:1";
-  config.repo_dir = root_ / "repo";
-  config.work_dir = root_ / "work";
-  config.host_repo_dir = "/host/view/repo";
-  config.host_work_dir = "/host/view/work";
-  config.timeout = std::chrono::seconds(2);
-  // Called directly: the RPC handler ignores its ServerContext, and a second
-  // service on the shared stub would need a second server.
-  sandbox_exec::ContainerEngineConfig local_engine_config;
-  local_engine_config.docker = fake_docker_.string();
-  sandbox_exec::ContainerEngine local_engine(local_engine_config);
-  SandboxRunnerService service(std::move(config), &local_engine);
-
-  proto::RunRequest request;
-  request.set_id("hostpaths-1");
-  SetCommand(&request, "//x:y", {});
-  sx::StagedFile *f_only_cc = request.add_files();
-  f_only_cc->set_path("only.cc");
-  f_only_cc->set_content("int only;");
-  proto::RunResponse response;
-  const grpc::Status status = service.Run(nullptr, &request, &response);
-
-  ASSERT_TRUE(status.ok()) << status.error_message();
-  const std::string log = DockerLog();
-  ExpectLogContains(
-      log,
-      "--mount type=bind,source=/host/view/repo,target=/repo_lower,"
-      "readonly");
-  ExpectLogContains(
-      log,
-      "--mount type=bind,source=/host/view/work/sbr-hostpaths-1/patches,"
-      "target=/patches,readonly");
-  // The overlay's lower dir is a fixed mount point, so the host path never
-  // leaks into the in-container script.
-  ExpectLogContains(log, "mount -t overlay overlay -o lowerdir=/repo_lower,");
-  // The fake docker resolves that source the way a real daemon would -- in
-  // its own filesystem, where the host path is absent. That asymmetry is
-  // precisely why main.cc cannot verify a --host_* path locally.
-  ExpectLogContains(log, "patchsrc MISSING");
 }
 
 TEST_F(SandboxRunnerIntegrationTest, RunPropagatesExitCode) {
@@ -339,7 +298,7 @@ TEST_F(SandboxRunnerIntegrationTest, KillAbortsRunMidFlight) {
   proto::RunResponse response;
   grpc::Status run_status;
   std::thread runner([&] { run_status = Run(request, &response); });
-  WaitForLog("--name sbr-block-kill");
+  WaitForLog("docker run --rm --name sbr-block-kill ");
 
   ASSERT_TRUE(Kill("block-kill").ok());
 
@@ -360,7 +319,7 @@ TEST_F(SandboxRunnerIntegrationTest, DuplicateIdentifierIsRejected) {
   proto::RunResponse background_response;
   std::thread runner(
       [&] { grpc::Status unused = Run(request, &background_response); });
-  WaitForLog("--name sbr-block-dup");
+  WaitForLog("docker run --rm --name sbr-block-dup ");
 
   proto::RunResponse response;
   EXPECT_EQ(Run(request, &response).error_code(),

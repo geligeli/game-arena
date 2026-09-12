@@ -1,8 +1,9 @@
-// One builder against the four scripts it replaces.
+// One builder against the scripts it replaces.
 //
-// The expectations here are lifted from the hand-assembled versions in
-// sandbox/worker (build, run, grade) and sandbox/runner (copy-and-run), so
-// this file is the evidence that collapsing them changed no emitted byte.
+// The expectations here descend from the hand-assembled versions in
+// sandbox/worker (build, run, grade) and sandbox/runner (copy-and-run). With
+// the tree copied into a volume there is no overlay to assemble any more,
+// so the prelude is one line.
 
 #include "game_arena/sandbox/exec/entrypoint.h"
 
@@ -20,18 +21,15 @@ auto Word(const std::string &text, bool verbatim) -> proto::Token {
   return token;
 }
 
-// A workspace whose overlay the entrypoint assembles itself. The host-mounted
-// form leaves nothing for the script to do, so this is the one with a script
-// worth asserting on.
-auto InSandboxOverlay() -> proto::Workspace {
+// A workspace whose patches git applies inside the sandbox.
+auto PatchedInSandbox() -> proto::Workspace {
   proto::Workspace ws;
-  ws.set_overlay(proto::Workspace::OVERLAY_IN_SANDBOX);
   ws.set_patch(proto::Workspace::PATCH_IN_ENTRYPOINT);
   return ws;
 }
 
 TEST(EntrypointScriptTest, ReproducesTheBuildScript) {
-  proto::Workspace ws = InSandboxOverlay();
+  proto::Workspace ws = PatchedInSandbox();
   ws.add_patch_files("c-1.diff");
 
   proto::Step step;
@@ -46,12 +44,8 @@ TEST(EntrypointScriptTest, ReproducesTheBuildScript) {
   const std::string script = EntrypointScript(ws, step);
 
   EXPECT_NE(script.find("set -eu"), std::string::npos);
-  EXPECT_NE(script.find("mkdir -p /sandbox/upper /sandbox/work /workspace"),
-            std::string::npos);
-  EXPECT_NE(script.find("mount -t overlay overlay -o lowerdir=/repo_lower,"
-                        "upperdir=/sandbox/upper,workdir=/sandbox/work "
-                        "/workspace"),
-            std::string::npos);
+  EXPECT_NE(script.find("export HOME=/sandbox"), std::string::npos);
+  EXPECT_EQ(script.find("mount"), std::string::npos) << script;
   EXPECT_NE(script.find("git apply '/patches/c-1.diff'"), std::string::npos)
       << script;
   // The interleaving of quoted and unquoted words is why a token carries its
@@ -66,7 +60,7 @@ TEST(EntrypointScriptTest, ReproducesTheBuildScript) {
 }
 
 TEST(EntrypointScriptTest, AppliesEverySidesPatchBeforeTheCommand) {
-  proto::Workspace ws = InSandboxOverlay();
+  proto::Workspace ws = PatchedInSandbox();
   ws.add_patch_files("alpha.diff");
   ws.add_patch_files("beta.diff");
 
@@ -90,8 +84,8 @@ TEST(EntrypointScriptTest, AppliesEverySidesPatchBeforeTheCommand) {
 
 TEST(EntrypointScriptTest, AStepThatDoesNotPatchInheritsTheTree) {
   // The graded run's container: the build container already applied the
-  // patch, and it persists in the overlay upper.
-  proto::Workspace ws = InSandboxOverlay();
+  // patch, and it persists in the workspace volume.
+  proto::Workspace ws = PatchedInSandbox();
   ws.add_patch_files("c-1.diff");
 
   proto::Step step;
@@ -105,7 +99,6 @@ TEST(EntrypointScriptTest, AStepThatDoesNotPatchInheritsTheTree) {
 
 TEST(EntrypointScriptTest, ReproducesTheRunScript) {
   proto::Workspace ws;
-  ws.set_overlay(proto::Workspace::OVERLAY_IN_SANDBOX);
 
   proto::Step step;
   *step.add_argv() = Word("./bazel-bin/problem/x/c-1/bot", false);
@@ -119,7 +112,7 @@ TEST(EntrypointScriptTest, ReproducesTheRunScript) {
 }
 
 TEST(EntrypointScriptTest, ReproducesTheGradeScriptsExportedReportPath) {
-  proto::Workspace ws = InSandboxOverlay();
+  proto::Workspace ws = PatchedInSandbox();
 
   proto::Step step;
   (*step.mutable_env())["ARENA_REPORT"] = "/sandbox/report.json";
@@ -137,7 +130,6 @@ TEST(EntrypointScriptTest, ReproducesTheGradeScriptsExportedReportPath) {
 
 TEST(EntrypointScriptTest, ReproducesTheStandaloneRunnersCopyAndRun) {
   proto::Workspace ws;
-  ws.set_overlay(proto::Workspace::OVERLAY_IN_SANDBOX);
   ws.set_patch(proto::Workspace::PATCH_COPY_IN_ENTRYPOINT);
 
   proto::Step step;
@@ -158,16 +150,16 @@ TEST(EntrypointScriptTest, ReproducesTheStandaloneRunnersCopyAndRun) {
       << script;
 }
 
-TEST(EntrypointScriptTest, AHostMountedOverlayLeavesNothingToAssemble) {
+TEST(EntrypointScriptTest, ThereIsNothingToAssemble) {
   proto::Workspace ws;
-  ws.set_overlay(proto::Workspace::OVERLAY_HOST);
 
   proto::Step step;
   *step.add_argv() = Word("./bot", false);
 
   const std::string script = EntrypointScript(ws, step);
   EXPECT_EQ(script.find("mount"), std::string::npos) << script;
-  // Still a writable HOME, which bazel insists on.
+  EXPECT_EQ(script.find("mkdir"), std::string::npos) << script;
+  // Only a writable HOME, which bazel insists on.
   EXPECT_NE(script.find("export HOME=/sandbox"), std::string::npos);
 }
 

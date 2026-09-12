@@ -40,7 +40,8 @@ auto RunStep(const std::string &executable,
              std::chrono::seconds timeout,
              std::size_t address_space_limit_bytes = 0,
              const std::function<void(pid_t)> &on_started = {},
-             const std::vector<std::string> &env = {}) -> StepResult;
+             const std::vector<std::string> &env = {},
+             const std::filesystem::path &stdin_path = {}) -> StepResult;
 
 }  // namespace sandbox_common
 

@@ -81,6 +81,12 @@ claims in `ARENA.md` true of the dev runner as well as the fleet; before it,
 the hardening was a private method of one backend and the runner was the
 un-hardened counterexample.
 
+The container engine never bind-mounts anything of its own: the tree and the
+patches are loaded into per-job volumes through the daemon and the caches
+persist in named volumes, so a worker is "anything with a docker socket" and
+no sandbox needs a capability. `Mount::BIND` exists only as a host's opt-in
+for its caches. Do not add a bind mount to make something work.
+
 ## Build / test / run
 
 ```sh

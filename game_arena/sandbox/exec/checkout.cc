@@ -49,8 +49,12 @@ auto SyncToCommit(const std::string &git, const std::filesystem::path &repo,
       std::chrono::seconds(600));
   (void)fetch;  // A stale mirror is survivable; the checkout below decides.
 
+  // "HEAD" in a clone means the clone's own tip, which the fetch above did
+  // not move: what a caller who says HEAD means is the source's tip, and in
+  // a clone this engine made that is origin/HEAD.
+  const std::string target = commit == "HEAD" ? "origin/HEAD" : commit;
   const sandbox_common::StepResult checkout =
-      sandbox_common::RunStep(git, {"checkout", "--force", commit}, repo,
+      sandbox_common::RunStep(git, {"checkout", "--force", target}, repo,
                               log_dir, "checkout", std::chrono::seconds(300));
   if (!checkout.run.started || checkout.run.exit_code != 0) {
     *error =

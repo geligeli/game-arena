@@ -4,10 +4,7 @@
 #include <filesystem>
 #include <string>
 #include <system_error>
-#include <vector>
 
-#include "game_arena/common/process/process.h"
-#include "game_arena/sandbox/common/docker.h"
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/common/step.h"
 #include "game_arena/sandbox/common/text.h"
@@ -17,7 +14,6 @@ namespace sandbox_exec {
 
 namespace {
 
-using sandbox_common::ReadFile;
 using sandbox_common::TailOf;
 
 auto Fail(proto::Status *status, proto::Status::Code code,
@@ -31,12 +27,8 @@ auto GitOf(const proto::Workspace &ws) -> std::string {
   return ws.git().empty() ? "git" : ws.git();
 }
 
-auto MountBinaryOf(const proto::Workspace &ws) -> std::string {
-  return ws.mount_binary().empty() ? "mount" : ws.mount_binary();
-}
-
-auto UmountBinaryOf(const proto::Workspace &ws) -> std::string {
-  return ws.umount_binary().empty() ? "umount" : ws.umount_binary();
+auto TarOf(const proto::Workspace &ws) -> std::string {
+  return ws.tar().empty() ? "tar" : ws.tar();
 }
 
 auto WriteStagedFiles(const proto::Workspace &ws,
@@ -66,55 +58,10 @@ auto WriteStagedFiles(const proto::Workspace &ws,
   return true;
 }
 
-auto MountOverlay(const proto::Workspace &ws,
-                  const std::filesystem::path &log_dir,
-                  proto::Status *status) -> bool {
-  // A job killed mid-flight leaves one mounted; clear it before remounting.
-  ReleaseWorkspace(ws);
-
-  std::error_code ec;
-  const std::filesystem::path upper =
-      std::filesystem::path(ws.upper_dir()) / "upper";
-  const std::filesystem::path work =
-      std::filesystem::path(ws.upper_dir()) / "work";
-  std::filesystem::create_directories(upper, ec);
-  std::filesystem::create_directories(work, ec);
-  std::filesystem::create_directories(ws.merged_dir(), ec);
-  if (ec) {
-    return Fail(status, proto::Status::WORKSPACE_FAILED,
-                "cannot create overlay directories: " + ec.message());
-  }
-
-  const std::string options = "lowerdir=" + ws.lower_dir() +
-                              ",upperdir=" + upper.string() +
-                              ",workdir=" + work.string();
-  const sandbox_common::StepResult mounted = sandbox_common::RunStep(
-      MountBinaryOf(ws),
-      {"-t", "overlay", "overlay", "-o", options, ws.merged_dir()},
-      /*cwd=*/{}, log_dir, "mount", std::chrono::seconds(60));
-  if (!mounted.run.started || mounted.run.exit_code != 0) {
-    // No fallback to the in-sandbox mount on purpose. That form needs
-    // CAP_SYS_ADMIN, and quietly running submitted build code with it because
-    // a mount failed is exactly the kind of downgrade nobody notices.
-    return Fail(
-        status, proto::Status::WORKSPACE_FAILED,
-        "cannot mount the workspace overlay on the host: " +
-            TailOf(ReadFile(log_dir / "mount.err"), 500) +
-            " -- the host needs to be able to mount overlayfs (root, or a "
-            "user namespace). Set sandbox.host_overlay to false to use the "
-            "in-container mount instead, which requires CAP_SYS_ADMIN and is "
-            "not a boundary");
-  }
-  return true;
-}
-
 auto ApplyHostPatches(const proto::Workspace &ws,
                       const std::filesystem::path &log_dir,
                       proto::Status *status) -> bool {
-  const std::filesystem::path tree =
-      ws.overlay() == proto::Workspace::OVERLAY_HOST
-          ? std::filesystem::path(ws.merged_dir())
-          : std::filesystem::path(ws.lower_dir());
+  const std::filesystem::path tree(ws.tree_dir());
   for (const std::string &name : ws.patch_files()) {
     const std::filesystem::path diff =
         std::filesystem::path(ws.staging_dir()) / name;
@@ -157,10 +104,6 @@ auto IsSafeStagedPath(const std::string &path) -> bool {
   return true;
 }
 
-auto ScratchDirOf(const proto::Workspace &ws) -> std::filesystem::path {
-  return std::filesystem::path(ws.upper_dir());
-}
-
 auto PrepareWorkspace(const proto::Workspace &ws,
                       const std::filesystem::path &log_dir,
                       proto::Status *status) -> bool {
@@ -169,26 +112,22 @@ auto PrepareWorkspace(const proto::Workspace &ws,
 
   if (!ws.source_repo().empty()) {
     std::string error;
-    if (!EnsureClone(GitOf(ws), ws.source_repo(), ws.lower_dir(), log_dir,
+    if (!EnsureClone(GitOf(ws), ws.source_repo(), ws.tree_dir(), log_dir,
                      &error)) {
       return Fail(status, proto::Status::WORKSPACE_FAILED, error);
     }
   }
   if (!ws.base_commit().empty()) {
     std::string error;
-    if (!SyncToCommit(GitOf(ws), ws.lower_dir(), ws.base_commit(), log_dir,
+    if (!SyncToCommit(GitOf(ws), ws.tree_dir(), ws.base_commit(), log_dir,
                       &error)) {
       return Fail(status, proto::Status::WORKSPACE_FAILED, error);
     }
   }
-  if (ws.overlay() == proto::Workspace::OVERLAY_HOST &&
-      !MountOverlay(ws, log_dir, status)) {
-    return false;
-  }
-  // The scratch dir is where a step collects files from, so it has to exist
-  // even when there is no overlay to build it as a side effect.
-  if (!ws.upper_dir().empty()) {
-    std::filesystem::create_directories(ws.upper_dir(), ec);
+  // Where a process engine's steps collect files from; a container engine
+  // keeps its scratch in a volume and leaves this empty.
+  if (!ws.scratch_dir().empty()) {
+    std::filesystem::create_directories(ws.scratch_dir(), ec);
   }
   if (!WriteStagedFiles(ws, status)) {
     return false;
@@ -200,45 +139,27 @@ auto PrepareWorkspace(const proto::Workspace &ws,
   return true;
 }
 
-void ReleaseWorkspace(const proto::Workspace &ws) {
-  if (ws.overlay() != proto::Workspace::OVERLAY_HOST ||
-      ws.merged_dir().empty()) {
-    return;
+auto ExportTree(const proto::Workspace &ws,
+                const std::filesystem::path &archive,
+                const std::filesystem::path &log_dir,
+                proto::Status *status) -> bool {
+  std::error_code ec;
+  std::filesystem::create_directories(archive.parent_path(), ec);
+  // Without .git: the sandbox builds a tree, it does not need the history,
+  // and for a --local clone the objects are hardlinks into the source repo.
+  const sandbox_common::StepResult exported = sandbox_common::RunStep(
+      TarOf(ws),
+      {"--exclude=./.git", "-cf", archive.string(), "-C", ws.tree_dir(), "."},
+      /*cwd=*/{}, log_dir, "export", std::chrono::seconds(600));
+  if (!exported.run.started) {
+    return Fail(status, proto::Status::TOOL_MISSING,
+                "cannot run tar ('" + TarOf(ws) + "' not found)");
   }
-  process::RunOptions run;
-  run.timeout = std::chrono::seconds(60);
-  process::RunCommand(UmountBinaryOf(ws), {ws.merged_dir()}, run);
-}
-
-auto WorkspaceMounts(const proto::Workspace &ws) -> std::vector<std::string> {
-  std::vector<std::string> mounts;
-  switch (ws.overlay()) {
-    case proto::Workspace::OVERLAY_HOST:
-      // The merge is already assembled; the sandbox just gets it.
-      mounts.push_back(sandbox_common::BindMount(
-          ws.merged_dir(), sandbox_common::kWorkspace, false));
-      break;
-    case proto::Workspace::OVERLAY_IN_SANDBOX:
-      // The entrypoint assembles it, so it needs the pieces instead.
-      mounts.push_back(sandbox_common::BindMount(
-          ws.lower_dir(), sandbox_common::kLowerMount, true));
-      break;
-    case proto::Workspace::OVERLAY_NONE:
-      mounts.push_back(sandbox_common::BindMount(
-          ws.lower_dir(), sandbox_common::kWorkspace, false));
-      break;
-    default:
-      break;
+  if (exported.run.exit_code != 0) {
+    return Fail(status, proto::Status::WORKSPACE_FAILED,
+                "cannot export the tree: " + TailOf(exported.output, 1000));
   }
-  if (!ws.upper_dir().empty()) {
-    mounts.push_back(sandbox_common::BindMount(
-        ws.upper_dir(), sandbox_common::kScratch, false));
-  }
-  for (const proto::Mount &mount : ws.mounts()) {
-    mounts.push_back(sandbox_common::BindMount(mount.source(), mount.target(),
-                                               mount.readonly()));
-  }
-  return mounts;
+  return true;
 }
 
 }  // namespace sandbox_exec

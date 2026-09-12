@@ -62,9 +62,26 @@ namespace {
 //                         clone.
 //   ARENA_WORKER_ID       stable across reconnects; defaults to
 //                         <hostname>-<pid>.
+//   ARENA_VOLUME_PREFIX   names the docker volumes a container's bazel
+//                         output bases and disk cache live in; defaults to
+//                         arena-<hostname>. Two workers sharing one daemon
+//                         must differ here or share caches by accident.
+//   ARENA_BIND_OUTPUT_BASE, ARENA_BIND_DISK_CACHE
+//                         optional. Host directories, as the docker daemon
+//                         resolves them, to bind-mount for those caches
+//                         instead of volumes: a local disk you can inspect
+//                         or share with your own builds. Nothing needs them.
 // How long to wait before re-attaching. Not configurable: nothing about a
 // problem or a host makes a different number right.
 constexpr std::chrono::seconds kReconnectDelay{5};
+
+auto Hostname() -> std::string {
+  char name[256] = {};
+  if (::gethostname(name, sizeof(name) - 1) != 0) {
+    return "host";
+  }
+  return name;
+}
 
 auto EnvOr(const char *name, const std::string &fallback) -> std::string {
   const char *value = std::getenv(name);
@@ -248,6 +265,10 @@ auto main(int argc, char **argv) -> int {
   OrderJobConfig job_config;
   job_config.work_dir = work_dir;
   job_config.disk_cache = work_dir / "disk_cache";
+  job_config.volume_prefix =
+      EnvOr("ARENA_VOLUME_PREFIX", "arena-" + Hostname());
+  job_config.bind_output_base_dir = EnvOr("ARENA_BIND_OUTPUT_BASE", "");
+  job_config.bind_disk_cache_dir = EnvOr("ARENA_BIND_DISK_CACHE", "");
 
   // Both engines, always. Which one an order runs on is the problem's
   // decision -- it names an image or it does not -- so a worker does not get

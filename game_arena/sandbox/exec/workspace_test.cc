@@ -1,4 +1,4 @@
-// Preparing a tree, and the one failure that must never be recoverable.
+// Preparing a tree, and exporting it for a container to load.
 
 #include "game_arena/sandbox/exec/workspace.h"
 
@@ -51,9 +51,8 @@ class WorkspaceTest : public ::testing::Test {
 
   auto BaseWorkspace() -> proto::Workspace {
     proto::Workspace ws;
-    ws.set_lower_dir((root_ / "lower").string());
-    ws.set_upper_dir((root_ / "overlay").string());
-    ws.set_merged_dir((root_ / "merged").string());
+    ws.set_tree_dir((root_ / "lower").string());
+    ws.set_scratch_dir((root_ / "scratch").string());
     ws.set_staging_dir((root_ / "staging").string());
     return ws;
   }
@@ -73,7 +72,6 @@ TEST_F(WorkspaceTest, RejectsAStagedPathThatEscapes) {
 
 TEST_F(WorkspaceTest, WritesStagedFilesAndRefusesAnEscapingOne) {
   proto::Workspace ws = BaseWorkspace();
-  ws.set_overlay(proto::Workspace::OVERLAY_NONE);
   proto::StagedFile *file = ws.add_staged_files();
   file->set_path("c-1.diff");
   file->set_content("a patch");
@@ -92,72 +90,74 @@ TEST_F(WorkspaceTest, WritesStagedFilesAndRefusesAnEscapingOne) {
   EXPECT_EQ(refused.code(), proto::Status::INVALID_JOB);
 }
 
-TEST_F(WorkspaceTest, MountsTheOverlayOnTheHost) {
+TEST_F(WorkspaceTest, HeadMeansTheSourcesTipNotTheClones) {
   proto::Workspace ws = BaseWorkspace();
-  ws.set_overlay(proto::Workspace::OVERLAY_HOST);
-  ws.set_mount_binary(FakeTool("mount", 0));
-  ws.set_umount_binary(FakeTool("umount", 0));
+  ws.set_git(FakeTool("git", 0));
+  ws.set_base_commit("HEAD");
 
   proto::Status status;
   ASSERT_TRUE(PrepareWorkspace(ws, root_ / "logs", &status))
       << status.message();
+  // A clone's own HEAD never moves; after the fetch, the tip is origin/HEAD.
+  EXPECT_NE(ToolLog().find("git checkout --force origin/HEAD"),
+            std::string::npos)
+      << ToolLog();
+  EXPECT_NE(ToolLog().find("git clean -fdx"), std::string::npos);
+}
 
-  EXPECT_NE(ToolLog().find("mount -t overlay overlay -o lowerdir=" +
-                           (root_ / "lower").string() + ",upperdir=" +
-                           (root_ / "overlay" / "upper").string() +
-                           ",workdir=" + (root_ / "overlay" / "work").string() +
-                           " " + (root_ / "merged").string()),
+TEST_F(WorkspaceTest, CreatesTheScratchDir) {
+  proto::Workspace ws = BaseWorkspace();
+  proto::Status status;
+  ASSERT_TRUE(PrepareWorkspace(ws, root_ / "logs", &status))
+      << status.message();
+  EXPECT_TRUE(std::filesystem::is_directory(root_ / "scratch"));
+}
+
+TEST_F(WorkspaceTest, ExportsTheTreeWithoutItsGitDir) {
+  proto::Workspace ws = BaseWorkspace();
+  ws.set_tar(FakeTool("tar", 0));
+
+  proto::Status status;
+  ASSERT_TRUE(
+      ExportTree(ws, root_ / "out" / "tree.tar", root_ / "logs", &status))
+      << status.message();
+  EXPECT_NE(ToolLog().find("tar --exclude=./.git -cf " +
+                           (root_ / "out" / "tree.tar").string() + " -C " +
+                           (root_ / "lower").string() + " ."),
             std::string::npos)
       << ToolLog();
 }
 
-TEST_F(WorkspaceTest, AFailedHostOverlayFailsTheJobAndNeverDowngrades) {
+TEST_F(WorkspaceTest, AFailedExportIsAWorkspaceFailure) {
   proto::Workspace ws = BaseWorkspace();
-  ws.set_overlay(proto::Workspace::OVERLAY_HOST);
-  ws.set_mount_binary(FakeTool("mount", 1));
-  ws.set_umount_binary(FakeTool("umount", 0));
+  ws.set_tar(FakeTool("tar", 1));
 
   proto::Status status;
-  EXPECT_FALSE(PrepareWorkspace(ws, root_ / "logs", &status));
+  EXPECT_FALSE(
+      ExportTree(ws, root_ / "out" / "tree.tar", root_ / "logs", &status));
   EXPECT_EQ(status.code(), proto::Status::WORKSPACE_FAILED);
-  // The message has to say what it costs to opt out, because the thing a
-  // caller must not do is retry in the in-sandbox form.
-  EXPECT_NE(status.message().find("host_overlay"), std::string::npos)
+  EXPECT_NE(status.message().find("tar said no"), std::string::npos)
       << status.message();
-  EXPECT_NE(status.message().find("CAP_SYS_ADMIN"), std::string::npos);
-  // And the workspace stays in the mode it was asked for: no silent switch to
-  // the privileged form.
-  EXPECT_EQ(ws.overlay(), proto::Workspace::OVERLAY_HOST);
 }
 
-TEST_F(WorkspaceTest, MountListPutsTheWorkspaceRootFirst) {
+TEST_F(WorkspaceTest, ARealTarExportsARealTree) {
+  std::ofstream(root_ / "lower" / "hello.txt") << "hi";
+  std::filesystem::create_directories(root_ / "lower" / ".git");
+  std::ofstream(root_ / "lower" / ".git" / "HEAD") << "ref";
   proto::Workspace ws = BaseWorkspace();
-  ws.set_overlay(proto::Workspace::OVERLAY_HOST);
-  proto::Mount *extra = ws.add_mounts();
-  extra->set_source("/host/cache");
-  extra->set_target("/disk_cache");
 
-  const std::vector<std::string> mounts = WorkspaceMounts(ws);
-  ASSERT_EQ(mounts.size(), 3u);
-  EXPECT_NE(mounts[0].find("target=/workspace"), std::string::npos);
-  EXPECT_NE(mounts[0].find((root_ / "merged").string()), std::string::npos);
-  EXPECT_NE(mounts[1].find("target=/sandbox"), std::string::npos);
-  EXPECT_NE(mounts[2].find("target=/disk_cache"), std::string::npos);
-}
-
-TEST_F(WorkspaceTest, AnInSandboxOverlayGetsTheLowerDirReadOnlyInstead) {
-  proto::Workspace ws = BaseWorkspace();
-  ws.set_overlay(proto::Workspace::OVERLAY_IN_SANDBOX);
-
-  const std::vector<std::string> mounts = WorkspaceMounts(ws);
-  ASSERT_GE(mounts.size(), 1u);
-  EXPECT_NE(mounts[0].find("target=/repo_lower"), std::string::npos);
-  EXPECT_NE(mounts[0].find("readonly"), std::string::npos);
+  proto::Status status;
+  ASSERT_TRUE(ExportTree(ws, root_ / "tree.tar", root_ / "logs", &status))
+      << status.message();
+  std::ifstream in(root_ / "tree.tar", std::ios::binary);
+  const std::string archive{std::istreambuf_iterator<char>(in),
+                            std::istreambuf_iterator<char>()};
+  EXPECT_NE(archive.find("hello.txt"), std::string::npos);
+  EXPECT_EQ(archive.find(".git/HEAD"), std::string::npos);
 }
 
 TEST_F(WorkspaceTest, AppliesAHostPatchWithACheckFirst) {
   proto::Workspace ws = BaseWorkspace();
-  ws.set_overlay(proto::Workspace::OVERLAY_NONE);
   ws.set_git(FakeTool("git", 0));
   ws.set_patch(proto::Workspace::PATCH_HOST);
   ws.add_patch_files("c-1.diff");
@@ -182,7 +182,6 @@ TEST_F(WorkspaceTest, AppliesAHostPatchWithACheckFirst) {
 
 TEST_F(WorkspaceTest, APatchThatDoesNotApplyIsAWorkspaceFailure) {
   proto::Workspace ws = BaseWorkspace();
-  ws.set_overlay(proto::Workspace::OVERLAY_NONE);
   ws.set_git(FakeTool("git", 1));
   ws.set_patch(proto::Workspace::PATCH_HOST);
   ws.add_patch_files("c-1.diff");

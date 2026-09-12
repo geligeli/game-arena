@@ -55,17 +55,27 @@ auto OrderRunner::Warmup(int slots, std::string *error) -> bool {
   // engine's PrepareWorkspace, which is idempotent and therefore pays for
   // itself once per slot rather than once per order.
   //
-  // These still exist up front because docker conjures a missing bind-mount
-  // source up as an empty directory owned by root, which is a confusing way
-  // to find out the path was wrong.
+  // The process engine's state is all under work_dir. A container's lives in
+  // docker volumes, unless this host opted into bind mounts for its caches;
+  // those directories are created here when they are ours to create,
+  // because docker conjures a missing bind-mount source up as an empty
+  // directory owned by root, which is a confusing way to find out the path
+  // was wrong.
   std::error_code ec;
   std::filesystem::create_directories(config_.disk_cache, ec);
+  if (!config_.bind_disk_cache_dir.empty()) {
+    std::filesystem::create_directories(config_.bind_disk_cache_dir, ec);
+  }
   for (int slot = 0; slot < slots; ++slot) {
     const std::filesystem::path slot_dir =
         config_.work_dir / ("slot" + std::to_string(slot));
-    std::filesystem::create_directories(slot_dir / "overlay", ec);
     std::filesystem::create_directories(slot_dir / "bazel_output_base", ec);
+    std::filesystem::create_directories(slot_dir / "scratch", ec);
     std::filesystem::create_directories(SlotLogDir(config_, slot), ec);
+    if (!config_.bind_output_base_dir.empty()) {
+      std::filesystem::create_directories(
+          config_.bind_output_base_dir / ("slot" + std::to_string(slot)), ec);
+    }
     if (ec) {
       *error = "cannot create slot directories under " +
                config_.work_dir.string() + ": " + ec.message();

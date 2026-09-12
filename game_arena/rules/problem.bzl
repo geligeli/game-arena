@@ -18,7 +18,9 @@ That call defines, in the calling package:
                    and local workers, on this checkout
   :kit             `bazel run //:kit -- --out=DIR --server=HOST:PORT --mint=ID`
                    -- a participant's workspace: kit_files, the arena's CLI and
-                   MCP server, a README and a token
+                   MCP server, a README and a token. Their own environment,
+                   with whatever access they give it; only what they submit
+                   runs sandboxed
   :sandbox_image   `bazel run //:sandbox_image` -- the problem's offline sandbox
                    image, from sandbox.image in the config
   :<name>          a filegroup of every binary a tournament needs, so

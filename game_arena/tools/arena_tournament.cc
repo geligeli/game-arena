@@ -335,6 +335,23 @@ auto CheckConfig(const proto::ProblemConfig &config,
       return false;
     }
   }
+  // A sandbox builds with no network, so the module graph has to be settled
+  // in the tree the worker clones: a lockfile that is not committed is a
+  // build that re-resolves against the registry and fails.
+  const auto repo = LocalRepoDir(config);
+  if (!config.sandbox().image().empty() &&
+      !config.sandbox().allow_build_network() && repo &&
+      std::filesystem::is_directory(*repo / ".git")) {
+    const auto tracked = Capture(
+        "git", {"ls-files", "--error-unmatch", "MODULE.bazel.lock"}, *repo);
+    if (!tracked) {
+      *error = absl::StrCat(
+          "MODULE.bazel.lock is not committed in ", repo->string(),
+          "; the sandbox builds without a network and needs it. Run a build, "
+          "then `git add MODULE.bazel.lock`");
+      return false;
+    }
+  }
   return true;
 }
 

@@ -56,22 +56,12 @@ auto Isolation(const proto::SandboxOrder &sandbox,
   isolation.set_cpus(sandbox.cpus());
   isolation.set_pids_limit(sandbox.pids_limit());
   isolation.set_run_as_user(sandbox.run_as_user());
-  if (sandbox.host_overlay()) {
-    // Nothing left to mount, so nothing to be privileged for: the defaults
-    // (drop every capability, no new privileges, a read-only root) stand, and
-    // /tmp is the one writable place.
-    sx::Tmpfs *tmpfs = isolation.add_tmpfs();
-    tmpfs->set_target("/tmp");
-    tmpfs->set_options("exec");
-  } else {
-    // The in-sandbox overlay needs CAP_SYS_ADMIN and a writable root. This is
-    // the mode ARENA.md says is not a boundary, expressed as exactly the
-    // relaxations it costs.
-    isolation.set_keep_default_caps(true);
-    isolation.set_allow_new_privileges(true);
-    isolation.set_writable_rootfs(true);
-    isolation.add_add_capabilities("SYS_ADMIN");
-  }
+  // Nothing to mount and nothing to be privileged for: the defaults (drop
+  // every capability, no new privileges, a read-only root) stand, and /tmp
+  // is the one writable place besides the tree and the scratch volume.
+  sx::Tmpfs *tmpfs = isolation.add_tmpfs();
+  tmpfs->set_target("/tmp");
+  tmpfs->set_options("exec");
   return isolation;
 }
 
@@ -101,8 +91,7 @@ auto PathsFor(const OrderJobConfig &config, int slot,
   BuildPaths paths;
   if (container) {
     paths.output_base = sandbox_common::kOutputBaseMount;
-    paths.disk_cache =
-        config.disk_cache.empty() ? "" : sandbox_common::kDiskCacheMount;
+    paths.disk_cache = sandbox_common::kDiskCacheMount;
     paths.bazel_bin = "./bazel-bin/";
     return paths;
   }
@@ -111,6 +100,23 @@ auto PathsFor(const OrderJobConfig &config, int slot,
   paths.bazel_bin =
       (SlotDir(config, slot) / "repo" / "bazel-bin").string() + "/";
   return paths;
+}
+
+// A persistent directory for a container: a docker volume unless this host
+// opted into a bind mount for it.
+auto PersistentMount(const std::filesystem::path &bind_dir,
+                     const std::string &volume,
+                     const std::string &target) -> sx::Mount {
+  sx::Mount mount;
+  if (bind_dir.empty()) {
+    mount.set_kind(sx::Mount::VOLUME);
+    mount.set_source(volume);
+  } else {
+    mount.set_kind(sx::Mount::BIND);
+    mount.set_source(bind_dir.string());
+  }
+  mount.set_target(target);
+  return mount;
 }
 
 auto SidesOf(const proto::WorkOrder &order)
@@ -128,9 +134,10 @@ auto WorkspaceFor(const proto::WorkOrder &order, const OrderJobConfig &config,
   const std::filesystem::path slot_dir = SlotDir(config, slot);
   sx::Workspace ws;
   ws.set_source_repo(order.repo_url());
-  ws.set_lower_dir((slot_dir / "repo").string());
+  ws.set_tree_dir((slot_dir / "repo").string());
   ws.set_base_commit(order.base_commit());
   ws.set_git(config.git);
+  ws.set_tar(config.tar);
   ws.set_staging_dir((slot_dir / "patches").string());
 
   for (const proto::Side *side : SidesOf(order)) {
@@ -147,37 +154,33 @@ auto WorkspaceFor(const proto::WorkOrder &order, const OrderJobConfig &config,
   }
 
   if (container) {
-    ws.set_upper_dir((slot_dir / "overlay").string());
-    ws.set_merged_dir((slot_dir / "merged").string());
-    ws.set_mount_binary(config.mount);
-    ws.set_umount_binary(config.umount);
-    ws.set_overlay(order.sandbox().host_overlay()
-                       ? sx::Workspace::OVERLAY_HOST
-                       : sx::Workspace::OVERLAY_IN_SANDBOX);
-    // Applied by git inside the sandbox, in both overlay modes, so the
-    // workspace the build sees is the one the patch was checked against.
+    // The engine copies the tree in; git applies the patches inside the
+    // sandbox, so the workspace the build sees is the one the patch was
+    // checked against.
     ws.set_patch(sx::Workspace::PATCH_IN_ENTRYPOINT);
     ws.set_sandbox_work_dir(sandbox_common::kWorkspace);
 
     // Every step gets the persistent output base; only the build gets the
-    // staging directory and the shared cache (see AddBuildPhase).
-    sx::Mount *output_base = ws.add_mounts();
-    output_base->set_source((slot_dir / "bazel_output_base").string());
-    output_base->set_target(sandbox_common::kOutputBaseMount);
+    // staged files and the shared cache (see AddBuildPhase).
+    const std::string slot_name = "slot" + std::to_string(slot);
+    *ws.add_mounts() =
+        PersistentMount(config.bind_output_base_dir.empty()
+                            ? std::filesystem::path()
+                            : config.bind_output_base_dir / slot_name,
+                        config.volume_prefix + "-" + slot_name + "-output_base",
+                        sandbox_common::kOutputBaseMount);
     return ws;
   }
 
   // No sandbox: the step runs in the checkout itself, and git applies the
   // patches on the host before anything builds.
-  ws.set_overlay(sx::Workspace::OVERLAY_NONE);
-  ws.set_upper_dir((slot_dir / "scratch").string());
+  ws.set_scratch_dir((slot_dir / "scratch").string());
   ws.set_patch(sx::Workspace::PATCH_HOST);
   return ws;
 }
 
-void AddBuildPhase(int slot, const proto::WorkOrder &order,
-                   const OrderJobConfig &config, const BuildPaths &paths,
-                   bool container, sx::Job *job) {
+void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
+                   const BuildPaths &paths, bool container, sx::Job *job) {
   sx::Phase *phase = job->add_phases();
   phase->set_name("build");
   // A build reaches nothing by default: a build that can fetch can also
@@ -187,24 +190,24 @@ void AddBuildPhase(int slot, const proto::WorkOrder &order,
   isolation->set_network(order.sandbox().allow_build_network()
                              ? sx::Isolation::NETWORK_EGRESS
                              : sx::Isolation::NETWORK_NONE);
+  // The problem's memory and pid caps are for the solution's run, as the
+  // process engine already treats them (SolutionIsolation): a build is the
+  // problem's own toolchain, and bazel's JVM plus a few dozen compilers is
+  // more than any limit a problem means for a bot. The build keeps every
+  // other part of the sandbox and its own timeout.
+  isolation->set_memory_limit_mb(0);
+  isolation->set_pids_limit(0);
 
   sx::Step *build = phase->mutable_foreground();
   build->set_name("build");
   build->set_applies_patches(true);
   if (container) {
-    // The patches and the shared cache reach the build and nothing after it:
-    // the thing it built has no business seeing either.
-    sx::Mount *patches = build->add_mounts();
-    patches->set_source(
-        (config.work_dir / ("slot" + std::to_string(slot)) / "patches")
-            .string());
-    patches->set_target(sandbox_common::kPatchMount);
-    patches->set_readonly(true);
-    if (!config.disk_cache.empty()) {
-      sx::Mount *disk_cache = build->add_mounts();
-      disk_cache->set_source(config.disk_cache.string());
-      disk_cache->set_target(sandbox_common::kDiskCacheMount);
-    }
+    // The shared cache reaches the build and nothing after it: the thing it
+    // built has no business seeing it. (The staged patches reach the build
+    // the same way, arranged by the engine for the step that applies them.)
+    *build->add_mounts() = PersistentMount(config.bind_disk_cache_dir,
+                                           config.volume_prefix + "-disk_cache",
+                                           sandbox_common::kDiskCacheMount);
   }
   build->set_timeout_s(order.build_timeout_s() > 0 ? order.build_timeout_s()
                                                    : kDefaultTimeoutS);
@@ -219,6 +222,13 @@ void AddBuildPhase(int slot, const proto::WorkOrder &order,
   // "Unknown startup option", which is how the container path turned out
   // never to have built anything.
   *build->add_argv() = Verbatim("--output_base=" + paths.output_base);
+  if (container) {
+    // Bazel's own installation, unpacked once per slot into the persistent
+    // volume beside the output base rather than into the image: the install
+    // base wants a lock file next to itself, and the image is read-only.
+    *build->add_argv() =
+        Verbatim("--install_base=" + paths.output_base + "/_install");
+  }
   *build->add_argv() = Verbatim("build");
   if (!paths.disk_cache.empty()) {
     *build->add_argv() = Verbatim("--disk_cache=" + paths.disk_cache);
@@ -410,7 +420,7 @@ auto JobForOrder(int slot, const proto::WorkOrder &order,
   *job->mutable_workspace() = *workspace;
 
   const BuildPaths paths = PathsFor(config, slot, container);
-  AddBuildPhase(slot, order, config, paths, container, job);
+  AddBuildPhase(order, config, paths, container, job);
 
   if (order.has_grade()) {
     AddGradePhases(order, container, job);

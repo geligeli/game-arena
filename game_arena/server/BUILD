@@ -275,6 +275,7 @@ cc_binary(
     name = "problem_server",
     srcs = ["main.cc"],
     deps = [
+        "//game_arena/common/process",
         ":arena_service",
         ":candidate_store",
         ":elo_standings",

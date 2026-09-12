@@ -40,23 +40,31 @@ auto BindMount(const std::filesystem::path &source, const std::string &target,
   return mount;
 }
 
-auto ScratchSetupScript() -> std::string {
-  return "mkdir -p " + std::string(kScratch) + "/upper " + kScratch + "/work " +
-         kWorkspace +
-         "\n"
-         "export HOME=" +
-         kScratch + "\n";
+auto VolumeMount(const std::string &volume, const std::string &target,
+                 bool readonly) -> std::string {
+  std::string mount = "type=volume,source=" + volume + ",target=" + target;
+  if (readonly) {
+    mount += ",readonly";
+  }
+  return mount;
 }
 
-auto OverlayMountScript() -> std::string {
-  return ScratchSetupScript() +
-         "mount -t overlay overlay -o lowerdir=" + kLowerMount +
-         ",upperdir=" + kScratch + "/upper,workdir=" + kScratch + "/work " +
-         kWorkspace + "\n";
-}
-
-auto HostOverlayPrelude() -> std::string {
+auto ScratchPrelude() -> std::string {
   return "export HOME=" + std::string(kScratch) + "\n";
+}
+
+auto CreateVolume(const std::string &docker, const std::string &name,
+                  const std::filesystem::path &log_dir,
+                  const std::string &tag) -> StepResult {
+  return RunStep(docker, {"volume", "create", name}, /*cwd=*/{}, log_dir, tag,
+                 std::chrono::seconds(60));
+}
+
+auto RemoveVolume(const std::string &docker,
+                  const std::string &name) -> process::RunResult {
+  process::RunOptions options;
+  options.timeout = std::chrono::seconds(60);
+  return process::RunCommand(docker, {"volume", "rm", "-f", name}, options);
 }
 
 auto KillContainer(const std::string &docker,
@@ -105,12 +113,12 @@ auto RemoveNetwork(const std::string &docker,
 }
 
 auto DockerRunArgs(const DockerRunSpec &spec) -> std::vector<std::string> {
-  std::vector<std::string> args = {"run"};
-  if (spec.rm) {
+  std::vector<std::string> args = {spec.create ? "create" : "run"};
+  if (spec.rm && !spec.create) {
     args.push_back("--rm");
   }
   args.insert(args.end(), {"--name", spec.name});
-  if (spec.detached) {
+  if (spec.detached && !spec.create) {
     args.push_back("-d");
   }
   for (const std::string &extra : spec.extra_args) {

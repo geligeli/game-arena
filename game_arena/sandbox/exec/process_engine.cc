@@ -134,7 +134,6 @@ auto ProcessEngine::Run(const proto::Job &job,
     }
   }
 
-  ReleaseWorkspace(job.workspace());
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (cancelled_.erase(job.id()) > 0) {
@@ -152,11 +151,8 @@ auto ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
                              Observer *observer, proto::PhaseResult *result,
                              proto::Status *status) -> bool {
   const std::filesystem::path log_dir(job.log_dir());
-  const std::filesystem::path scratch = ScratchDirOf(job.workspace());
-  const std::filesystem::path tree =
-      job.workspace().overlay() == proto::Workspace::OVERLAY_HOST
-          ? std::filesystem::path(job.workspace().merged_dir())
-          : std::filesystem::path(job.workspace().lower_dir());
+  const std::filesystem::path scratch(job.workspace().scratch_dir());
+  const std::filesystem::path tree(job.workspace().tree_dir());
 
   // Resolved addresses of the background steps, for {{peer:<name>}}.
   std::map<std::string, std::string> peers;

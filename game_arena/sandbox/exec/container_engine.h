@@ -3,20 +3,25 @@
 
 // Runs a job's steps in throwaway containers.
 //
-// The engine that is actually a boundary. Per phase: create the phase's
-// private bridge if any step asks for one, reap any sandbox left behind under
-// the names it is about to use, start the background steps detached, run the
-// foreground step, then drain and remove everything.
+// The engine that is actually a boundary. Per job: export the tree and load
+// it, with the staged files, into per-job volumes through the daemon. Per
+// phase: create the phase's private bridge if any step asks for one, reap any
+// sandbox left behind under the names it is about to use, start the
+// background steps detached, run the foreground step, then drain and remove
+// everything. At the end, the job's volumes go too.
+//
+// Nothing is bind-mounted unless a job asks for it (Mount::BIND). That is
+// what makes a worker "anything with a docker socket": the daemon never has
+// to see this process's filesystem, so it can be behind docker-outside-of-
+// docker or DOCKER_HOST, and no host has to mount an overlay for anyone.
 //
 // What the isolation rests on is stated in exec/isolation.h and applied to
 // every container without exception -- there is no path through this file
-// that builds a `docker run` without IsolationArgs. The overlay is assembled
-// on the host (exec/workspace.h), which is what lets these containers run
-// with no capabilities at all.
+// that builds a `docker run` without IsolationArgs.
 //
-// Container names are derived, never remembered: SandboxName(job, step). That
-// is what lets Cancel reach a job's containers from the job itself rather
-// than from bookkeeping that might be a step behind.
+// Container and volume names are derived, never remembered: SandboxName(job,
+// step). That is what lets Cancel reach a job's containers from the job
+// itself rather than from bookkeeping that might be a step behind.
 
 #include <map>
 #include <mutex>
@@ -60,6 +65,11 @@ class ContainerEngine final : public Engine {
     std::vector<std::string> container_names;
     std::vector<std::string> network_names;
   };
+
+  // Creates the job's volumes and fills the workspace and patch volumes from
+  // the exported tree and the staging directory.
+  auto LoadWorkspace(const proto::Job &job, proto::Status *status) -> bool;
+  void RemoveVolumes(const proto::Job &job);
 
   auto RunPhase(const proto::Job &job, const proto::Phase &phase,
                 Observer *observer, proto::PhaseResult *result,

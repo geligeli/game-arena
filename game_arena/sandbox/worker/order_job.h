@@ -36,14 +36,27 @@ namespace tournament_arena {
 // the whole sandbox test suite injects fake `docker`, `git` and `mount`
 // scripts through them and asserts the exact argv without a daemon.
 struct OrderJobConfig {
-  // Per-slot state lives under <work_dir>/slot<N>: a persistent checkout and
-  // a persistent bazel output base, reused across orders. The difference
-  // between a candidate build taking seconds and taking minutes.
+  // Per-slot state lives under <work_dir>/slot<N>: a persistent checkout,
+  // and for the process engine a persistent bazel output base, reused across
+  // orders. The difference between a candidate build taking seconds and
+  // taking minutes.
   std::filesystem::path work_dir;
+  // The process engine's shared bazel disk cache.
   std::filesystem::path disk_cache;
+
+  // A container's persistent state lives in docker volumes by default, named
+  // <volume_prefix>-slot<N>-output_base and <volume_prefix>-disk_cache: the
+  // daemon keeps them, and nothing about this process's filesystem has to be
+  // visible to it. A host that wants those caches on a local disk it can
+  // inspect (or share with its own builds) names the directories here, as
+  // the *daemon* resolves them, and they are bind-mounted instead. Purely a
+  // performance choice; the default works everywhere a docker socket does.
+  std::string volume_prefix = "arena";
+  std::filesystem::path bind_output_base_dir;  // gets a slot<N> subdirectory
+  std::filesystem::path bind_disk_cache_dir;
+
   std::string git = "git";
-  std::string mount = "mount";
-  std::string umount = "umount";
+  std::string tar = "tar";
   // The build tool. A path for the process engine; inside a container it is
   // whatever the image calls bazel.
   std::string bazel = "bazel";

@@ -22,6 +22,7 @@ bazel run //game_arena/server:problem_server -- \
 // tournament problem only if you never hardcode one of them.
 
 #include <grpcpp/grpcpp.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -29,6 +30,7 @@ bazel run //game_arena/server:problem_server -- \
 #include <condition_variable>
 #include <csignal>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -39,6 +41,7 @@ bazel run //game_arena/server:problem_server -- \
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
+#include "game_arena/common/process/process.h"
 #include "game_arena/server/arena_service.h"
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/client_registry.h"
@@ -127,6 +130,32 @@ void WaitForShutdownSignal(tournament_arena::ClientRegistry *clients) {
   }
 }
 
+// The sha |url|'s HEAD names, via `git ls-remote`, which works the same for a
+// path and a URL. Empty when git cannot say.
+auto ResolveRemoteHead(const std::string &url) -> std::string {
+  const std::filesystem::path out =
+      std::filesystem::temp_directory_path() /
+      ("problem_server_ls_remote_" + std::to_string(::getpid()));
+  process::RunOptions options;
+  options.stdout_path = out;
+  options.timeout = std::chrono::seconds(60);
+  const process::RunResult result =
+      process::RunCommand("git", {"ls-remote", url, "HEAD"}, options);
+  std::string line;
+  {
+    std::ifstream in(out);
+    std::getline(in, line);
+  }
+  std::error_code ec;
+  std::filesystem::remove(out, ec);
+  if (!result.started || result.exit_code != 0) {
+    return "";
+  }
+  const std::size_t tab = line.find('\t');
+  const std::string sha = line.substr(0, tab);
+  return sha.size() == 40 ? sha : "";
+}
+
 // Turns the problem's evaluation spec into the scheduler's knobs. The scheduler
 // stays problem-agnostic: it knows about orders and timeouts, not about games
 // or benchmarks.
@@ -149,10 +178,6 @@ auto SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem)
   config.sandbox.set_pids_limit(sandbox.pids_limit());
   config.sandbox.set_run_as_user(sandbox.run_as_user());
   config.sandbox.set_allow_build_network(sandbox.allow_build_network());
-  // Unset means on, which is what host_overlay_set exists to distinguish:
-  // the hardened mode is the default and "false" still has to be sayable.
-  config.sandbox.set_host_overlay(
-      sandbox.host_overlay_set() ? sandbox.host_overlay() : true);
   if (problem.has_match()) {
     const auto &match = problem.match();
     config.placement_opponents.assign(match.placement_opponents().begin(),
@@ -227,13 +252,21 @@ auto main(int argc, char **argv) -> int {
     problem->mutable_repo()->set_base_commit(absl::GetFlag(FLAGS_base_commit));
   }
   if (problem->repo().base_commit() == "HEAD") {
-    // Deliberately a warning rather than an error: it is the right setting for
-    // a dev loop against a moving checkout, and wrong for anything whose
-    // numbers are compared. Workers resolve it independently, so two of them
-    // can build two different trees and the ratings will not say so.
-    LOG(WARNING) << "repo.base_commit is \"HEAD\": submissions may be built "
-                    "against different trees and their ratings are not "
-                    "comparable. Pass --base_commit=<sha> for a real run";
+    // Resolved once, here, so every submission is built against one tree: a
+    // worker's clone has a HEAD of its own that never moves, and two workers
+    // could otherwise build two different trees and the ratings would not
+    // say so. Left as the warning below only if the repo cannot be asked.
+    const std::string sha = ResolveRemoteHead(problem->repo().url());
+    if (!sha.empty()) {
+      LOG(INFO) << "repo.base_commit HEAD is " << sha << " at startup";
+      problem->mutable_repo()->set_base_commit(sha);
+    } else {
+      LOG(WARNING) << "repo.base_commit is \"HEAD\" and "
+                   << problem->repo().url()
+                   << " could not be asked what that is: workers will each "
+                      "build their clone's tip, and ratings from different "
+                      "trees are not comparable. Pass --base_commit=<sha>";
+    }
   }
 
   const std::filesystem::path data_dir = absl::GetFlag(FLAGS_data_dir);

@@ -20,7 +20,7 @@ namespace sandbox_exec {
 //   set -eu                      a patch that does not apply aborts here,
 //                                with git's own message in the log, rather
 //                                than becoming a confusing error later
-//   <prelude>                    assemble the overlay, or just set HOME
+//   export HOME=/sandbox         the one thing left to arrange
 //   [cp -a /patches/. /workspace/]
 //   cd <workspace root>
 //   [git apply '/patches/<name>'] ...

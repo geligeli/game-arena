@@ -490,11 +490,11 @@ message SandboxOrder {
   uint32 pids_limit = 4;
   string run_as_user = 5;
 
-  // Assemble the overlay on the host and bind-mount the merged tree in. The
-  // in-container alternative needs CAP_SYS_ADMIN, and a container with that
-  // running submitted build code is not a boundary -- so a worker that cannot
-  // mount overlayfs fails the order rather than quietly downgrading.
-  bool host_overlay = 6;
+  // Was host_overlay. The workspace is copied into a volume through the
+  // daemon now; nothing is mounted and no sandbox needs a capability. A
+  // worker from before this ignores the absence and assembles an overlay.
+  reserved 6;
+  reserved "host_overlay";
   // Let the build reach the network. A build that can fetch can also
   // exfiltrate, and a submitted genrule is arbitrary code.
   bool allow_build_network = 7;

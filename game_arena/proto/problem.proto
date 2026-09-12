@@ -143,6 +143,9 @@ message SandboxSpec {
   // run without egress, so a module fetch is a build failure, not a retry.
   string image = 1;
 
+  // Caps on the containers that run the solution -- a bot, a graded command.
+  // The build runs in the same sandbox without them: a build is the problem's
+  // own toolchain, and is bounded by build.timeout_s instead.
   uint32 memory_limit_mb = 2;
   double cpus = 3;
   uint32 pids_limit = 4;
@@ -173,19 +176,13 @@ message SandboxSpec {
   // whatever the image's default is, which for most images is root.
   string run_as_user = 8;
 
-  // Assemble the overlay on the host and bind-mount the merged tree in, rather
-  // than calling mount(8) inside the container.
-  //
-  // On by default, because the in-container form needs CAP_SYS_ADMIN, and a
-  // container with CAP_SYS_ADMIN running submitted build code is not a
-  // boundary. It requires the worker to be able to mount overlayfs -- root, or
-  // a user namespace -- which is a worker prerequisite alongside docker itself.
-  // There is deliberately no silent fallback: an order fails loudly rather than
-  // quietly running privileged.
-  bool host_overlay = 9;
-  // Set when host_overlay was explicitly configured, so "unset" can default to
-  // true without making false unexpressible.
-  bool host_overlay_set = 10;
+  // Was host_overlay / host_overlay_set: whether the worker assembled an
+  // overlay on the host or the sandbox mounted one with CAP_SYS_ADMIN. There
+  // is no overlay any more -- the tree is copied into a volume through the
+  // daemon -- so every container runs with no capabilities, and a worker
+  // needs nothing but a docker socket.
+  reserved 9, 10;
+  reserved "host_overlay", "host_overlay_set";
 }
 
 // ---------------------------------------------------------------------------

@@ -2,9 +2,9 @@
 // `docker` and `git` scripts:
 // shell scripts that log every invocation and emulate just enough of each
 // tool (a clone that creates a .git dir, a checkout that records its commit,
-// containers that behave per container name). The overlay mount never
-// actually happens, but the exact mounts, argv and entrypoint scripts handed
-// to docker, and the host-side git work, are asserted from the logs.
+// containers that behave per container name). Nothing is really loaded into
+// a volume, but the exact volumes, mounts, argv and entrypoint scripts
+// handed to docker, and the host-side git work, are asserted from the logs.
 
 #include <gtest/gtest.h>
 #include <unistd.h>
@@ -45,24 +45,12 @@ class OrderRunnerContainerTest : public ::testing::Test {
     std::filesystem::permissions(fake_git_, std::filesystem::perms::owner_all,
                                  std::filesystem::perm_options::add);
 
-    // The overlay is assembled on the host by default, so containers need no
-    // CAP_SYS_ADMIN. Faked here: a test sandbox cannot mount(2), and what is
-    // under test is the flags the backend passes, not the kernel.
-    fake_mount_ = root_ / "fake_mount";
-    std::ofstream(fake_mount_)
-        << "#!/usr/bin/env bash\necho \"mount $*\" >> \""
-        << (root_ / "mount.log").string() << "\"\nexit 0\n";
-    std::filesystem::permissions(fake_mount_, std::filesystem::perms::owner_all,
-                                 std::filesystem::perm_options::add);
-
     sandbox_exec::ContainerEngineConfig engine_config;
     engine_config.docker = fake_docker_.string();
     engine_ = std::make_unique<sandbox_exec::ContainerEngine>(engine_config);
 
     OrderJobConfig config;
     config.git = fake_git_.string();
-    config.mount = fake_mount_.string();
-    config.umount = fake_mount_.string();
     config.work_dir = root_ / "work";
     config.disk_cache = root_ / "work" / "disk_cache";
     runner_ = std::make_unique<OrderRunner>(/*process_engine=*/nullptr,
@@ -127,9 +115,7 @@ class OrderRunnerContainerTest : public ::testing::Test {
            "actions\"\n"
            "        exit 0;;\n"
            "    esac;;\n"
-           "  rm)\n"
-           "    exit 0;;\n"
-           "  network)\n"
+           "  rm|create|cp|start|volume|network)\n"
            "    exit 0;;\n"
            "  wait)\n"
            "    exit 0;;\n"
@@ -222,14 +208,13 @@ class OrderRunnerContainerTest : public ::testing::Test {
     order.set_opponent_spec("builtin:random");
     order.set_num_games(2);
 
-    // The sandbox travels with the order now: a worker has no image, no
-    // repository and no overlay preference of its own.
+    // The sandbox travels with the order now: a worker has no image and no
+    // repository of its own.
     order.set_repo_url((root_ / "repo_src").string());
     proto::SandboxOrder *sandbox = order.mutable_sandbox();
     sandbox->set_image("fake-image:1");
     sandbox->set_memory_limit_mb(4096);
     sandbox->set_pids_limit(512);
-    sandbox->set_host_overlay(true);
 
     proto::Side *side = order.mutable_candidate();
     side->set_candidate_id(candidate);
@@ -252,7 +237,6 @@ class OrderRunnerContainerTest : public ::testing::Test {
   static std::filesystem::path root_;
   static std::filesystem::path fake_docker_;
   static std::filesystem::path fake_git_;
-  static std::filesystem::path fake_mount_;
   static std::unique_ptr<sandbox_exec::ContainerEngine> engine_;
   static std::unique_ptr<OrderRunner> runner_;
 };
@@ -260,7 +244,6 @@ class OrderRunnerContainerTest : public ::testing::Test {
 std::filesystem::path OrderRunnerContainerTest::root_;
 std::filesystem::path OrderRunnerContainerTest::fake_docker_;
 std::filesystem::path OrderRunnerContainerTest::fake_git_;
-std::filesystem::path OrderRunnerContainerTest::fake_mount_;
 std::unique_ptr<sandbox_exec::ContainerEngine>
     OrderRunnerContainerTest::engine_;
 std::unique_ptr<OrderRunner> OrderRunnerContainerTest::runner_;
@@ -364,11 +347,22 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   EXPECT_NE(ReadFile(staged).find("+#pragma once"), std::string::npos);
 
   const std::string log = ReadFile(root_ / "docker.log");
-  // Zombie cleanup, then the build container over the slot's overlay.
+  // The tree and the staged patch are loaded into the job's own volumes
+  // through the daemon; nothing on this side is mounted anywhere.
+  ExpectLogContains(log, "docker volume create saw-0-ok-1-ws");
+  ExpectLogContains(log, "docker volume create saw-0-ok-1-patches");
+  ExpectLogContains(log, "docker volume create saw-0-ok-1-scratch");
+  ExpectLogContains(log, "docker cp - saw-0-ok-1-load:/workspace");
+  ExpectLogContains(log, "docker cp " +
+                             (root_ / "work" / "slot0" / "patches").string() +
+                             "/. saw-0-ok-1-load:/patches");
+  ExpectLogContains(log, "docker start -a saw-0-ok-1-load");
+  EXPECT_EQ(log.find("type=bind"), std::string::npos) << log;
+  // Zombie cleanup, then the build container on the loaded tree.
   ExpectLogContains(log, "docker rm -f saw-0-ok-1-build");
   ExpectLogContains(log, "--name saw-0-ok-1-build");
-  // No capabilities: the overlay was mounted on the host, so there is nothing
-  // for the container to be privileged for.
+  // No capabilities: nothing was mounted, so there is nothing for the
+  // container to be privileged for.
   ExpectLogContains(log, "--cap-drop ALL");
   ExpectLogContains(log, "--security-opt no-new-privileges");
   EXPECT_EQ(log.find("SYS_ADMIN"), std::string::npos) << log;
@@ -376,35 +370,35 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   // arbitrary code.
   ExpectLogContains(log, "--network none");
   EXPECT_EQ(log.find("--network host"), std::string::npos) << log;
-  // The container gets the merged tree, not the pieces: with the overlay
-  // mounted on the host there is nothing left for it to assemble.
-  ExpectLogContains(log, "--mount type=bind,source=" +
-                             (root_ / "work" / "slot0" / "merged").string() +
-                             ",target=/workspace");
-  ExpectLogContains(ReadFile(root_ / "mount.log"), "-t overlay");
-  ExpectLogContains(log, "--mount type=bind,source=" +
-                             (root_ / "work" / "slot0" / "overlay").string() +
-                             ",target=/sandbox");
-  ExpectLogContains(log, "--mount type=bind,source=" +
-                             (root_ / "work" / "slot0" / "patches").string() +
-                             ",target=/patches,readonly");
-  ExpectLogContains(
-      log, "--mount type=bind,source=" +
-               (root_ / "work" / "slot0" / "bazel_output_base").string() +
-               ",target=/output_base");
-  ExpectLogContains(log, "--mount type=bind,source=" +
-                             (root_ / "work" / "disk_cache").string() +
-                             ",target=/disk_cache");
+  ExpectLogContains(log,
+                    "--mount type=volume,source=saw-0-ok-1-ws,"
+                    "target=/workspace");
+  ExpectLogContains(log,
+                    "--mount type=volume,source=saw-0-ok-1-scratch,"
+                    "target=/sandbox");
+  ExpectLogContains(log,
+                    "--mount type=volume,source=saw-0-ok-1-patches,"
+                    "target=/patches,readonly");
+  ExpectLogContains(log,
+                    "--mount type=volume,source=arena-slot0-output_base,"
+                    "target=/output_base");
+  ExpectLogContains(log,
+                    "--mount type=volume,source=arena-disk_cache,"
+                    "target=/disk_cache");
   ExpectLogContains(log, "--entrypoint /bin/sh fake-image:1 -c");
   // The entrypoint applies the patch and builds; it mounts nothing.
   EXPECT_EQ(log.find("mount -t overlay"), std::string::npos)
       << "the container should not be mounting anything:\n"
       << log;
+  // The job's volumes go with the job; the caches stay.
+  ExpectLogContains(log, "docker volume rm -f saw-0-ok-1-ws");
+  EXPECT_EQ(log.find("volume rm -f arena-"), std::string::npos) << log;
   // --output_base before the command, --disk_cache after it: one is a bazel
   // startup option and the other is not, and the container path used to get
   // that wrong -- which is why it never built anything.
   ExpectLogContains(log,
-                    "exec bazel --output_base=/output_base build "
+                    "exec bazel --output_base=/output_base "
+                    "--install_base=/output_base/_install build "
                     "--disk_cache=/disk_cache '//solutions/"
                     "c-ok:bot'");
 
@@ -460,10 +454,15 @@ TEST_F(OrderRunnerContainerTest, EveryContainerIsHardened) {
     EXPECT_NE(line.find("--security-opt no-new-privileges"), std::string::npos)
         << line;
     EXPECT_NE(line.find("--read-only"), std::string::npos) << line;
-    EXPECT_NE(line.find("--pids-limit"), std::string::npos) << line;
+    // The pid cap is the solution's, not the build's.
+    if (line.find("-build ") == std::string::npos) {
+      EXPECT_NE(line.find("--pids-limit"), std::string::npos) << line;
+    }
     // Never the host's network: the build and a graded run get none, and a
     // match gets its own internal bridge.
     EXPECT_EQ(line.find("--network host"), std::string::npos) << line;
+    // And nothing of this host's filesystem, unless a host opts in.
+    EXPECT_EQ(line.find("type=bind"), std::string::npos) << line;
     ++hardened;
   }
   EXPECT_GE(hardened, 2) << "expected at least a build and a run container";
@@ -516,23 +515,62 @@ TEST_F(OrderRunnerContainerTest, SideWithoutAPatchIsRejected) {
             std::string::npos);
 }
 
-TEST_F(OrderRunnerContainerTest, WarmupOnlyMakesTheBindMountSources) {
+TEST_F(OrderRunnerContainerTest, WarmupMakesTheDirectoriesThisHostOwns) {
   OrderJobConfig config;
   config.git = fake_git_.string();
   config.work_dir = root_ / "work_warm";
+  config.bind_output_base_dir = root_ / "bind_ob";
+  config.bind_disk_cache_dir = root_ / "bind_dc";
 
   OrderRunner fresh(/*process_engine=*/nullptr, engine_.get(), config);
   std::string error;
   ASSERT_TRUE(fresh.Warmup(2, &error)) << error;
 
-  // Docker conjures a missing bind-mount source up as an empty directory
-  // owned by root, which is a confusing way to learn the path was wrong.
+  // The process engine's per-slot state, and -- only because this host opted
+  // into bind mounts -- their sources: docker conjures a missing one up as
+  // an empty directory owned by root, which is a confusing way to learn the
+  // path was wrong.
   for (const char *slot : {"slot0", "slot1"}) {
-    EXPECT_TRUE(
-        std::filesystem::is_directory(config.work_dir / slot / "overlay"));
     EXPECT_TRUE(std::filesystem::is_directory(config.work_dir / slot /
                                               "bazel_output_base"));
+    EXPECT_TRUE(
+        std::filesystem::is_directory(config.work_dir / slot / "scratch"));
+    EXPECT_TRUE(std::filesystem::is_directory(root_ / "bind_ob" / slot));
   }
+  EXPECT_TRUE(std::filesystem::is_directory(root_ / "bind_dc"));
+}
+
+TEST_F(OrderRunnerContainerTest, AHostMayBindItsCachesForSpeed) {
+  OrderJobConfig config;
+  config.git = fake_git_.string();
+  config.work_dir = root_ / "work_bind";
+  config.bind_output_base_dir = root_ / "fast" / "ob";
+  config.bind_disk_cache_dir = root_ / "fast" / "dc";
+  OrderRunner bound(/*process_engine=*/nullptr, engine_.get(), config);
+  std::string error;
+  ASSERT_TRUE(bound.Warmup(1, &error)) << error;
+  ASSERT_TRUE(bound.RunOrder(0, MakeOrder("bind-1", "c-ok"), {}).build_ok);
+
+  const std::string log = ReadFile(root_ / "docker.log");
+  const std::string build = RunArgvFor(log, "saw-0-bind-1-build");
+  // The caches as the daemon's host paths; the tree and scratch still the
+  // job's volumes, because those are what make the mounts optional.
+  ExpectLogContains(build, "--mount type=bind,source=" +
+                               (root_ / "fast" / "ob" / "slot0").string() +
+                               ",target=/output_base");
+  ExpectLogContains(
+      build, "--mount type=bind,source=" + (root_ / "fast" / "dc").string() +
+                 ",target=/disk_cache");
+  ExpectLogContains(build,
+                    "--mount type=volume,source=saw-0-bind-1-ws,"
+                    "target=/workspace");
+  // The loader chowns nothing it does not own: no bind mount is handed to it.
+  const auto loader = log.find("docker create --name saw-0-bind-1-load");
+  ASSERT_NE(loader, std::string::npos);
+  const std::string loader_line =
+      log.substr(loader, log.find('\n', loader) - loader);
+  EXPECT_EQ(loader_line.find((root_ / "fast").string()), std::string::npos)
+      << loader_line;
 }
 
 // The whole argv, not one flag of it.
@@ -545,32 +583,24 @@ TEST_F(OrderRunnerContainerTest, WarmupOnlyMakesTheBindMountSources) {
 TEST_F(OrderRunnerContainerTest, WholeDockerRunArgvIsPinned) {
   ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("argv-1", "c-ok"), {}).build_ok);
   const std::string log = ReadFile(root_ / "docker.log");
-  const std::string work = (root_ / "work").string();
-  const std::string slot = work + "/slot0";
 
-  // The build: throwaway (--rm), no network at all, and the only container
-  // that mounts the patches and the shared disk cache.
+  // The build: throwaway (--rm), no network at all, no memory or pid cap
+  // (those are the solution's; bazel is the problem's own toolchain), and
+  // the only container that mounts the patches and the shared disk cache.
+  // Not one bind mount.
   EXPECT_EQ(RunArgvFor(log, "saw-0-argv-1-build"),
             "docker run --rm --name saw-0-argv-1-build "
             "--cap-drop ALL --security-opt no-new-privileges --read-only "
-            "--tmpfs /tmp:exec --memory 4096m --pids-limit 512 "
+            "--tmpfs /tmp:exec "
             "--network none "
-            "--mount type=bind,source=" +
-                slot +
-                "/merged,target=/workspace "
-                "--mount type=bind,source=" +
-                slot +
-                "/overlay,target=/sandbox "
-                "--mount type=bind,source=" +
-                slot +
-                "/bazel_output_base,target=/output_base "
-                "--mount type=bind,source=" +
-                slot +
-                "/patches,target=/patches,readonly "
-                "--mount type=bind,source=" +
-                work +
-                "/disk_cache,target=/disk_cache "
-                "--entrypoint /bin/sh fake-image:1");
+            "--mount type=volume,source=saw-0-argv-1-ws,target=/workspace "
+            "--mount type=volume,source=saw-0-argv-1-scratch,target=/sandbox "
+            "--mount type=volume,source=arena-slot0-output_base,"
+            "target=/output_base "
+            "--mount type=volume,source=saw-0-argv-1-patches,"
+            "target=/patches,readonly "
+            "--mount type=volume,source=arena-disk_cache,target=/disk_cache "
+            "--entrypoint /bin/sh fake-image:1");
 
   // The bot: same hardening, joined to the order's private bridge instead of
   // no network, kept after it exits so its output can still be read, and with
@@ -580,16 +610,11 @@ TEST_F(OrderRunnerContainerTest, WholeDockerRunArgvIsPinned) {
             "--cap-drop ALL --security-opt no-new-privileges --read-only "
             "--tmpfs /tmp:exec --memory 4096m --pids-limit 512 "
             "--network saw-0-argv-1-net "
-            "--mount type=bind,source=" +
-                slot +
-                "/merged,target=/workspace "
-                "--mount type=bind,source=" +
-                slot +
-                "/overlay,target=/sandbox "
-                "--mount type=bind,source=" +
-                slot +
-                "/bazel_output_base,target=/output_base "
-                "--entrypoint /bin/sh fake-image:1");
+            "--mount type=volume,source=saw-0-argv-1-ws,target=/workspace "
+            "--mount type=volume,source=saw-0-argv-1-scratch,target=/sandbox "
+            "--mount type=volume,source=arena-slot0-output_base,"
+            "target=/output_base "
+            "--entrypoint /bin/sh fake-image:1");
 }
 
 }  // namespace

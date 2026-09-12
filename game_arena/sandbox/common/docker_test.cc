@@ -36,31 +36,44 @@ TEST(BindMountTest, LongFormWithOptionalReadonly) {
             "type=bind,source=/host/dir,target=/patches,readonly");
 }
 
-TEST(OverlayMountScriptTest, AssemblesUpperWorkAndMergedUnderOneScratch) {
-  const std::string script = OverlayMountScript();
-  // Upper and work under the single scratch mount: they must share a
-  // filesystem, which overlayfs requires.
-  EXPECT_NE(script.find("mkdir -p /sandbox/upper /sandbox/work /workspace"),
-            std::string::npos);
-  EXPECT_NE(script.find("export HOME=/sandbox"), std::string::npos);
-  EXPECT_NE(script.find("mount -t overlay overlay -o lowerdir=/repo_lower,"
-                        "upperdir=/sandbox/upper,workdir=/sandbox/work "
-                        "/workspace"),
-            std::string::npos);
+TEST(VolumeMountTest, NamedVolumeWithOptionalReadonly) {
+  EXPECT_EQ(VolumeMount("job-ws", "/workspace", false),
+            "type=volume,source=job-ws,target=/workspace");
+  EXPECT_EQ(VolumeMount("job-patches", "/patches", true),
+            "type=volume,source=job-patches,target=/patches,readonly");
 }
 
-TEST(ScratchSetupScriptTest, SetsUpScratchWithoutMounting) {
-  const std::string script = ScratchSetupScript();
-  EXPECT_NE(script.find("mkdir -p /sandbox/upper /sandbox/work /workspace"),
-            std::string::npos);
-  EXPECT_NE(script.find("export HOME=/sandbox"), std::string::npos);
-  EXPECT_EQ(script.find("mount -t overlay"), std::string::npos);
-}
-
-TEST(HostOverlayPreludeTest, OnlyExportsHome) {
-  // The host already mounted the merged tree; nothing to assemble, but bazel
+TEST(ScratchPreludeTest, OnlyExportsHome) {
+  // The tree and scratch are mounted already; nothing to assemble, but bazel
   // insists on a writable HOME and the root filesystem is read-only.
-  EXPECT_EQ(HostOverlayPrelude(), "export HOME=/sandbox\n");
+  EXPECT_EQ(ScratchPrelude(), "export HOME=/sandbox\n");
+}
+
+TEST(DockerRunArgsTest, CreateMakesAContainerWithoutStartingIt) {
+  DockerRunSpec spec;
+  spec.name = "job-load";
+  spec.image = "img:1";
+  spec.script = "true\n";
+  spec.create = true;
+  spec.network = "none";
+  spec.mounts = {"type=volume,source=job-ws,target=/workspace"};
+  const std::vector<std::string> args = DockerRunArgs(spec);
+  // No --rm and no -d: those are `run` options, and a created container is
+  // filled by `docker cp` and started afterwards.
+  const std::vector<std::string> expected = {
+      "create",
+      "--name",
+      "job-load",
+      "--network",
+      "none",
+      "--mount",
+      "type=volume,source=job-ws,target=/workspace",
+      "--entrypoint",
+      "/bin/sh",
+      "img:1",
+      "-c",
+      "true\n"};
+  EXPECT_EQ(args, expected);
 }
 
 TEST(DockerRunArgsTest, FixedShapeWithAllOptions) {
@@ -70,6 +83,7 @@ TEST(DockerRunArgsTest, FixedShapeWithAllOptions) {
       /*script=*/"set -eu\n",
       /*rm=*/true,
       /*detached=*/false,
+      /*create=*/false,
       /*network=*/"none",
       /*extra_args=*/{"--cap-drop", "ALL"},
       /*mounts=*/{"type=bind,source=/h,target=/w"},
@@ -94,6 +108,7 @@ TEST(DockerRunArgsTest, OmitsRmNetworkAndMountsWhenUnset) {
       /*script=*/"s",
       /*rm=*/false,
       /*detached=*/true,
+      /*create=*/false,
   });
   const std::vector<std::string> expected = {
       "run", "--name", "n", "-d", "--entrypoint", "/bin/sh", "img", "-c", "s",

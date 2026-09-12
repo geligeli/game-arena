@@ -22,10 +22,9 @@
 namespace sandbox_common {
 
 // Fixed mount points inside the containers.
-inline constexpr char kLowerMount[] = "/repo_lower";  // read-only repo
-inline constexpr char kPatchMount[] = "/patches";     // read-only order files
-inline constexpr char kWorkspace[] = "/workspace";  // overlay merge, repo root
-inline constexpr char kScratch[] = "/sandbox";      // overlay upper/work, HOME
+inline constexpr char kPatchMount[] = "/patches";   // read-only staged files
+inline constexpr char kWorkspace[] = "/workspace";  // the tree, repo root
+inline constexpr char kScratch[] = "/sandbox";      // writable; HOME
 inline constexpr char kOutputBaseMount[] = "/output_base";
 inline constexpr char kDiskCacheMount[] = "/disk_cache";
 
@@ -44,21 +43,24 @@ auto SanitizeContainerName(const std::string &value) -> std::string;
 auto BindMount(const std::filesystem::path &source, const std::string &target,
                bool readonly) -> std::string;
 
-// The scratch dirs and a writable HOME, without any mount: a container
-// building against its own filesystem still needs both (bazel insists on a
-// writable HOME). Shared prelude of OverlayMountScript.
-auto ScratchSetupScript() -> std::string;
+// A named volume in the same syntax. Volumes belong to the daemon, so the
+// engine never needs the daemon to see its own filesystem.
+auto VolumeMount(const std::string &volume, const std::string &target,
+                 bool readonly) -> std::string;
 
-// ScratchSetupScript plus the overlay mount itself. The upper and work dirs
-// sit under the one scratch mount so they are guaranteed to share a
-// filesystem, which overlayfs requires. Needs CAP_SYS_ADMIN; the host-mounted
-// form below is the hardened default.
-auto OverlayMountScript() -> std::string;
+// The one line every entrypoint starts with after `set -eu`: a writable HOME,
+// because bazel insists on one and the root filesystem is read-only. The
+// tree is already at kWorkspace and scratch at kScratch; there is nothing to
+// assemble.
+auto ScratchPrelude() -> std::string;
 
-// With the overlay mounted on the host the merged tree is simply at
-// kWorkspace and there is nothing to assemble -- but the container still
-// needs a writable HOME, because its root filesystem is read-only.
-auto HostOverlayPrelude() -> std::string;
+// `docker volume create <name>` and `docker volume rm -f <name>`. Removing one
+// that is already gone is a no-op.
+auto CreateVolume(const std::string &docker, const std::string &name,
+                  const std::filesystem::path &log_dir,
+                  const std::string &tag) -> StepResult;
+auto RemoveVolume(const std::string &docker,
+                  const std::string &name) -> process::RunResult;
 
 // Stops a container by name, with a bounded wait on the daemon. Killing one
 // that already exited is a no-op, which is exactly the race a cancel or a
@@ -98,15 +100,16 @@ auto CreateInternalNetwork(const std::string &docker, const std::string &name,
 auto RemoveNetwork(const std::string &docker,
                    const std::string &name) -> process::RunResult;
 
-// One `docker run` invocation. The flag order is fixed here -- call sites
-// express only what differs between a build, a graded run and a match
-// container, so no call site can quietly omit a flag.
+// One `docker run` (or `docker create`) invocation. The flag order is fixed
+// here -- call sites express only what differs between a build, a graded run
+// and a match container, so no call site can quietly omit a flag.
 struct DockerRunSpec {
   std::string name;       // --name
   std::string image;      // the image every container starts from
   std::string script;     // run as /bin/sh -c <script>
   bool rm = true;         // --rm: throwaway container
   bool detached = false;  // -d: returns immediately rather than blocking
+  bool create = false;    // `create` rather than `run`: made, not started
   std::string network;    // empty: docker's default; else --network <network>
   std::vector<std::string> extra_args;  // hardening etc., ahead of the mounts
   std::vector<std::string> mounts;      // each already in --mount syntax

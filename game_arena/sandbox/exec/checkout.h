@@ -26,8 +26,9 @@ auto EnsureClone(const std::string &git, const std::string &source,
 // A best-effort fetch, then a forced checkout of |commit| and a clean, so the
 // tree is exactly that commit -- a previous job's patched-in files included.
 // The fetch is allowed to fail: a stale mirror is survivable, and the checkout
-// decides. An empty |commit| leaves the tree where it is. Returns false with
-// *error set.
+// decides. A literal "HEAD" means the source's tip (origin/HEAD after the
+// fetch), not the clone's own, which would never move. An empty |commit|
+// leaves the tree where it is. Returns false with *error set.
 auto SyncToCommit(const std::string &git, const std::filesystem::path &repo,
                   const std::string &commit,
                   const std::filesystem::path &log_dir,

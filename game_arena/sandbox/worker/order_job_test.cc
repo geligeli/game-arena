@@ -42,7 +42,6 @@ auto MatchOrder() -> proto::WorkOrder {
   sandbox->set_image("img:1");
   sandbox->set_memory_limit_mb(4096);
   sandbox->set_pids_limit(512);
-  sandbox->set_host_overlay(true);
 
   proto::Side *side = order.mutable_candidate();
   side->set_candidate_id("c-ok");
@@ -97,13 +96,11 @@ TEST(JobForOrderTest, OnlyTheBuildSeesThePatchesAndTheCache) {
   ASSERT_TRUE(JobForOrder(0, MatchOrder(), Config(), ContainerCapabilities(),
                           &job, &error));
 
-  // The thing the build produced has no business reading the staging
+  // The thing the build produced has no business reading the shared cache
   // directory or writing the shared build cache.
   const sx::Step &build = job.phases(0).foreground();
-  ASSERT_EQ(build.mounts_size(), 2);
-  EXPECT_EQ(build.mounts(0).target(), "/patches");
-  EXPECT_TRUE(build.mounts(0).readonly());
-  EXPECT_EQ(build.mounts(1).target(), "/disk_cache");
+  ASSERT_EQ(build.mounts_size(), 1);
+  EXPECT_EQ(build.mounts(0).target(), "/disk_cache");
   EXPECT_EQ(job.phases(1).foreground().mounts_size(), 0);
   // The output base is every step's, so it is on the workspace.
   ASSERT_EQ(job.workspace().mounts_size(), 1);
@@ -189,36 +186,68 @@ TEST(JobForOrderTest, RegistryOptionsAreForwardedVerbatimOrOmitted) {
             std::string::npos);
 }
 
-TEST(JobForOrderTest, AHostOverlayNeedsNoCapabilities) {
+TEST(JobForOrderTest, AContainerNeedsNoCapabilities) {
   sx::Job job;
   std::string error;
   ASSERT_TRUE(JobForOrder(0, MatchOrder(), Config(), ContainerCapabilities(),
                           &job, &error));
 
-  EXPECT_EQ(job.workspace().overlay(), sx::Workspace::OVERLAY_HOST);
+  // Nothing to mount, so nothing to be privileged for: the tree arrives in a
+  // volume and the defaults stand.
   EXPECT_FALSE(job.isolation().keep_default_caps());
   EXPECT_FALSE(job.isolation().writable_rootfs());
+  EXPECT_FALSE(job.isolation().allow_new_privileges());
   EXPECT_EQ(job.isolation().add_capabilities_size(), 0);
+  ASSERT_EQ(job.isolation().tmpfs_size(), 1);
+  EXPECT_EQ(job.isolation().tmpfs(0).target(), "/tmp");
+  EXPECT_EQ(job.workspace().patch(), sx::Workspace::PATCH_IN_ENTRYPOINT);
+  EXPECT_EQ(job.workspace().tree_dir(), "/w/slot0/repo");
 }
 
-TEST(JobForOrderTest, TheInSandboxOverlayCostsExactlyTheseRelaxations) {
-  // The problem asks for it, not the worker: whether submitted build code may
-  // run privileged is a property of the problem's threat model.
-  proto::WorkOrder order = MatchOrder();
-  order.mutable_sandbox()->set_host_overlay(false);
-
+TEST(JobForOrderTest, PersistentStateLivesInVolumesUnlessTheHostBindsIt) {
   sx::Job job;
   std::string error;
-  ASSERT_TRUE(
-      JobForOrder(0, order, Config(), ContainerCapabilities(), &job, &error));
+  ASSERT_TRUE(JobForOrder(1, MatchOrder(), Config(), ContainerCapabilities(),
+                          &job, &error));
+  // Named per slot and per worker, so two slots never share an output base
+  // and two workers on one daemon can be told apart.
+  ASSERT_EQ(job.workspace().mounts_size(), 1);
+  EXPECT_EQ(job.workspace().mounts(0).kind(), sx::Mount::VOLUME);
+  EXPECT_EQ(job.workspace().mounts(0).source(), "arena-slot1-output_base");
+  const sx::Step &build = job.phases(0).foreground();
+  ASSERT_EQ(build.mounts_size(), 1);
+  EXPECT_EQ(build.mounts(0).kind(), sx::Mount::VOLUME);
+  EXPECT_EQ(build.mounts(0).source(), "arena-disk_cache");
 
-  // The mode ARENA.md says is not a boundary, stated as what it gives up.
-  EXPECT_EQ(job.workspace().overlay(), sx::Workspace::OVERLAY_IN_SANDBOX);
-  EXPECT_TRUE(job.isolation().keep_default_caps());
-  EXPECT_TRUE(job.isolation().writable_rootfs());
-  EXPECT_TRUE(job.isolation().allow_new_privileges());
-  ASSERT_EQ(job.isolation().add_capabilities_size(), 1);
-  EXPECT_EQ(job.isolation().add_capabilities(0), "SYS_ADMIN");
+  // The opt-in: host directories, as the daemon resolves them.
+  OrderJobConfig bound = Config();
+  bound.volume_prefix = "w2";
+  bound.bind_output_base_dir = "/fast/output_bases";
+  bound.bind_disk_cache_dir = "/fast/disk_cache";
+  sx::Job bound_job;
+  ASSERT_TRUE(JobForOrder(1, MatchOrder(), bound, ContainerCapabilities(),
+                          &bound_job, &error));
+  EXPECT_EQ(bound_job.workspace().mounts(0).kind(), sx::Mount::BIND);
+  EXPECT_EQ(bound_job.workspace().mounts(0).source(),
+            "/fast/output_bases/slot1");
+  EXPECT_EQ(bound_job.phases(0).foreground().mounts(0).kind(), sx::Mount::BIND);
+  EXPECT_EQ(bound_job.phases(0).foreground().mounts(0).source(),
+            "/fast/disk_cache");
+}
+
+TEST(JobForOrderTest, TheBuildCarriesNoMemoryOrPidCap) {
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(JobForOrder(0, MatchOrder(), Config(), ContainerCapabilities(),
+                          &job, &error));
+  // The problem's caps bound its solution; bazel's JVM and a few dozen
+  // compilers are the problem's own toolchain, bounded by the build timeout.
+  const sx::Isolation &build = job.phases(0).isolation();
+  EXPECT_EQ(build.memory_limit_mb(), 0u);
+  EXPECT_EQ(build.pids_limit(), 0u);
+  EXPECT_EQ(build.image(), "img:1");
+  EXPECT_EQ(job.phases(1).isolation().memory_limit_mb(), 4096u);
+  EXPECT_EQ(job.phases(1).isolation().pids_limit(), 512u);
 }
 
 TEST(JobForOrderTest, AGradedOrderIsOnePhasePerRun) {
@@ -285,8 +314,8 @@ TEST(JobForOrderTest, WithoutASandboxThePatchIsAppliedOnTheHost) {
   ASSERT_TRUE(JobForOrder(0, MatchOrder(), Config(), ProcessCapabilities(),
                           &job, &error));
 
-  EXPECT_EQ(job.workspace().overlay(), sx::Workspace::OVERLAY_NONE);
   EXPECT_EQ(job.workspace().patch(), sx::Workspace::PATCH_HOST);
+  EXPECT_EQ(job.workspace().scratch_dir(), "/w/slot0/scratch");
   EXPECT_TRUE(job.isolation().image().empty());
 }
 

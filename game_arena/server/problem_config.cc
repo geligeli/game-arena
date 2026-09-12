@@ -145,13 +145,6 @@ void ApplyProblemDefaults(proto::ProblemConfig *config) {
   if (sandbox->pids_limit() == 0) {
     sandbox->set_pids_limit(512);
   }
-  // Defaults to on: the in-container alternative needs CAP_SYS_ADMIN, and a
-  // container with that running submitted build code is not a boundary. The
-  // companion bool is what lets an explicit `false` survive defaulting.
-  if (!sandbox->host_overlay_set()) {
-    sandbox->set_host_overlay(true);
-    sandbox->set_host_overlay_set(true);
-  }
 
   if (config->has_grade()) {
     proto::GradeSpec *grade = config->mutable_grade();

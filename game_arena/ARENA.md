@@ -85,11 +85,16 @@ the environment so that the flag surface stays at one:
 |---|---|
 | `ARENA_MACHINE_CLASS` | what kind of host this is, e.g. `bench-c7i`. Nothing can derive a semantic label, and a graded problem can require one -- unset, this worker refuses those orders |
 | `ARENA_SLOTS` | orders at once; how much of this box to lend the arena. Default 2 |
-| `ARENA_WORK_DIR` | where per-slot checkouts and bazel output bases live. Default `/tmp/arena_sandbox`. Keep it off the repo: a work dir inside makes `bazel test //...` descend into the worker's own clone |
+| `ARENA_WORK_DIR` | where per-slot checkouts live, and the process engine's output bases and cache. Default `/tmp/arena_sandbox`. Keep it off the repo: a work dir inside makes `bazel test //...` descend into the worker's own clone |
+| `ARENA_VOLUME_PREFIX` | names the docker volumes a container's bazel output bases and disk cache persist in (`<prefix>-slot<N>-output_base`, `<prefix>-disk_cache`). Default `arena-<hostname>`; two workers on one daemon must differ |
+| `ARENA_BIND_OUTPUT_BASE`, `ARENA_BIND_DISK_CACHE` | optional. Host directories, as the docker daemon resolves them, to bind-mount for those caches instead of volumes -- a local disk you can inspect or share with your own builds. Nothing needs them; they are a performance choice |
 
 There is nothing for a bot to dial across the network either: a match's referee
 is started by the worker that runs the match, on a private network beside the
-two bots. A worker needs a route to the fleet service and nothing else.
+two bots. A worker needs a route to the fleet service and a docker socket, and
+nothing else: the daemon can be the host's, reached from inside a container,
+or a remote `DOCKER_HOST`, because nothing on the worker's filesystem is ever
+bind-mounted into a sandbox.
 
 ## Writing a candidate
 
@@ -155,17 +160,23 @@ the sandbox is what made it possible:
   match gets a per-order `--internal` bridge, so the two bots reach their
   referee and nothing else. There is no longer an outside broker to dial, which
   is what forced `--network=host` before.
-- **No capabilities.** The overlay is assembled *on the host* and the merged
-  tree bind-mounted in, so containers run `--cap-drop=ALL` with
-  `--security-opt=no-new-privileges`. The old in-container `mount` needed
-  `CAP_SYS_ADMIN`, and a container with that running submitted build code is
-  not a boundary. There is **no fallback**: if the host mount fails the order
-  fails, because quietly downgrading to privileged is the thing nobody notices.
-  This makes "the worker can mount overlayfs" (root, or a user namespace) a
-  prerequisite alongside docker itself; `--host_overlay=false` opts out and logs
-  a warning saying what it costs.
-- **A read-only root filesystem**, a non-root `--user`, and cgroup caps on
-  memory, CPU and pids.
+- **Nothing mounted from the worker.** The tree is exported with `tar` and
+  copied, with the patches, into per-job docker volumes through the daemon
+  (`docker create` + `docker cp`); the bazel output base and disk cache
+  persist in named volumes. So there is no overlay to assemble, no
+  `mount(8)` on the host or in the sandbox, and no path that has to exist on
+  both sides of a docker socket. A host that wants its caches on a local disk
+  it can inspect opts into bind mounts for exactly those two
+  (`ARENA_BIND_OUTPUT_BASE`, `ARENA_BIND_DISK_CACHE`); nothing requires it.
+- **No capabilities.** With nothing to mount, every container runs
+  `--cap-drop=ALL` with `--security-opt=no-new-privileges`, and there is no
+  privileged mode left to fall back to.
+- **A read-only root filesystem**, a non-root `--user` (the loader chowns the
+  copied tree to it), and cgroup caps on memory, CPU and pids.
+
+Kits are the other side of that line: a participant's development environment
+is their own machine, with whatever access they give it. Only what they
+submit runs under the sandbox.
 
 What is enforced above that, at submit time:
 
@@ -193,13 +204,14 @@ symlinks local overrides.
 
 Each worker slot owns a persistent checkout and a persistent bazel
 `--output_base`, reused across orders; all slots share one `--disk_cache`.
-The docker backend keeps the same layout: the checkout stays on the host (git
-runs there) and is mounted as the lowerdir of a per-order overlay, and the
-`--output_base` is bind-mounted into both containers.
-This is the difference between a candidate build taking seconds and taking
-minutes — a fresh output base re-analyses the whole workspace and relinks every
-dependency, while a warm one compiles only the submitted files. Slots never
-share a checkout, so parallel builds do not queue on bazel's workspace lock.
+The docker backend keeps the same shape: the checkout stays on the worker (git
+runs there) and each order's copy of it is loaded into a volume, while the
+`--output_base` and the disk cache live in named volumes that every order of
+that slot mounts. This is the difference between a candidate build taking
+seconds and taking minutes — a fresh output base re-analyses the whole
+workspace and relinks every dependency, while a warm one compiles only the
+submitted files. Slots never share an output base, so parallel builds do not
+queue on bazel's lock.
 
 ## Two ways to be scored
 

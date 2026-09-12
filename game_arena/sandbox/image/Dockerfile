@@ -99,23 +99,30 @@ RUN rm -f /src/.bazelrc.local \
 FROM base
 
 COPY --from=vendor /etc/bazel.bazelrc /etc/bazel.bazelrc
-COPY --from=vendor --chown=ubuntu:ubuntu /opt/arena /opt/arena
+COPY --from=vendor /opt/arena /opt/arena
+# Readable by whoever the sandbox runs as. That is the problem's choice, and
+# even root there has dropped every capability, so a file bazel vendored with
+# owner-only permissions is a file the build cannot read.
+RUN chmod -R a+rX /opt/arena
 
 # System rc rather than the problem's bazel_flags: a worker's bazel invocation
-# is the problem's business, and this is the image's. The install base is
-# extracted here once instead of on every container start -- the sandbox's
-# root filesystem is read-only and its HOME is scratch, so without this each
-# order would begin by unpacking ~200MB of bazel into a tmpfs.
-RUN echo 'common --vendor_dir=/opt/arena/vendor' >> /etc/bazel.bazelrc \
- && echo 'startup --install_base=/opt/arena/bazel_install' >> /etc/bazel.bazelrc
-USER ubuntu
-WORKDIR /
-RUN bazel --output_user_root=/tmp/bazel_install version \
- && bazel --output_user_root=/tmp/bazel_install shutdown \
- && rm -rf /tmp/bazel_install
+# is the problem's business, and this is the image's. Bazel's own installation
+# is not unpacked here: it wants a lock file beside itself, and the sandbox's
+# root filesystem is read-only, so the worker points --install_base into the
+# persistent output-base volume instead and pays for the unpack once per slot.
+RUN echo 'common --vendor_dir=/opt/arena/vendor' >> /etc/bazel.bazelrc
 
-# The image's default user stays root: the sandbox's own isolation decides
-# who runs (sandbox.run_as_user, or root for the in-container overlay, which
-# needs it), and the read-only root filesystem it runs under makes a non-root
-# default unable to create the mount points the entrypoint needs.
+# Vendor mode keeps a `bazel-external` symlink inside the vendor directory,
+# pointing at the output base's external tree, and refuses to run if it cannot
+# create it -- which on a read-only root it cannot. The worker mounts every
+# sandbox's output base at /output_base (sandbox/common/docker.h), so the link
+# can be made here once, with the target it will have at run time. The one
+# `bazel vendor` left behind points into the build stage's scratch and is
+# replaced.
+RUN ln -sfn /output_base/external /opt/arena/vendor/bazel-external
+
+# The image's default user stays root: who a sandbox runs as is the problem's
+# choice (sandbox.run_as_user), and the tree it is handed is chowned to that
+# user by the worker before anything starts.
 USER root
+WORKDIR /
