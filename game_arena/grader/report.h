@@ -7,9 +7,9 @@
 //
 //   {"metrics": {"score": 87, "solved": 42}}
 //
-// which the worker reads back (sandbox/worker/metric_report.h). It is simple
-// enough to emit with printf, and a grader in another language should. This
-// exists so a grader that is already C++ does not hand-roll it, and so the
+// which the worker reads back (common/metric_report/metric_report.h). It is
+// simple enough to emit with printf, and a grader in another language should.
+// This exists so a grader that is already C++ does not hand-roll it, and so the
 // writer and the reader are in one repo and cannot drift -- report_test round
 // trips through the real parser.
 //

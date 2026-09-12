@@ -5,14 +5,15 @@
 
 #include "absl/log/log.h"
 #include "game_arena/common/kv_options/kv_options.h"
+#include "game_arena/common/metric_report/metric_report.h"
 #include "game_arena/common/process/process.h"
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/common/text.h"
 #include "game_arena/sandbox/worker/bot_launch.h"
 #include "game_arena/sandbox/worker/build_log.h"
 #include "game_arena/sandbox/worker/checkout.h"
+#include "game_arena/sandbox/worker/grade_policy.h"
 #include "game_arena/sandbox/worker/match_tally.h"
-#include "game_arena/sandbox/worker/metric_report.h"
 
 namespace tournament_arena {
 
@@ -595,7 +596,7 @@ auto DockerBackend::RunGrade(int slot, const proto::WorkOrder &order,
     }
 
     std::map<std::string, double> metrics;
-    if (!ParseMetricReport(ReadFile(host_report), output, &metrics)) {
+    if (!metric_report::Parse(ReadFile(host_report), output, &metrics)) {
       outcome.error =
           "graded run produced no metrics: write JSON to $ARENA_REPORT or "
           "print a RESULT line. Output was: " +
@@ -605,12 +606,8 @@ auto DockerBackend::RunGrade(int slot, const proto::WorkOrder &order,
     runs.push_back(std::move(metrics));
   }
 
-  const auto aggregated = AggregateMetrics(runs, grade.aggregate());
-  for (const std::string &name : grade.metric_names()) {
-    const auto it = aggregated.find(name);
-    if (it != aggregated.end()) {
-      outcome.metrics[name] = it->second;
-    }
+  for (const auto &[name, value] : ScoreGradedRuns(runs, grade)) {
+    outcome.metrics[name] = value;
   }
   if (outcome.metrics.empty()) {
     outcome.error =

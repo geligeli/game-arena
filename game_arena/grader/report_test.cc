@@ -7,7 +7,7 @@
 #include <sstream>
 #include <string>
 
-#include "game_arena/sandbox/worker/metric_report.h"
+#include "game_arena/common/metric_report/metric_report.h"
 #include "gtest/gtest.h"
 
 namespace grader {
@@ -28,14 +28,14 @@ TEST(Report, RoundTripsThroughTheWorkersParser) {
   const Metrics written{{"score", 87.5}, {"solved", 42}, {"wall_ms", 1234}};
 
   Metrics parsed;
-  ASSERT_TRUE(tournament_arena::ParseMetricReport(RenderReport(written),
-                                                  /*stdout_text=*/"", &parsed));
+  ASSERT_TRUE(metric_report::Parse(RenderReport(written),
+                                   /*stdout_text=*/"", &parsed));
   EXPECT_EQ(parsed, written);
 }
 
 TEST(Report, RoundTripsAnEmptyReport) {
   Metrics parsed{{"stale", 1}};
-  tournament_arena::ParseMetricReport(RenderReport({}), "", &parsed);
+  metric_report::Parse(RenderReport({}), "", &parsed);
   EXPECT_TRUE(parsed.empty() || parsed.count("stale") == 0)
       << "an empty report must not leave a previous run's numbers behind";
 }
@@ -46,8 +46,7 @@ TEST(Report, SurvivesValuesThatNaiveFormattingWouldMangle) {
                         {"negative", -17.5},
                         {"zero", 0.0}};
   Metrics parsed;
-  ASSERT_TRUE(
-      tournament_arena::ParseMetricReport(RenderReport(written), "", &parsed));
+  ASSERT_TRUE(metric_report::Parse(RenderReport(written), "", &parsed));
   ASSERT_EQ(parsed.size(), written.size());
   for (const auto &[name, value] : written) {
     ASSERT_TRUE(parsed.count(name)) << name;

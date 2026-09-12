@@ -18,7 +18,7 @@ cc_test(
     srcs = ["report_test.cc"],
     deps = [
         ":report",
-        "//game_arena/sandbox/worker:metric_report",
+        "//game_arena/common/metric_report",
         "@googletest//:gtest_main",
     ],
 )

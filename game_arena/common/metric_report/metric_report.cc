@@ -1,4 +1,4 @@
-#include "game_arena/sandbox/worker/metric_report.h"
+#include "game_arena/common/metric_report/metric_report.h"
 
 #include <google/protobuf/util/json_util.h>
 
@@ -14,7 +14,7 @@
 
 #include "game_arena/proto/problem.pb.h"
 
-namespace tournament_arena {
+namespace metric_report {
 
 namespace {
 
@@ -70,11 +70,11 @@ auto ParseResultLineMetrics(std::string_view text,
 
 }  // namespace
 
-auto ParseMetricReport(std::string_view json, std::string_view stdout_text,
-                       std::map<std::string, double> *metrics) -> bool {
+auto Parse(std::string_view json, std::string_view stdout_text,
+           std::map<std::string, double> *metrics) -> bool {
   metrics->clear();
   if (!json.empty()) {
-    proto::MetricReport report;
+    tournament_arena::proto::MetricReport report;
     // Unknown fields are tolerated: a command that reports more than the schema
     // knows about is being helpful, not wrong.
     google::protobuf::json::ParseOptions options;
@@ -93,43 +93,4 @@ auto ParseMetricReport(std::string_view json, std::string_view stdout_text,
   return ParseResultLineMetrics(stdout_text, metrics);
 }
 
-auto AggregateMetrics(const std::vector<std::map<std::string, double>> &runs,
-                      proto::GradeOrder::Aggregate how)
-    -> std::map<std::string, double> {
-  std::map<std::string, std::vector<double>> gathered;
-  for (const auto &run : runs) {
-    for (const auto &[name, value] : run) {
-      gathered[name].push_back(value);
-    }
-  }
-
-  std::map<std::string, double> out;
-  for (auto &[name, values] : gathered) {
-    if (values.empty()) {
-      continue;
-    }
-    switch (how) {
-      case proto::GradeOrder::MIN:
-        out[name] = *std::min_element(values.begin(), values.end());
-        break;
-      case proto::GradeOrder::MEAN:
-        out[name] = std::accumulate(values.begin(), values.end(), 0.0) /
-                    static_cast<double>(values.size());
-        break;
-      case proto::GradeOrder::MEDIAN:
-      default: {
-        std::sort(values.begin(), values.end());
-        const std::size_t mid = values.size() / 2;
-        // An even number of runs takes the mean of the middle two, so the
-        // median of two runs is their average rather than an arbitrary one.
-        out[name] = values.size() % 2 == 1
-                        ? values[mid]
-                        : (values[mid - 1] + values[mid]) / 2.0;
-        break;
-      }
-    }
-  }
-  return out;
-}
-
-}  // namespace tournament_arena
+}  // namespace metric_report

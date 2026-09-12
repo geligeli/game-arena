@@ -19,6 +19,7 @@
 
 #include "absl/log/log.h"
 #include "game_arena/common/kv_options/kv_options.h"
+#include "game_arena/common/metric_report/metric_report.h"
 #include "game_arena/common/process/process.h"
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/common/step.h"
@@ -26,8 +27,8 @@
 #include "game_arena/sandbox/worker/bot_launch.h"
 #include "game_arena/sandbox/worker/build_log.h"
 #include "game_arena/sandbox/worker/checkout.h"
+#include "game_arena/sandbox/worker/grade_policy.h"
 #include "game_arena/sandbox/worker/match_tally.h"
-#include "game_arena/sandbox/worker/metric_report.h"
 
 namespace tournament_arena {
 
@@ -443,7 +444,7 @@ auto LocalBackend::RunGrade(int slot, const proto::WorkOrder &order,
     }
 
     std::map<std::string, double> metrics;
-    if (!ParseMetricReport(ReadFile(report), output, &metrics)) {
+    if (!metric_report::Parse(ReadFile(report), output, &metrics)) {
       outcome.error =
           "graded run produced no metrics: write JSON to $ARENA_REPORT or "
           "print a RESULT line. Output was: " +
@@ -453,15 +454,8 @@ auto LocalBackend::RunGrade(int slot, const proto::WorkOrder &order,
     runs.push_back(std::move(metrics));
   }
 
-  const auto aggregated = AggregateMetrics(runs, grade.aggregate());
-  // Only what the problem ranks on is kept. A benchmark printing more is
-  // normal; storing it all would let a report grow the standings file without
-  // bound.
-  for (const std::string &name : grade.metric_names()) {
-    const auto it = aggregated.find(name);
-    if (it != aggregated.end()) {
-      outcome.metrics[name] = it->second;
-    }
+  for (const auto &[name, value] : ScoreGradedRuns(runs, grade)) {
+    outcome.metrics[name] = value;
   }
   if (outcome.metrics.empty()) {
     outcome.error =

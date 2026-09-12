@@ -20,21 +20,17 @@ cc_library(
 # Reading what a graded command measured, and folding several runs into one
 # number per metric.
 cc_library(
-    name = "metric_report",
-    srcs = ["metric_report.cc"],
-    hdrs = ["metric_report.h"],
-    deps = [
-        "//game_arena/proto:arena_cc_proto",
-        "//game_arena/proto:problem_cc_proto",
-        "@protobuf//:protobuf",
-    ],
+    name = "grade_policy",
+    srcs = ["grade_policy.cc"],
+    hdrs = ["grade_policy.h"],
+    deps = ["//game_arena/proto:arena_cc_proto"],
 )
 
 cc_test(
-    name = "metric_report_test",
-    srcs = ["metric_report_test.cc"],
+    name = "grade_policy_test",
+    srcs = ["grade_policy_test.cc"],
     deps = [
-        ":metric_report",
+        ":grade_policy",
         "@googletest//:gtest_main",
     ],
 )
@@ -97,7 +93,8 @@ cc_library(
         ":build_log",
         ":checkout",
         ":match_tally",
-        ":metric_report",
+        ":grade_policy",
+        "//game_arena/common/metric_report",
         ":bot_launch",
         ":sandbox_backend",
         "//game_arena/common/process",
@@ -119,7 +116,8 @@ cc_library(
         ":build_log",
         ":checkout",
         ":match_tally",
-        ":metric_report",
+        ":grade_policy",
+        "//game_arena/common/metric_report",
         ":bot_launch",
         ":sandbox_backend",
         "//game_arena/common/process",
