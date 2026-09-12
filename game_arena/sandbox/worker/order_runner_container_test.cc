@@ -1,4 +1,5 @@
-// End-to-end test of DockerBackend against fake `docker` and `git` scripts:
+// End-to-end test of OrderRunner on the container engine, against fake
+// `docker` and `git` scripts:
 // shell scripts that log every invocation and emulate just enough of each
 // tool (a clone that creates a .git dir, a checkout that records its commit,
 // containers that behave per container name). The overlay mount never
@@ -15,7 +16,8 @@
 #include <string>
 #include <system_error>
 
-#include "game_arena/sandbox/worker/docker_backend.h"
+#include "game_arena/sandbox/exec/container_engine.h"
+#include "game_arena/sandbox/worker/order_runner.h"
 
 namespace tournament_arena {
 namespace {
@@ -24,11 +26,11 @@ namespace proto = tournament_arena::proto;
 
 constexpr char kFakeCommit[] = "abc123def456";
 
-class DockerBackendIntegrationTest : public ::testing::Test {
+class OrderRunnerContainerTest : public ::testing::Test {
  protected:
   static void SetUpTestSuite() {
     root_ = std::filesystem::temp_directory_path() /
-            ("docker_backend_itest_" + std::to_string(::getpid()));
+            ("order_runner_container_itest_" + std::to_string(::getpid()));
     // A "repository" for the backend to clone: the fake git only needs the
     // directory to exist, but Warmup requires the .git marker.
     std::filesystem::create_directories(root_ / "repo_src" / ".git");
@@ -53,23 +55,27 @@ class DockerBackendIntegrationTest : public ::testing::Test {
     std::filesystem::permissions(fake_mount_, std::filesystem::perms::owner_all,
                                  std::filesystem::perm_options::add);
 
-    DockerBackendConfig config;
-    config.docker = fake_docker_.string();
+    sandbox_exec::ContainerEngineConfig engine_config;
+    engine_config.docker = fake_docker_.string();
+    engine_ = std::make_unique<sandbox_exec::ContainerEngine>(engine_config);
+
+    OrderJobConfig config;
     config.git = fake_git_.string();
     config.mount = fake_mount_.string();
     config.umount = fake_mount_.string();
-    config.docker_image = "fake-image:1";
-    config.repo_dir = root_ / "repo_src";
+    config.image = "fake-image:1";
+    config.source_repo = (root_ / "repo_src").string();
     config.work_dir = root_ / "work";
     config.disk_cache = root_ / "work" / "disk_cache";
-    backend_ = std::make_unique<DockerBackend>(std::move(config));
+    runner_ = std::make_unique<OrderRunner>(engine_.get(), std::move(config));
 
     std::string error;
-    ASSERT_TRUE(backend_->Warmup(2, &error)) << error;
+    ASSERT_TRUE(runner_->Warmup(2, &error)) << error;
   }
 
   static void TearDownTestSuite() {
-    backend_.reset();
+    runner_.reset();
+    engine_.reset();
     std::error_code ec;
     std::filesystem::remove_all(root_, ec);
   }
@@ -190,7 +196,8 @@ class DockerBackendIntegrationTest : public ::testing::Test {
   // Every other assertion in this file is a substring match on one flag, which
   // cannot see a flag inserted in the middle of the argv or a reordered mount
   // list. This can. The script after `-c` is deliberately excluded: it spans
-  // lines and is already asserted byte for byte in docker_backend_test.cc.
+  // lines and is already asserted byte for byte in
+  // //game_arena/sandbox/exec:entrypoint_test.
   static auto RunArgvFor(const std::string &log,
                          const std::string &container) -> std::string {
     const std::string name_flag = "--name " + container + " ";
@@ -238,16 +245,19 @@ class DockerBackendIntegrationTest : public ::testing::Test {
   static std::filesystem::path fake_docker_;
   static std::filesystem::path fake_git_;
   static std::filesystem::path fake_mount_;
-  static std::unique_ptr<DockerBackend> backend_;
+  static std::unique_ptr<sandbox_exec::ContainerEngine> engine_;
+  static std::unique_ptr<OrderRunner> runner_;
 };
 
-std::filesystem::path DockerBackendIntegrationTest::root_;
-std::filesystem::path DockerBackendIntegrationTest::fake_docker_;
-std::filesystem::path DockerBackendIntegrationTest::fake_git_;
-std::filesystem::path DockerBackendIntegrationTest::fake_mount_;
-std::unique_ptr<DockerBackend> DockerBackendIntegrationTest::backend_;
+std::filesystem::path OrderRunnerContainerTest::root_;
+std::filesystem::path OrderRunnerContainerTest::fake_docker_;
+std::filesystem::path OrderRunnerContainerTest::fake_git_;
+std::filesystem::path OrderRunnerContainerTest::fake_mount_;
+std::unique_ptr<sandbox_exec::ContainerEngine>
+    OrderRunnerContainerTest::engine_;
+std::unique_ptr<OrderRunner> OrderRunnerContainerTest::runner_;
 
-TEST_F(DockerBackendIntegrationTest, WarmupClonesOneLowerDirPerSlot) {
+TEST_F(OrderRunnerContainerTest, WarmupClonesOneLowerDirPerSlot) {
   // The clone is a host-side git step, not a docker one.
   const std::string git_log = ReadFile(root_ / "git.log");
   ExpectLogContains(git_log, "git clone --local " +
@@ -273,22 +283,22 @@ TEST_F(DockerBackendIntegrationTest, WarmupClonesOneLowerDirPerSlot) {
 // coordinator defaulted and no worker ever passed on, so a problem asking for a
 // stronger builtin was silently ignored because the referee's own flag default
 // happened to match.
-TEST_F(DockerBackendIntegrationTest, RegistryOptionsReachTheReferee) {
+TEST_F(OrderRunnerContainerTest, RegistryOptionsReachTheReferee) {
   proto::WorkOrder order = MakeOrder("opts-1", "c-ok");
   (*order.mutable_registry_options())["mcts_iterations"] = "800";
   (*order.mutable_registry_options())["depth"] = "7";
-  ASSERT_TRUE(backend_->RunOrder(0, order).build_ok);
+  ASSERT_TRUE(runner_->RunOrder(0, order, {}).build_ok);
 
   ExpectLogContains(ReadFile(root_ / "docker.log"),
                     "'--registry_options=depth=7,mcts_iterations=800'");
 }
 
 // And an order that sets none must produce exactly the argv it always did.
-TEST_F(DockerBackendIntegrationTest, NoRegistryOptionsMeansNoFlag) {
+TEST_F(OrderRunnerContainerTest, NoRegistryOptionsMeansNoFlag) {
   // The fake docker log is shared by the whole suite, so look only at what
   // this order appended to it.
   const std::size_t before = ReadFile(root_ / "docker.log").size();
-  ASSERT_TRUE(backend_->RunOrder(0, MakeOrder("noopts-1", "c-ok")).build_ok);
+  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("noopts-1", "c-ok"), {}).build_ok);
 
   const std::string mine = ReadFile(root_ / "docker.log").substr(before);
   ASSERT_NE(mine.find("saw-0-noopts-1-referee"), std::string::npos)
@@ -296,8 +306,9 @@ TEST_F(DockerBackendIntegrationTest, NoRegistryOptionsMeansNoFlag) {
   EXPECT_EQ(mine.find("--registry_options"), std::string::npos) << mine;
 }
 
-TEST_F(DockerBackendIntegrationTest, OrderBuildsInContainerAndParsesResult) {
-  const OrderOutcome outcome = backend_->RunOrder(0, MakeOrder("ok-1", "c-ok"));
+TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
+  const OrderOutcome outcome =
+      runner_->RunOrder(0, MakeOrder("ok-1", "c-ok"), {});
 
   EXPECT_TRUE(outcome.build_ok) << outcome.error;
   EXPECT_TRUE(outcome.error.empty()) << outcome.error;
@@ -402,8 +413,8 @@ TEST_F(DockerBackendIntegrationTest, OrderBuildsInContainerAndParsesResult) {
 // The isolation this backend rests on, asserted as flags rather than trusted
 // as a comment. A submitted genrule is arbitrary code; the claim is that it
 // runs with nothing to reach and nothing to keep.
-TEST_F(DockerBackendIntegrationTest, EveryContainerIsHardened) {
-  ASSERT_TRUE(backend_->RunOrder(0, MakeOrder("hard-1", "c-hard")).build_ok);
+TEST_F(OrderRunnerContainerTest, EveryContainerIsHardened) {
+  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("hard-1", "c-hard"), {}).build_ok);
   const std::string log = ReadFile(root_ / "docker.log");
 
   int hardened = 0;
@@ -425,9 +436,9 @@ TEST_F(DockerBackendIntegrationTest, EveryContainerIsHardened) {
   EXPECT_GE(hardened, 2) << "expected at least a build and a run container";
 }
 
-TEST_F(DockerBackendIntegrationTest, BuildFailureIsReportedNotErrored) {
+TEST_F(OrderRunnerContainerTest, BuildFailureIsReportedNotErrored) {
   const OrderOutcome outcome =
-      backend_->RunOrder(0, MakeOrder("failbuild-1", "failbuild-1"));
+      runner_->RunOrder(0, MakeOrder("failbuild-1", "failbuild-1"), {});
 
   // A build failure is the candidate's fault: a completed order with the
   // compacted diagnostics, nothing to play.
@@ -441,11 +452,11 @@ TEST_F(DockerBackendIntegrationTest, BuildFailureIsReportedNotErrored) {
             std::string::npos);
 }
 
-TEST_F(DockerBackendIntegrationTest, RunTimeoutKillsTheContainer) {
+TEST_F(OrderRunnerContainerTest, RunTimeoutKillsTheContainer) {
   proto::WorkOrder order = MakeOrder("blockrun-1", "blockrun-1");
   order.set_run_timeout_s(2);
 
-  const OrderOutcome outcome = backend_->RunOrder(0, order);
+  const OrderOutcome outcome = runner_->RunOrder(0, order, {});
 
   EXPECT_TRUE(outcome.build_ok) << outcome.error;
   EXPECT_NE(outcome.error.find("games timed out after 2s"), std::string::npos)
@@ -458,11 +469,11 @@ TEST_F(DockerBackendIntegrationTest, RunTimeoutKillsTheContainer) {
 // A side with no patch cannot be staged, and nothing should reach docker.
 // The path-escape check itself now lives at submit time, in the diff parser --
 // the worker's job is to notice it has nothing to apply.
-TEST_F(DockerBackendIntegrationTest, SideWithoutAPatchIsRejected) {
+TEST_F(OrderRunnerContainerTest, SideWithoutAPatchIsRejected) {
   proto::WorkOrder order = MakeOrder("esc-1", "esc-1");
   order.mutable_candidate()->clear_patch();
 
-  const OrderOutcome outcome = backend_->RunOrder(0, order);
+  const OrderOutcome outcome = runner_->RunOrder(0, order, {});
 
   EXPECT_FALSE(outcome.build_ok);
   EXPECT_NE(outcome.error.find("carries no patch"), std::string::npos)
@@ -472,28 +483,26 @@ TEST_F(DockerBackendIntegrationTest, SideWithoutAPatchIsRejected) {
             std::string::npos);
 }
 
-TEST_F(DockerBackendIntegrationTest, WarmupValidatesTheRepo) {
-  DockerBackendConfig config;
-  config.docker = fake_docker_.string();
+TEST_F(OrderRunnerContainerTest, WarmupValidatesTheRepo) {
+  OrderJobConfig config;
   config.git = fake_git_.string();
-  config.docker_image = "fake-image:1";
+  config.image = "fake-image:1";
   config.work_dir = root_ / "work_norepo";
 
-  config.repo_dir = root_ / "does_not_exist";
-  DockerBackend missing(config);
+  config.source_repo = (root_ / "does_not_exist").string();
+  OrderRunner missing(engine_.get(), config);
   std::string error;
   EXPECT_FALSE(missing.Warmup(1, &error));
   EXPECT_NE(error.find("not a directory"), std::string::npos) << error;
 
   const std::filesystem::path plain = root_ / "not_a_repo";
   std::filesystem::create_directories(plain);
-  config.repo_dir = plain;
-  DockerBackend not_git(config);
+  config.source_repo = plain.string();
+  OrderRunner not_git(engine_.get(), config);
   error.clear();
   EXPECT_FALSE(not_git.Warmup(1, &error));
   EXPECT_NE(error.find("not a git repository"), std::string::npos) << error;
 }
-
 
 // The whole argv, not one flag of it.
 //
@@ -502,8 +511,8 @@ TEST_F(DockerBackendIntegrationTest, WarmupValidatesTheRepo) {
 // These two pin the complete command line for the two container shapes an
 // order starts, which is what makes a refactor of the backend reviewable: the
 // emitted argv either is byte-identical or the diff says exactly how it moved.
-TEST_F(DockerBackendIntegrationTest, WholeDockerRunArgvIsPinned) {
-  ASSERT_TRUE(backend_->RunOrder(0, MakeOrder("argv-1", "c-ok")).build_ok);
+TEST_F(OrderRunnerContainerTest, WholeDockerRunArgvIsPinned) {
+  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("argv-1", "c-ok"), {}).build_ok);
   const std::string log = ReadFile(root_ / "docker.log");
   const std::string work = (root_ / "work").string();
   const std::string slot = work + "/slot0";
@@ -515,15 +524,22 @@ TEST_F(DockerBackendIntegrationTest, WholeDockerRunArgvIsPinned) {
             "--cap-drop ALL --security-opt no-new-privileges --read-only "
             "--tmpfs /tmp:exec --memory 4096m --pids-limit 512 "
             "--network none "
-            "--mount type=bind,source=" + slot + "/merged,target=/workspace "
-            "--mount type=bind,source=" + slot + "/overlay,target=/sandbox "
-            "--mount type=bind,source=" + slot +
+            "--mount type=bind,source=" +
+                slot +
+                "/merged,target=/workspace "
+                "--mount type=bind,source=" +
+                slot +
+                "/overlay,target=/sandbox "
+                "--mount type=bind,source=" +
+                slot +
                 "/bazel_output_base,target=/output_base "
-            "--mount type=bind,source=" + slot +
+                "--mount type=bind,source=" +
+                slot +
                 "/patches,target=/patches,readonly "
-            "--mount type=bind,source=" + work +
+                "--mount type=bind,source=" +
+                work +
                 "/disk_cache,target=/disk_cache "
-            "--entrypoint /bin/sh fake-image:1");
+                "--entrypoint /bin/sh fake-image:1");
 
   // The bot: same hardening, joined to the order's private bridge instead of
   // no network, kept after it exits so its output can still be read, and with
@@ -533,11 +549,16 @@ TEST_F(DockerBackendIntegrationTest, WholeDockerRunArgvIsPinned) {
             "--cap-drop ALL --security-opt no-new-privileges --read-only "
             "--tmpfs /tmp:exec --memory 4096m --pids-limit 512 "
             "--network saw-0-argv-1-net "
-            "--mount type=bind,source=" + slot + "/merged,target=/workspace "
-            "--mount type=bind,source=" + slot + "/overlay,target=/sandbox "
-            "--mount type=bind,source=" + slot +
+            "--mount type=bind,source=" +
+                slot +
+                "/merged,target=/workspace "
+                "--mount type=bind,source=" +
+                slot +
+                "/overlay,target=/sandbox "
+                "--mount type=bind,source=" +
+                slot +
                 "/bazel_output_base,target=/output_base "
-            "--entrypoint /bin/sh fake-image:1");
+                "--entrypoint /bin/sh fake-image:1");
 }
 
 }  // namespace

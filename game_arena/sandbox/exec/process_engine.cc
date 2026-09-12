@@ -28,9 +28,6 @@ namespace {
 using sandbox_common::ReadFile;
 using sandbox_common::TailOf;
 
-constexpr char kPortFilePlaceholder[] = "{{port_file}}";
-constexpr char kScratchPlaceholder[] = "{{scratch}}";
-
 void Fail(proto::Status *status, proto::Status::Code code,
           const std::string &message, const std::string &phase,
           const std::string &step) {
@@ -38,15 +35,6 @@ void Fail(proto::Status *status, proto::Status::Code code,
   status->set_message(message);
   status->set_phase(phase);
   status->set_step(step);
-}
-
-auto Replaced(std::string text, const std::string &from,
-              const std::string &to) -> std::string {
-  for (std::size_t at = text.find(from); at != std::string::npos;
-       at = text.find(from, at + to.size())) {
-    text.replace(at, from.size(), to);
-  }
-  return text;
 }
 
 // The caller's environment plus |extra|. RunOptions treats an empty env as
@@ -160,17 +148,24 @@ auto ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   std::map<std::string, std::string> peers;
   std::vector<process::InputStreamProcess> background;
 
+  // Every placeholder this engine can resolve, rebuilt per step because
+  // {{port_file}} is per step and the peer addresses are only known once the
+  // background steps have published them.
+  const auto resolve = [&](const proto::Step &step) -> proto::Step {
+    std::map<std::string, std::string> replacements = {
+        {kScratchPlaceholder, scratch.string()},
+        {kPortFilePlaceholder, (log_dir / (step.name() + ".port")).string()}};
+    for (const auto &[name, address] : peers) {
+      replacements["{{peer:" + name + "}}"] = address;
+    }
+    return Substituted(step, replacements);
+  };
+
   const auto render = [&](const proto::Step &step) -> std::vector<std::string> {
+    const proto::Step resolved = resolve(step);
     std::vector<std::string> argv;
-    const std::filesystem::path port_file = log_dir / (step.name() + ".port");
-    for (const proto::Token &token : step.argv()) {
-      std::string text =
-          Replaced(token.text(), kScratchPlaceholder, scratch.string());
-      text = Replaced(text, kPortFilePlaceholder, port_file.string());
-      for (const auto &[name, address] : peers) {
-        text = Replaced(text, "{{peer:" + name + "}}", address);
-      }
-      argv.push_back(text);
+    for (const proto::Token &token : resolved.argv()) {
+      argv.push_back(token.text());
     }
     return argv;
   };
@@ -235,6 +230,13 @@ auto ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     return false;
   }
 
+  const proto::Step resolved_foreground = resolve(foreground);
+  const std::vector<std::string> foreground_env =
+      foreground.env().empty()
+          ? std::vector<std::string>{}
+          : InheritedEnvWith({resolved_foreground.env().begin(),
+                              resolved_foreground.env().end()});
+
   pid_t tracked = 0;
   const sandbox_common::StepResult ran = sandbox_common::RunStep(
       argv.front(), {argv.begin() + 1, argv.end()},
@@ -245,9 +247,7 @@ auto ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
         tracked = pgid;
         Track(job.id(), pgid);
       },
-      foreground.env().empty() ? std::vector<std::string>{}
-                               : InheritedEnvWith({foreground.env().begin(),
-                                                   foreground.env().end()}));
+      foreground_env);
   if (tracked != 0) {
     Untrack(job.id(), tracked);
   }

@@ -132,8 +132,9 @@ auto ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     wants_network |=
         NeedsPhaseNetwork(Merge(phase_isolation, step->isolation()));
   }
-  const std::string network =
-      wants_network ? SandboxName(job.id(), phase.name() + "-net") : "";
+  // One bridge per job, not per phase: a job has at most one phase that needs
+  // one, and the name is what a Cancel derives.
+  const std::string network = wants_network ? SandboxName(job.id(), "net") : "";
 
   const auto teardown = [&] {
     for (const proto::Step *step : steps) {
@@ -189,15 +190,23 @@ auto ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   const auto container_args = [&](const proto::Step &step,
                                   bool detached) -> std::vector<std::string> {
     const proto::Isolation isolation = Merge(phase_isolation, step.isolation());
+    // Inside a container the scratch dir is always at the same mount point,
+    // wherever it came from on the host.
+    const proto::Step resolved =
+        Substituted(step, {{kScratchPlaceholder, sandbox_common::kScratch}});
     sandbox_common::DockerRunSpec spec;
     spec.name = SandboxName(job.id(), step.name());
     spec.image = isolation.image();
-    spec.script = EntrypointScript(job.workspace(), step);
+    spec.script = EntrypointScript(job.workspace(), resolved);
     spec.rm = !step.keep_after_exit();
     spec.detached = detached;
     spec.network = NetworkArg(isolation, network);
     spec.extra_args = IsolationArgs(isolation);
     spec.mounts = WorkspaceMounts(job.workspace());
+    for (const proto::Mount &mount : step.mounts()) {
+      spec.mounts.push_back(sandbox_common::BindMount(
+          mount.source(), mount.target(), mount.readonly()));
+    }
     return sandbox_common::DockerRunArgs(spec);
   };
 

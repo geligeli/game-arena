@@ -177,6 +177,11 @@ message Step {
   // be asked for. The engine removes it at the end of the phase either way.
   bool keep_after_exit = 10;
 
+  // Mounts this step needs and the others do not. The workspace's mounts are
+  // what every step gets; a build's staging directory and build cache are
+  // not something the thing it built should be able to see.
+  repeated Mount mounts = 12;
+
   // Apply the workspace's staged patches before this step's command runs.
   // Set on the first step that runs in the workspace; the ones after it
   // inherit the patched tree through the overlay, which is why a graded run's

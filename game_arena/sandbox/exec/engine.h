@@ -15,6 +15,7 @@
 // business.
 
 #include <functional>
+#include <map>
 #include <string>
 
 #include "game_arena/sandbox/exec/sandbox_job.pb.h"
@@ -59,6 +60,24 @@ class Observer {
 // it was handed rather than from bookkeeping it hopes is up to date.
 auto SandboxName(const std::string &job_id,
                  const std::string &step_name) -> std::string;
+
+// The placeholders a step's argv and environment may carry, which only the
+// engine running it can resolve. The list is closed on purpose: a job that
+// spells one wrong gets it through verbatim rather than silently blank.
+//
+//   {{scratch}}       the writable directory a step may collect files from
+//   {{port_file}}     where a step should publish the port it bound
+//   {{peer:<name>}}   the address another step of this phase is reachable at
+inline constexpr char kScratchPlaceholder[] = "{{scratch}}";
+inline constexpr char kPortFilePlaceholder[] = "{{port_file}}";
+
+// |step| with every occurrence of each key in |replacements| replaced, in its
+// argv and in its environment. Applied to both because a graded run names its
+// report path in the environment and a bot names its peer in argv, and an
+// engine that substituted only one of them would work until it didn't.
+auto Substituted(const proto::Step &step,
+                 const std::map<std::string, std::string> &replacements)
+    -> proto::Step;
 
 class Engine {
  public:

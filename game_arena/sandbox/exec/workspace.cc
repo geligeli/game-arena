@@ -185,6 +185,11 @@ auto PrepareWorkspace(const proto::Workspace &ws,
       !MountOverlay(ws, log_dir, status)) {
     return false;
   }
+  // The scratch dir is where a step collects files from, so it has to exist
+  // even when there is no overlay to build it as a side effect.
+  if (!ws.upper_dir().empty()) {
+    std::filesystem::create_directories(ws.upper_dir(), ec);
+  }
   if (!WriteStagedFiles(ws, status)) {
     return false;
   }

@@ -16,7 +16,8 @@
 #include <string>
 #include <thread>
 
-#include "game_arena/sandbox/worker/local_backend.h"
+#include "game_arena/sandbox/exec/process_engine.h"
+#include "game_arena/sandbox/worker/order_runner.h"
 
 namespace tournament_arena {
 namespace {
@@ -31,7 +32,7 @@ auto WriteScript(const std::filesystem::path &path,
   std::filesystem::permissions(path, std::filesystem::perms::owner_all);
 }
 
-class LocalGradeTest : public ::testing::Test {
+class OrderRunnerProcessTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
@@ -51,15 +52,17 @@ class LocalGradeTest : public ::testing::Test {
                 "exit 0\n");
     WriteScript(root_ / "bazel", "#!/usr/bin/env bash\nexit 0\n");
 
-    LocalBackendConfig config;
-    config.repo_url = (root_ / "origin").string();
+    engine_ = std::make_unique<sandbox_exec::ProcessEngine>();
+
+    OrderJobConfig config;
+    config.source_repo = (root_ / "origin").string();
     config.work_dir = root_ / "work";
     config.git = (root_ / "git").string();
     config.bazel = (root_ / "bazel").string();
     std::filesystem::create_directories(root_ / "origin");
-    backend_ = std::make_unique<LocalBackend>(config);
+    runner_ = std::make_unique<OrderRunner>(engine_.get(), std::move(config));
     std::string error;
-    ASSERT_TRUE(backend_->Warmup(1, &error)) << error;
+    ASSERT_TRUE(runner_->Warmup(1, &error)) << error;
   }
 
   void TearDown() override { std::filesystem::remove_all(root_); }
@@ -86,16 +89,19 @@ class LocalGradeTest : public ::testing::Test {
   }
 
   std::filesystem::path root_;
-  std::unique_ptr<LocalBackend> backend_;
+  std::unique_ptr<sandbox_exec::ProcessEngine> engine_;
+  std::unique_ptr<OrderRunner> runner_;
 };
 
 // The command finds its report path in the environment and writes JSON there.
-TEST_F(LocalGradeTest, ReadsTheJsonReportTheCommandWrites) {
-  const OrderOutcome outcome = backend_->RunOrder(
-      0, MakeOrder("#!/usr/bin/env bash\n"
-                   "printf '{\"metrics\": {\"wall_ms\": 250.5}}' "
-                   "> \"$ARENA_REPORT\"\n",
-                   /*repeats=*/1, proto::GradeOrder::MIN));
+TEST_F(OrderRunnerProcessTest, ReadsTheJsonReportTheCommandWrites) {
+  const OrderOutcome outcome = runner_->RunOrder(
+      0,
+      MakeOrder("#!/usr/bin/env bash\n"
+                "printf '{\"metrics\": {\"wall_ms\": 250.5}}' "
+                "> \"$ARENA_REPORT\"\n",
+                /*repeats=*/1, proto::GradeOrder::MIN),
+      {});
 
   EXPECT_TRUE(outcome.build_ok);
   EXPECT_EQ(outcome.error, "");
@@ -105,16 +111,17 @@ TEST_F(LocalGradeTest, ReadsTheJsonReportTheCommandWrites) {
 }
 
 // One timing is noise; the aggregate over the runs is the score.
-TEST_F(LocalGradeTest, RepeatsTheRunAndTakesTheBest) {
+TEST_F(OrderRunnerProcessTest, RepeatsTheRunAndTakesTheBest) {
   // Each run reports a different number, driven by a counter on disk.
-  const OrderOutcome outcome = backend_->RunOrder(
+  const OrderOutcome outcome = runner_->RunOrder(
       0,
       MakeOrder("#!/usr/bin/env bash\n"
                 "n=$(cat /tmp/local_grade_counter 2>/dev/null || echo 0)\n"
                 "n=$((n + 1)); echo $n > /tmp/local_grade_counter\n"
                 "printf '{\"metrics\": {\"wall_ms\": %d}}' $((400 - n * 100))"
                 " > \"$ARENA_REPORT\"\n",
-                /*repeats=*/3, proto::GradeOrder::MIN));
+                /*repeats=*/3, proto::GradeOrder::MIN),
+      {});
 
   std::filesystem::remove("/tmp/local_grade_counter");
   EXPECT_EQ(outcome.error, "");
@@ -125,45 +132,52 @@ TEST_F(LocalGradeTest, RepeatsTheRunAndTakesTheBest) {
 }
 
 // A benchmark that only knows how to print a line is not shut out.
-TEST_F(LocalGradeTest, AcceptsAResultLineInsteadOfAReport) {
-  const OrderOutcome outcome = backend_->RunOrder(
-      0, MakeOrder("#!/usr/bin/env bash\necho 'RESULT wall_ms=42'\n", 1,
-                   proto::GradeOrder::MIN));
+TEST_F(OrderRunnerProcessTest, AcceptsAResultLineInsteadOfAReport) {
+  const OrderOutcome outcome = runner_->RunOrder(
+      0,
+      MakeOrder("#!/usr/bin/env bash\necho 'RESULT wall_ms=42'\n", 1,
+                proto::GradeOrder::MIN),
+      {});
   EXPECT_EQ(outcome.error, "");
   EXPECT_DOUBLE_EQ(outcome.metrics.at("wall_ms"), 42.0);
 }
 
 // A benchmark reporting more than the problem ranks on is normal; the extra is
 // dropped rather than stored, so a report cannot grow the standings unbounded.
-TEST_F(LocalGradeTest, KeepsOnlyTheProblemsMetrics) {
-  const OrderOutcome outcome = backend_->RunOrder(
-      0, MakeOrder("#!/usr/bin/env bash\n"
-                   "printf '{\"metrics\": {\"wall_ms\": 10, \"noise\": 99}}' "
-                   "> \"$ARENA_REPORT\"\n",
-                   1, proto::GradeOrder::MIN));
+TEST_F(OrderRunnerProcessTest, KeepsOnlyTheProblemsMetrics) {
+  const OrderOutcome outcome = runner_->RunOrder(
+      0,
+      MakeOrder("#!/usr/bin/env bash\n"
+                "printf '{\"metrics\": {\"wall_ms\": 10, \"noise\": 99}}' "
+                "> \"$ARENA_REPORT\"\n",
+                1, proto::GradeOrder::MIN),
+      {});
   EXPECT_EQ(outcome.error, "");
   EXPECT_TRUE(outcome.metrics.contains("wall_ms"));
   EXPECT_FALSE(outcome.metrics.contains("noise"));
 }
 
 // A nonzero exit means the measurement is not trustworthy, whatever it printed.
-TEST_F(LocalGradeTest, RefusesToScoreAFailedRun) {
-  const OrderOutcome outcome = backend_->RunOrder(
+TEST_F(OrderRunnerProcessTest, RefusesToScoreAFailedRun) {
+  const OrderOutcome outcome = runner_->RunOrder(
       0,
       MakeOrder("#!/usr/bin/env bash\n"
                 "printf '{\"metrics\": {\"wall_ms\": 1}}' > \"$ARENA_REPORT\"\n"
                 "echo 'segfault' >&2\n"
                 "exit 3\n",
-                1, proto::GradeOrder::MIN));
+                1, proto::GradeOrder::MIN),
+      {});
   EXPECT_TRUE(outcome.metrics.empty()) << "a failed run must not be scored";
   EXPECT_NE(outcome.error.find("exited 3"), std::string::npos) << outcome.error;
   EXPECT_NE(outcome.error.find("segfault"), std::string::npos) << outcome.error;
 }
 
-TEST_F(LocalGradeTest, SaysSoWhenNothingWasMeasured) {
-  const OrderOutcome outcome = backend_->RunOrder(
-      0, MakeOrder("#!/usr/bin/env bash\necho 'ran, measured nothing'\n", 1,
-                   proto::GradeOrder::MIN));
+TEST_F(OrderRunnerProcessTest, SaysSoWhenNothingWasMeasured) {
+  const OrderOutcome outcome = runner_->RunOrder(
+      0,
+      MakeOrder("#!/usr/bin/env bash\necho 'ran, measured nothing'\n", 1,
+                proto::GradeOrder::MIN),
+      {});
   EXPECT_TRUE(outcome.metrics.empty());
   EXPECT_NE(outcome.error.find("ARENA_REPORT"), std::string::npos)
       << outcome.error;
@@ -171,12 +185,13 @@ TEST_F(LocalGradeTest, SaysSoWhenNothingWasMeasured) {
 
 // The command reports a number the problem does not rank on, so there is
 // nothing to place it by.
-TEST_F(LocalGradeTest, SaysSoWhenTheProblemsMetricIsMissing) {
-  const OrderOutcome outcome = backend_->RunOrder(
+TEST_F(OrderRunnerProcessTest, SaysSoWhenTheProblemsMetricIsMissing) {
+  const OrderOutcome outcome = runner_->RunOrder(
       0,
       MakeOrder("#!/usr/bin/env bash\n"
                 "printf '{\"metrics\": {\"other\": 5}}' > \"$ARENA_REPORT\"\n",
-                1, proto::GradeOrder::MIN));
+                1, proto::GradeOrder::MIN),
+      {});
   EXPECT_TRUE(outcome.metrics.empty());
   EXPECT_NE(outcome.error.find("none of this problem's metrics"),
             std::string::npos)
@@ -186,7 +201,7 @@ TEST_F(LocalGradeTest, SaysSoWhenTheProblemsMetricIsMissing) {
 // Cancelling work that is actually running, which is the case that matters.
 // Dropping a queued order was always easy; this is the one that used to be
 // documented as impossible ("an order already being built cannot be recalled").
-TEST_F(LocalGradeTest, CancelStopsARunThatIsAlreadyUnderWay) {
+TEST_F(OrderRunnerProcessTest, CancelStopsARunThatIsAlreadyUnderWay) {
   // A command that would run far longer than this test is willing to wait, and
   // leaves a marker so we can prove it was killed rather than left behind.
   const auto marker = root_ / "still_running";
@@ -203,11 +218,11 @@ TEST_F(LocalGradeTest, CancelStopsARunThatIsAlreadyUnderWay) {
     for (int i = 0; i < 200 && !std::filesystem::exists(marker); ++i) {
       std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
-    backend_->Cancel(order.order_id());
+    runner_->Cancel(order.order_id());
   });
 
   const auto started = std::chrono::steady_clock::now();
-  const OrderOutcome outcome = backend_->RunOrder(0, order);
+  const OrderOutcome outcome = runner_->RunOrder(0, order, {});
   const auto elapsed = std::chrono::steady_clock::now() - started;
   canceller.join();
 
@@ -221,14 +236,14 @@ TEST_F(LocalGradeTest, CancelStopsARunThatIsAlreadyUnderWay) {
 
 // A problem whose submissions can run arbitrary code at build time must not
 // quietly land on a backend that runs them as the worker's own user.
-TEST_F(LocalGradeTest, RefusesAnOrderThatRequiresAContainer) {
+TEST_F(OrderRunnerProcessTest, RefusesAnOrderThatRequiresAContainer) {
   proto::WorkOrder order = MakeOrder(
       "#!/usr/bin/env bash\nprintf '{\"metrics\": {\"wall_ms\": 1}}' "
       "> \"$ARENA_REPORT\"\n",
       1, proto::GradeOrder::MIN);
   order.set_require_container(true);
 
-  const OrderOutcome outcome = backend_->RunOrder(0, order);
+  const OrderOutcome outcome = runner_->RunOrder(0, order, {});
 
   EXPECT_FALSE(outcome.build_ok);
   EXPECT_TRUE(outcome.metrics.empty());
@@ -238,13 +253,15 @@ TEST_F(LocalGradeTest, RefusesAnOrderThatRequiresAContainer) {
 
 // Cancelling something that is not running must be harmless: the stream thread
 // does not know whether a slot has already finished.
-TEST_F(LocalGradeTest, CancelIsANoOpForAnUnknownOrder) {
-  backend_->Cancel("never-heard-of-it");
-  const OrderOutcome outcome = backend_->RunOrder(
-      0, MakeOrder(
-             "#!/usr/bin/env bash\n"
-             "printf '{\"metrics\": {\"wall_ms\": 7}}' > \"$ARENA_REPORT\"\n",
-             1, proto::GradeOrder::MIN));
+TEST_F(OrderRunnerProcessTest, CancelIsANoOpForAnUnknownOrder) {
+  runner_->Cancel("never-heard-of-it");
+  const OrderOutcome outcome = runner_->RunOrder(
+      0,
+      MakeOrder(
+          "#!/usr/bin/env bash\n"
+          "printf '{\"metrics\": {\"wall_ms\": 7}}' > \"$ARENA_REPORT\"\n",
+          1, proto::GradeOrder::MIN),
+      {});
   EXPECT_EQ(outcome.error, "");
   EXPECT_DOUBLE_EQ(outcome.metrics.at("wall_ms"), 7.0);
 }

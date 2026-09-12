@@ -32,8 +32,9 @@
 #include "absl/log/log.h"
 #include "absl/strings/str_split.h"
 #include "game_arena/proto/arena.grpc.pb.h"
-#include "game_arena/sandbox/worker/docker_backend.h"
-#include "game_arena/sandbox/worker/local_backend.h"
+#include "game_arena/sandbox/exec/container_engine.h"
+#include "game_arena/sandbox/exec/process_engine.h"
+#include "game_arena/sandbox/worker/order_runner.h"
 
 ABSL_FLAG(std::string, server, "localhost:50051",
           "host:port of the arena's SandboxFleet service");
@@ -53,7 +54,10 @@ ABSL_FLAG(std::string, backend, "local",
 ABSL_FLAG(std::string, docker_image, "",
           "Image for --backend=docker; must contain bazel matching the repo's "
           "MODULE.bazel.lock (required with --backend=docker)");
-ABSL_FLAG(std::string, bazel, "bazel", "bazel binary (local backend)");
+ABSL_FLAG(std::string, bazel, "bazel",
+          "bazel binary. A path for --backend=local; inside a container, "
+          "whatever the image calls it");
+ABSL_FLAG(std::string, docker, "docker", "docker binary");
 ABSL_FLAG(std::string, git, "git", "git binary");
 ABSL_FLAG(std::string, bazel_flags, "",
           "Comma-separated extra bazel flags, e.g. --config=native");
@@ -82,12 +86,9 @@ ABSL_FLAG(int, reconnect_delay_s, 5,
 
 namespace {
 
-using tournament_arena::DockerBackend;
-using tournament_arena::DockerBackendConfig;
-using tournament_arena::LocalBackend;
-using tournament_arena::LocalBackendConfig;
+using tournament_arena::OrderJobConfig;
 using tournament_arena::OrderOutcome;
-using tournament_arena::SandboxBackend;
+using tournament_arena::OrderRunner;
 namespace proto = tournament_arena::proto;
 
 using Stream =
@@ -107,9 +108,9 @@ auto DefaultWorkerId() -> std::string {
 // session is torn down and a fresh one is built on reconnect.
 class WorkerSession {
  public:
-  WorkerSession(SandboxBackend *backend, Stream *stream, int slots,
+  WorkerSession(OrderRunner *runner, Stream *stream, int slots,
                 std::string worker_id, std::string machine_class)
-      : backend_(backend),
+      : runner_(runner),
         stream_(stream),
         worker_id_(std::move(worker_id)),
         machine_class_(std::move(machine_class)) {
@@ -136,7 +137,7 @@ class WorkerSession {
   }
 
   // Drops the order if it is still queued, and stops it if it is already
-  // running -- the backend kills the process group or the containers by name.
+  // running -- the engine kills the process group or the containers by name.
   //
   // The two halves are deliberately not one atomic step. An order that finishes
   // between them just reports its result, which the arena already tolerates:
@@ -148,7 +149,7 @@ class WorkerSession {
         return order.order_id() == order_id;
       });
     }
-    backend_->Cancel(order_id);
+    runner_->Cancel(order_id);
   }
 
   void Stop() {
@@ -177,9 +178,15 @@ class WorkerSession {
                 << " candidate " << order.candidate().candidate_id() << " vs "
                 << order.opponent_spec() << " (" << order.num_games()
                 << " games)";
-      SendProgress(order.order_id(), proto::OrderProgress::BUILDING);
-
-      const OrderOutcome outcome = backend_->RunOrder(slot, order);
+      // Progress now comes from the engine, phase by phase, rather than one
+      // BUILDING guess before anything started: CLONING and RUNNING were dead
+      // enum values until the engine reported its phases.
+      const OrderOutcome outcome =
+          runner_->RunOrder(slot, order,
+                            [this](const std::string &order_id,
+                                   proto::OrderProgress::Phase phase) {
+                              SendProgress(order_id, phase);
+                            });
 
       proto::WorkerMessage message;
       auto *result = message.mutable_result();
@@ -225,8 +232,8 @@ class WorkerSession {
     stream_->Write(message);
   }
 
-  SandboxBackend *backend_;  // not owned
-  Stream *stream_;           // not owned
+  OrderRunner *runner_;  // not owned
+  Stream *stream_;       // not owned
   const std::string worker_id_;
   const std::string machine_class_;
 
@@ -257,70 +264,62 @@ auto main(int argc, char **argv) -> int {
                                     ? DefaultWorkerId()
                                     : absl::GetFlag(FLAGS_worker_id);
 
-  std::unique_ptr<SandboxBackend> backend;
+  // One config for both engines: what differs is which engine reads it.
+  OrderJobConfig job_config;
+  job_config.source_repo = absl::GetFlag(FLAGS_repo);
+  job_config.work_dir = absl::GetFlag(FLAGS_work_dir);
+  job_config.disk_cache =
+      absl::GetFlag(FLAGS_disk_cache).empty()
+          ? job_config.work_dir / "disk_cache"
+          : std::filesystem::path(absl::GetFlag(FLAGS_disk_cache));
+  job_config.git = absl::GetFlag(FLAGS_git);
+  job_config.bazel = absl::GetFlag(FLAGS_bazel);
+  job_config.image = absl::GetFlag(FLAGS_docker_image);
+  job_config.host_overlay = absl::GetFlag(FLAGS_host_overlay);
+  job_config.allow_build_network = absl::GetFlag(FLAGS_allow_build_network);
+  job_config.run_as_user = absl::GetFlag(FLAGS_run_as_user);
+  job_config.cpus = absl::GetFlag(FLAGS_container_cpus);
+  job_config.pids_limit = absl::GetFlag(FLAGS_pids_limit);
+  if (!absl::GetFlag(FLAGS_bazel_flags).empty()) {
+    job_config.bazel_flags = absl::StrSplit(absl::GetFlag(FLAGS_bazel_flags),
+                                            ',', absl::SkipEmpty());
+  }
+
+  std::unique_ptr<sandbox_exec::Engine> engine;
   if (absl::GetFlag(FLAGS_backend) == "local") {
-    LocalBackendConfig backend_config;
-    backend_config.repo_url = absl::GetFlag(FLAGS_repo);
-    backend_config.work_dir = absl::GetFlag(FLAGS_work_dir);
-    backend_config.disk_cache =
-        absl::GetFlag(FLAGS_disk_cache).empty()
-            ? backend_config.work_dir / "disk_cache"
-            : std::filesystem::path(absl::GetFlag(FLAGS_disk_cache));
-    backend_config.bazel = absl::GetFlag(FLAGS_bazel);
-    backend_config.git = absl::GetFlag(FLAGS_git);
-    if (!absl::GetFlag(FLAGS_bazel_flags).empty()) {
-      backend_config.bazel_flags = absl::StrSplit(
-          absl::GetFlag(FLAGS_bazel_flags), ',', absl::SkipEmpty());
-    }
-    backend = std::make_unique<LocalBackend>(std::move(backend_config));
+    engine = std::make_unique<sandbox_exec::ProcessEngine>();
   } else if (absl::GetFlag(FLAGS_backend) == "docker") {
     if (absl::GetFlag(FLAGS_docker_image).empty()) {
       LOG(ERROR) << "--backend=docker requires --docker_image=<image>";
       return 2;
     }
-    const std::filesystem::path repo(absl::GetFlag(FLAGS_repo));
-    if (!std::filesystem::is_directory(repo)) {
+    if (!std::filesystem::is_directory(absl::GetFlag(FLAGS_repo))) {
       LOG(ERROR) << "--backend=docker needs --repo as a local path (it is "
                     "mounted into the containers), got '"
                  << absl::GetFlag(FLAGS_repo) << "'";
       return 2;
     }
-    DockerBackendConfig backend_config;
-    backend_config.repo_dir = repo;
-    backend_config.work_dir = absl::GetFlag(FLAGS_work_dir);
-    backend_config.disk_cache =
-        absl::GetFlag(FLAGS_disk_cache).empty()
-            ? backend_config.work_dir / "disk_cache"
-            : std::filesystem::path(absl::GetFlag(FLAGS_disk_cache));
-    backend_config.docker_image = absl::GetFlag(FLAGS_docker_image);
-    backend_config.git = absl::GetFlag(FLAGS_git);
-    backend_config.host_overlay = absl::GetFlag(FLAGS_host_overlay);
-    backend_config.allow_build_network =
-        absl::GetFlag(FLAGS_allow_build_network);
-    backend_config.run_as_user = absl::GetFlag(FLAGS_run_as_user);
-    backend_config.cpus = absl::GetFlag(FLAGS_container_cpus);
-    backend_config.pids_limit = absl::GetFlag(FLAGS_pids_limit);
-    if (!backend_config.host_overlay) {
+    if (!job_config.host_overlay) {
       LOG(WARNING) << "--host_overlay=false: containers run with CAP_SYS_ADMIN "
                       "so they can mount their own overlay. Submitted build "
                       "code then runs privileged, which is not a boundary";
     }
-    if (!absl::GetFlag(FLAGS_bazel_flags).empty()) {
-      backend_config.bazel_flags = absl::StrSplit(
-          absl::GetFlag(FLAGS_bazel_flags), ',', absl::SkipEmpty());
-    }
-    backend = std::make_unique<DockerBackend>(std::move(backend_config));
+    sandbox_exec::ContainerEngineConfig engine_config;
+    engine_config.docker = absl::GetFlag(FLAGS_docker);
+    engine = std::make_unique<sandbox_exec::ContainerEngine>(engine_config);
   } else {
     LOG(ERROR) << "Unsupported --backend='" << absl::GetFlag(FLAGS_backend)
                << "' (local or docker)";
     return 2;
   }
 
+  OrderRunner runner(engine.get(), std::move(job_config), machine_class);
+
   LOG(INFO) << "Worker '" << worker_id << "' warming up " << slots
             << " slot(s) from " << absl::GetFlag(FLAGS_repo) << " via the "
-            << backend->name() << " backend";
+            << runner.engine_name() << " engine";
   std::string error;
-  if (!backend->Warmup(slots, &error)) {
+  if (!runner.Warmup(slots, &error)) {
     LOG(ERROR) << "Cannot prepare slots: " << error;
     return 1;
   }
@@ -337,14 +336,17 @@ auto main(int argc, char **argv) -> int {
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id(worker_id);
     hello.mutable_hello()->set_slots(slots);
-    hello.mutable_hello()->set_backend(backend->name());
+    hello.mutable_hello()->set_backend(runner.engine_name());
+    // The class of host this is. Stamped on every result too, but the
+    // arena cannot schedule on what it is never told up front.
+    hello.mutable_hello()->set_machine_class(machine_class);
     if (!stream->Write(hello)) {
       LOG(WARNING) << "Cannot reach the arena at "
                    << absl::GetFlag(FLAGS_server) << "; retrying";
     } else {
       LOG(INFO) << "Attached to " << absl::GetFlag(FLAGS_server) << " as '"
                 << worker_id << "' with " << slots << " slot(s)";
-      WorkerSession session(backend.get(), stream.get(), slots, worker_id,
+      WorkerSession session(&runner, stream.get(), slots, worker_id,
                             machine_class);
       proto::FleetMessage message;
       while (stream->Read(&message)) {

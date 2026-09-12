@@ -205,12 +205,13 @@ TEST_F(ContainerEngineTest, AMatchPhaseJoinsItsStepsOnAPrivateBridge) {
       << result.status().message();
 
   const std::string log = Log();
-  // The bridge is created before anything joins it, and removed after.
-  EXPECT_NE(log.find("docker network create --internal saw-0-ok-1-match-net"),
+  // One bridge per job, not per phase: the name a Cancel derives. Created
+  // before anything joins it, and removed after.
+  EXPECT_NE(log.find("docker network create --internal saw-0-ok-1-net"),
             std::string::npos)
       << log;
-  EXPECT_NE(log.find("--network saw-0-ok-1-match-net"), std::string::npos);
-  EXPECT_NE(log.find("docker network rm saw-0-ok-1-match-net"),
+  EXPECT_NE(log.find("--network saw-0-ok-1-net"), std::string::npos);
+  EXPECT_NE(log.find("docker network rm saw-0-ok-1-net"),
             std::string::npos);
   // The referee runs detached and is kept, so its verdict can be asked for.
   EXPECT_NE(log.find("--name saw-0-ok-1-referee -d"), std::string::npos) << log;

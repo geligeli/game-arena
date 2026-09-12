@@ -65,64 +65,79 @@ cc_test(
     ],
 )
 
+# The arena's own layer: what an order means, written once for both engines.
 cc_library(
-    name = "sandbox_backend",
-    hdrs = ["sandbox_backend.h"],
-    deps = ["//game_arena/proto:arena_cc_proto"],
-)
-
-cc_library(
-    name = "local_backend",
-    srcs = ["local_backend.cc"],
-    hdrs = ["local_backend.h"],
+    name = "order_job",
+    srcs = ["order_job.cc"],
+    hdrs = ["order_job.h"],
     deps = [
-        "//game_arena/common/kv_options",
-        ":build_log",
-        "//game_arena/sandbox/exec:checkout",
-        ":match_tally",
-        ":grade_policy",
-        "//game_arena/common/metric_report",
         ":bot_launch",
-        ":sandbox_backend",
-        "//game_arena/common/process",
-        "//game_arena/sandbox/common:files",
-        "//game_arena/sandbox/common:text",
-        "//game_arena/sandbox/common:step",
-        "@abseil-cpp//absl/log",
-    ],
-)
-
-# The docker backend: same order steps as local_backend, but each phase runs in
-# a throwaway container over a per-slot overlay (host does the git work).
-cc_library(
-    name = "docker_backend",
-    srcs = ["docker_backend.cc"],
-    hdrs = ["docker_backend.h"],
-    deps = [
         "//game_arena/common/kv_options",
-        ":build_log",
-        "//game_arena/sandbox/exec:checkout",
-        ":match_tally",
-        ":grade_policy",
-        "//game_arena/common/metric_report",
-        ":bot_launch",
-        ":sandbox_backend",
-        "//game_arena/common/process",
+        "//game_arena/proto:arena_cc_proto",
         "//game_arena/sandbox/common:docker",
-        "//game_arena/sandbox/common:files",
-        "//game_arena/sandbox/common:step",
-        "//game_arena/sandbox/common:text",
-        "@abseil-cpp//absl/log",
+        "//game_arena/sandbox/exec:engine",
+        "//game_arena/sandbox/exec:sandbox_job_cc_proto",
     ],
 )
+
+cc_test(
+    name = "order_job_test",
+    srcs = ["order_job_test.cc"],
+    deps = [
+        ":order_job",
+        "//game_arena/sandbox/exec:process_engine",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "order_outcome",
+    srcs = ["order_outcome.cc"],
+    hdrs = ["order_outcome.h"],
+    deps = [
+        ":build_log",
+        ":grade_policy",
+        ":match_tally",
+        "//game_arena/common/metric_report",
+        "//game_arena/proto:arena_cc_proto",
+        "//game_arena/sandbox/common:text",
+        "//game_arena/sandbox/exec:sandbox_job_cc_proto",
+    ],
+)
+
+cc_test(
+    name = "order_outcome_test",
+    srcs = ["order_outcome_test.cc"],
+    deps = [
+        ":order_outcome",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "order_runner",
+    srcs = ["order_runner.cc"],
+    hdrs = ["order_runner.h"],
+    deps = [
+        ":order_job",
+        "//game_arena/sandbox/exec:checkout",
+        ":order_outcome",
+        "//game_arena/proto:arena_cc_proto",
+        "//game_arena/sandbox/exec:engine",
+        "//game_arena/sandbox/exec:sandbox_job_cc_proto",
+    ],
+)
+
+
 
 cc_binary(
     name = "sandbox_worker",
     srcs = ["worker_main.cc"],
     deps = [
-        ":docker_backend",
-        ":local_backend",
-        ":sandbox_backend",
+        ":order_runner",
+        "//game_arena/sandbox/exec:container_engine",
+        "//game_arena/sandbox/exec:engine",
+        "//game_arena/sandbox/exec:process_engine",
         "//game_arena/proto:arena_cc_grpc",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
@@ -143,26 +158,16 @@ cc_test(
     ],
 )
 
-# The order-specific entrypoint scripts, asserted without a docker daemon.
-# Quoting, name sanitisation and the overlay preludes are tested in
-# sandbox/common:docker_test.
-cc_test(
-    name = "docker_backend_test",
-    srcs = ["docker_backend_test.cc"],
-    deps = [
-        ":docker_backend",
-        "@googletest//:gtest_main",
-    ],
-)
-
 # End-to-end against fake `docker` and `git` scripts -- no daemon needed.
 # Covers the mounts, the entrypoint scripts, host-side checkout, build failure
 # reporting, run timeouts and patch-path validation.
 cc_test(
-    name = "docker_backend_integration_test",
-    srcs = ["docker_backend_integration_test.cc"],
+    name = "order_runner_container_test",
+    size = "medium",
+    srcs = ["order_runner_container_test.cc"],
     deps = [
-        ":docker_backend",
+        ":order_runner",
+        "//game_arena/sandbox/exec:container_engine",
         "@googletest//:gtest_main",
     ],
 )
@@ -170,10 +175,12 @@ cc_test(
 # The graded path end to end: fake git and bazel, but a real command writing a
 # real report through $ARENA_REPORT.
 cc_test(
-    name = "local_backend_integration_test",
-    srcs = ["local_backend_integration_test.cc"],
+    name = "order_runner_process_test",
+    size = "medium",
+    srcs = ["order_runner_process_test.cc"],
     deps = [
-        ":local_backend",
+        ":order_runner",
+        "//game_arena/sandbox/exec:process_engine",
         "@googletest//:gtest_main",
     ],
 )
