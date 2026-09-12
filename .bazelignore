@@ -6,3 +6,6 @@
 # Build them from their own directory: cd examples/connect4 && bazel test //...
 examples/knapsack
 examples/connect4
+
+# Local tournament state (arena_tournament data dirs hold worker checkouts).
+.arena

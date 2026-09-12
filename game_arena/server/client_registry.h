@@ -32,6 +32,29 @@ namespace tournament_arena {
 // agree on the encoding by construction.
 auto HashToken(std::string_view token) -> std::string;
 
+// Minting a client. Shared by arena_admin and arena_tournament so the two
+// agree on what a token looks like and what a registry entry looks like.
+
+// 256 bits from the system CSPRNG, lowercase hex. Shown to an operator once
+// and never stored: what the registry holds is HashToken() of it.
+auto MintToken() -> std::string;
+
+// The registry entry for |token|. Hashes it; the raw token is not kept.
+// Zero quota fields fall back to the problem's defaults at resolve time.
+auto MakeClient(std::string_view client_id, std::string_view display_name,
+                std::string_view token,
+                const proto::ClientQuota &quota) -> proto::Client;
+
+// |client| as the text-format block an operator pastes into the registry.
+auto ClientBlockText(const proto::Client &client) -> std::string;
+
+// Appends |client| to the registry file at |path|, creating the file if it
+// does not exist. The existing file is parsed first: a registry that does not
+// load, or already has this client_id, is left untouched and reported.
+auto AppendClientToRegistry(const std::filesystem::path &path,
+                            const proto::Client &client,
+                            std::string *error) -> bool;
+
 // A resolved caller.
 struct ClientIdentity {
   std::string client_id;

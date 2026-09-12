@@ -26,9 +26,12 @@
 
 namespace tournament_arena {
 
-// The bazel label of a structured submission's bot binary.
-auto CandidateTarget(const std::string &dir,
-                     const std::string &candidate_id) -> std::string;
+// The name of the generated binary: harness.binary_name, or "bot".
+auto CandidateBinaryName(const proto::CandidateHarness &harness) -> std::string;
+
+// The bazel label of a structured submission's binary.
+auto CandidateTarget(const std::string &dir, const std::string &candidate_id,
+                     const proto::CandidateHarness &harness) -> std::string;
 
 // The BUILD file contents. Returns an empty string when the submission is
 // unusable: no files, an entry header that is not one of them, or a harness

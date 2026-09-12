@@ -80,15 +80,17 @@ py_proto_library(
 
 # Hermetic replacement for mcp_servers/arena_mcp/make_stubs.sh: the grpc
 # python plugin is not part of protoc, so it runs as an explicit genrule.
-# -I.../proto keeps the proto import path flat ("arena.proto"), matching
-# py_proto_library's flat arena_pb2.py and the stub's "import arena_pb2".
+# -I<the proto's own directory> keeps the proto import path flat
+# ("arena.proto"), matching py_proto_library's flat arena_pb2.py and the stub's
+# "import arena_pb2". Derived from the source rather than spelled out because
+# the directory is external/game_arena+/... when a consumer builds this.
 genrule(
     name = "arena_grpc_py_gen",
     srcs = ["arena.proto"],
     outs = ["arena_pb2_grpc.py"],
     cmd = "$(location @protobuf//:protoc) " +
           "--plugin=protoc-gen-grpc_python=$(location @grpc//src/compiler:grpc_python_plugin) " +
-          "--grpc_python_out=$(@D) -Igame_arena/proto $<",
+          "--grpc_python_out=$(@D) -I$$(dirname $<) $<",
     tools = [
         "@grpc//src/compiler:grpc_python_plugin",
         "@protobuf//:protoc",

@@ -168,8 +168,15 @@ auto SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem)
     // Kept under the worker's own run timeout, so a stuck match comes back as a
     // partial tally rather than an order-level failure.
     config.match_deadline_s = std::max(1, config.run_timeout_s - 30);
-    // A match problem plays with the first target it builds.
-    if (!config.build_targets.empty()) {
+    // The bot is the build target named per submission; a problem that builds
+    // nothing per submission plays with the first target it builds.
+    for (const std::string &target : config.build_targets) {
+      if (target.find("{submission_id}") != std::string::npos) {
+        config.bot_target = target;
+        break;
+      }
+    }
+    if (config.bot_target.empty() && !config.build_targets.empty()) {
       config.bot_target = config.build_targets.front();
     }
   } else {

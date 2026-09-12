@@ -7,6 +7,7 @@ package(default_visibility = ["//visibility:public"])
 # make_stubs.sh flow in mcp_servers/README.md still works unchanged).
 py_binary(
     name = "server",
+    python_version = "3.12",
     srcs = ["server.py"],
     deps = [
         "//game_arena/proto:arena_py",

@@ -4,8 +4,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -188,6 +190,57 @@ TEST(ResolveExecutableTest, FindsOnPathAndValidatesExplicitPaths) {
   // An explicit path is used as given, and rejected when not executable.
   EXPECT_EQ(ResolveExecutable("/bin/sh"), "/bin/sh");
   EXPECT_TRUE(ResolveExecutable("/nonexistent/binary").empty());
+}
+
+TEST(RunCommandTest, ResolvesARelativeExecutableAgainstCwd) {
+  const auto dir = MakeTempFilePath("relexec");
+  std::filesystem::create_directories(dir / "bin");
+  {
+    std::ofstream script(dir / "bin" / "hello.sh");
+    script << "#!/bin/sh\nexit 7\n";
+  }
+  std::filesystem::permissions(dir / "bin" / "hello.sh",
+                               std::filesystem::perms::owner_all);
+  RunOptions options;
+  options.cwd = dir;
+  const RunResult result = RunCommand("bin/hello.sh", {}, options);
+  EXPECT_TRUE(result.started);
+  EXPECT_EQ(result.exit_code, 7);
+  // Without a cwd the path is relative to the caller, where it does not exist.
+  EXPECT_FALSE(RunCommand("bin/hello.sh", {}, RunOptions{}).started);
+  std::filesystem::remove_all(dir);
+}
+
+TEST(ChildTest, PollReportsExitAndStopKillsAGroup) {
+  auto exited = Child::Start("/bin/sh", {"-c", "exit 3"}, ChildOptions{});
+  ASSERT_TRUE(exited.has_value());
+  EXPECT_EQ(exited->Wait(), 3);
+  EXPECT_EQ(exited->Poll(), std::optional<int>(3));
+  EXPECT_EQ(exited->Stop(std::chrono::seconds(1)), 3);
+
+  auto running =
+      Child::Start("/bin/sh", {"-c", "sleep 30; exit 0"}, ChildOptions{});
+  ASSERT_TRUE(running.has_value());
+  EXPECT_FALSE(running->Poll().has_value());
+  const auto started = std::chrono::steady_clock::now();
+  EXPECT_EQ(running->Stop(std::chrono::seconds(5)), 128 + SIGTERM);
+  EXPECT_LT(std::chrono::steady_clock::now() - started,
+            std::chrono::seconds(5));
+
+  EXPECT_FALSE(Child::Start("/no/such/binary", {}, ChildOptions{}).has_value());
+}
+
+TEST(ChildTest, ExtraEnvOverlaysTheCallersEnvironment) {
+  const auto stdout_path = MakeTempFilePath("child_env");
+  ChildOptions options;
+  options.extra_env = {"PROCESS_TEST_MARK=set"};
+  options.stdout_path = stdout_path;
+  auto child = Child::Start(
+      "/bin/sh", {"-c", "echo \"$PROCESS_TEST_MARK ${PATH:+path}\""}, options);
+  ASSERT_TRUE(child.has_value());
+  EXPECT_EQ(child->Wait(), 0);
+  EXPECT_EQ(ReadFile(stdout_path), "set path\n");
+  std::filesystem::remove(stdout_path);
 }
 
 }  // namespace process

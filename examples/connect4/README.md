@@ -10,9 +10,9 @@ into its referee at build time**.
 ## Try it
 
 ```sh
-bazel test //...                                   # the rules, and the builtins
-bazel-bin/game/broker_server --data_dir=/tmp/c4 &  # a broker, this game
-bazel-bin/bots/dev_bot --name=me --opponent=builtin:greedy --games=6
+bazel test //...                                   # the rules, and the config
+bazel run //:broker_server -- --data_dir=/tmp/c4 & # a broker, this game
+bazel run //bots:dev_bot -- --name=me --opponent=builtin:greedy --games=6
 ```
 
 ```
@@ -28,10 +28,10 @@ which is roughly where a submission should start.
 
 | | |
 | --- | --- |
+| `BUILD` | one `arena_problem()` call: the referee, the broker, the tests, the tournament, the kit |
 | `problem.textproto` | the whole problem: what to build, how matches run, what to rank |
 | `game/connect4.{h,cc}` | the rules, as a `tournament_broker::GameSession` |
 | `game/registry.cc` | **the seam** — defines `GameRegistry()` |
-| `game/BUILD` | `match_referee` = registry + the arena's match loop |
 | `bots/bot_api.h` | the board, as a submitter sees it |
 | `bots/bot_main.cc` | the harness compiled around every submission |
 | `bots/reference/strategy.h` | the starting point for a submission |
@@ -49,8 +49,10 @@ cc_binary(
 )
 ```
 
-`:registry` needs `alwayslink = 1` — nothing depends on it by label, so the
-linker would otherwise skip the archive member that satisfies the symbol.
+`arena_problem(registry = "//game:registry")` in the root `BUILD` writes that
+rule, and the broker and random client beside it. `:registry` needs
+`alwayslink = 1` — nothing depends on it by label, so the linker would
+otherwise skip the archive member that satisfies the symbol.
 
 The rules themselves only ever speak bytes:
 
@@ -109,3 +111,24 @@ genrule, and a genrule runs arbitrary code at build time.
 
 `main_src` is a source, not a dependency, because the entry header arrives as a
 `local_define` and those do not propagate from a prebuilt library.
+
+## Running the tournament, and what a participant gets
+
+```sh
+bazel run //:tournament -- --no_container        # coordinator + a local worker
+bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
+```
+
+The kit is a workspace of its own holding only `kit_files` -- here `game/`
+(the rules, so a bot can search them) and `bots/` (the API, the harness, the
+reference strategy) -- plus `//:arena_cli`, `//:mcp_server`, a
+`//:broker_server` to iterate against, an `ARENA.md` generated from
+`problem.textproto`, and the token in `arena.env` and `mcp.json`. From it:
+
+```sh
+. ./arena.env
+bazel run //:arena_cli -- submit --name="My bot" --file=bots/reference/strategy.h --wait
+```
+
+This directory is inside game-arena's git tree, which a worker cannot clone;
+`scripts/new_problem.sh match <dir>` copies it out as a repository of its own.

@@ -10,6 +10,8 @@
 #include <iterator>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "absl/strings/str_cat.h"
@@ -36,6 +38,18 @@ class CollectingErrors final : public google::protobuf::io::ErrorCollector {
  private:
   std::string text_;
 };
+
+// "https://...", "ssh://...", "file://..." have a scheme; "git@host:path" is
+// scp-style. Everything else is a filesystem path.
+auto LooksLikeUrl(std::string_view url) -> bool {
+  if (url.find("://") != std::string_view::npos) {
+    return true;
+  }
+  const std::size_t colon = url.find(':');
+  const std::size_t slash = url.find('/');
+  return colon != std::string_view::npos &&
+         (slash == std::string_view::npos || colon < slash);
+}
 
 auto CountPrimaryMetrics(const proto::GradeSpec &grade) -> int {
   int primaries = 0;
@@ -295,6 +309,32 @@ auto PrimaryMetric(const proto::ProblemConfig &config)
   return nullptr;
 }
 
+void ResolveRelativeRepoUrl(proto::ProblemConfig *config,
+                            const std::filesystem::path &config_dir) {
+  const std::string &url = config->repo().url();
+  if (url.empty() || LooksLikeUrl(url)) {
+    return;
+  }
+  const std::filesystem::path path(url);
+  if (path.is_absolute()) {
+    return;
+  }
+  // weakly_canonical resolves whatever prefix exists and normalizes the rest,
+  // so a "." or ".." comes out clean whether or not the target is there yet.
+  std::error_code ec;
+  std::filesystem::path resolved =
+      std::filesystem::weakly_canonical(config_dir / path, ec);
+  if (ec) {
+    resolved = (config_dir / path).lexically_normal();
+  }
+  // "dir/." normalizes to "dir/"; a trailing separator is noise in a URL.
+  std::string url_out = resolved.string();
+  while (url_out.size() > 1 && url_out.back() == '/') {
+    url_out.pop_back();
+  }
+  config->mutable_repo()->set_url(url_out);
+}
+
 auto LoadProblemConfig(const std::filesystem::path &path, std::string *error)
     -> std::optional<proto::ProblemConfig> {
   std::ifstream in(path, std::ios::binary);
@@ -311,6 +351,10 @@ auto LoadProblemConfig(const std::filesystem::path &path, std::string *error)
     *error = absl::StrCat(path.string(), ": ", *error);
     return std::nullopt;
   }
+  std::error_code ec;
+  const std::filesystem::path config_dir =
+      std::filesystem::absolute(path, ec).parent_path();
+  ResolveRelativeRepoUrl(&*config, ec ? path.parent_path() : config_dir);
   ApplyProblemDefaults(&*config);
   if (!ValidateProblemConfig(*config, error)) {
     *error = absl::StrCat(path.string(), ": ", *error);

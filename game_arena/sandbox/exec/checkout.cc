@@ -20,16 +20,12 @@ auto EnsureClone(const std::string &git, const std::string &source,
     return true;
   }
   std::filesystem::create_directories(dest.parent_path(), ec);
-  // --local hardlinks the objects instead of copying them, which is most of
-  // why a slot is cheap to create. It is an error for anything that is not a
-  // path on this filesystem, and the source now arrives on the order, so it
-  // can be a URL.
-  std::vector<std::string> args = {"clone"};
-  if (std::filesystem::exists(std::filesystem::path(source) / ".git")) {
-    args.emplace_back("--local");
-  }
-  args.push_back(source);
-  args.push_back(dest.string());
+  // For a path, git clones locally on its own: hardlinking the objects when
+  // source and slot share a filesystem, which is most of why a slot is cheap
+  // to create, and copying them when they do not. An explicit --local would
+  // make the second case fatal ("Invalid cross-device link") rather than a
+  // copy, and a URL needs neither.
+  std::vector<std::string> args = {"clone", source, dest.string()};
   const sandbox_common::StepResult clone =
       sandbox_common::RunStep(git, args, dest.parent_path(), log_dir, "clone",
                               std::chrono::seconds(900));
@@ -59,6 +55,19 @@ auto SyncToCommit(const std::string &git, const std::filesystem::path &repo,
   if (!checkout.run.started || checkout.run.exit_code != 0) {
     *error =
         "git checkout " + commit + " failed: " + TailOf(checkout.output, 2000);
+    return false;
+  }
+
+  // A forced checkout resets tracked files and leaves everything else: the
+  // files a previous job's patch added would still be there, and the next
+  // patch adding the same paths would refuse to apply. -x takes ignored files
+  // too, so the tree is exactly the commit; the build's own state lives in the
+  // output base, outside the repo.
+  const sandbox_common::StepResult clean =
+      sandbox_common::RunStep(git, {"clean", "-fdx", "--quiet"}, repo, log_dir,
+                              "clean", std::chrono::seconds(300));
+  if (!clean.run.started || clean.run.exit_code != 0) {
+    *error = "git clean failed: " + TailOf(clean.output, 2000);
     return false;
   }
   return true;

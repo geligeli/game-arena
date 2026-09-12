@@ -8,3 +8,12 @@ cc_binary(
     name = "solve",
     srcs = ["solve.cc"],
 )
+
+# What a participant receives, for the kit `bazel run //:kit` writes.
+filegroup(
+    name = "kit",
+    srcs = [
+        "BUILD",
+        "solve.cc",
+    ],
+)

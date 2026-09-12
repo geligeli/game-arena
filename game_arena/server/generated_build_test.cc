@@ -33,8 +33,21 @@ auto Build(const std::vector<std::string> &files,
 }
 
 TEST(CandidateTargetTest, LabelsTheGeneratedBinary) {
-  EXPECT_EQ(CandidateTarget(kDir, "my-bot-abc123"),
+  EXPECT_EQ(CandidateTarget(kDir, "my-bot-abc123", proto::CandidateHarness()),
             "//solutions/my-bot-abc123:bot");
+}
+
+TEST(CandidateTargetTest, NamesTheBinaryAsTheHarnessSays) {
+  proto::CandidateHarness harness;
+  harness.set_api_dep("//api");
+  harness.set_main_src("solve.cc");
+  harness.set_binary_name("solve");
+  EXPECT_EQ(CandidateTarget(kDir, "c-1", harness),
+            "//" + std::string(kDir) + "/c-1:solve");
+  const std::string build = GenerateCandidateBuild(
+      kDir, "c-1", harness, {"solve.cc"}, "solve.cc", {});
+  EXPECT_NE(build.find("name = \"solve\""), std::string::npos);
+  EXPECT_EQ(build.find("name = \"bot\""), std::string::npos);
 }
 
 TEST(GenerateCandidateBuildTest, WiresTheEntryHeaderAndGameIntoTheBinary) {

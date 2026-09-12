@@ -1,82 +1,18 @@
 build --cxxopt='-std=c++23'
 build --host_cxxopt='-std=c++23'
 build --copt=-fdiagnostics-color=always
-build --define=absl=1
 
-# Shared build cache on the NFS share. /large_nfs/bazel-cache is bind-mounted at
-# the same path inside the devcontainer (see .devcontainer/devcontainer.json), so
-# this one set of paths works both inside and outside the container, and is shared
-# across machines. Read-write: every build everywhere populates it for the next.
-#
-# - disk_cache holds action results: object files, linked binaries, test logs.
-# - repository_cache holds the fetched external archives, so a fresh container or
-#   machine does not re-download everything in MODULE.bazel.
-common --disk_cache=/large_nfs/bazel-cache/disk
-common --repository_cache=/large_nfs/bazel-cache/repo
-
-# The disk cache never expires on its own; cap it so it cannot fill the share.
-# Collection is LRU and runs in an idle bazel server (see
-# --experimental_disk_cache_gc_idle_delay, 5m by default).
-common --experimental_disk_cache_gc_max_size=50G
-
-# Enable all warnings and make them fatal for project files.
+# Warnings are fatal for this repo's own files; external code is silenced.
 build --cxxopt=-Wall
 build --cxxopt=-Wextra
 build --cxxopt=-Werror
 build --host_cxxopt=-Wall
 build --host_cxxopt=-Wextra
 build --host_cxxopt=-Werror
-# External dependencies are exempt: silence their warnings entirely so the
-# fatal project warnings above don't break third-party code.
 build --per_file_copt='external/.*@-w'
 build --host_per_file_copt='external/.*@-w'
 
-# Every config below sets --platform_suffix so it gets its own output directory
-# (bazel-out/k8-fastbuild-<suffix>). Without it they all share k8-fastbuild and
-# each switch discards the previous config's cached artifacts.
-
-# Opt-in: compile for the exact host CPU (enables POPCNT/BMI/AVX2, removes
-# software popcount fallbacks). Faster MCTS rollouts, but the resulting
-# binaries may not run on older or different CPUs.
-build:native --platform_suffix=native
-build:native --copt=-march=native
-
-build:asan --platform_suffix=asan
-build:asan --strip=never
-build:asan --copt=-fsanitize=address
-build:asan --copt=-O0
-build:asan --copt=-g
-build:asan --copt=-fno-omit-frame-pointer
-build:asan --linkopt=-fsanitize=address
-build:asan --action_env=ASAN_OPTIONS=detect_leaks=1:color=always
-
-build:msan --platform_suffix=msan
-build:msan --strip=never
-build:msan --copt=-fsanitize=memory
-build:msan --copt=-O0
-build:msan --copt=-fsanitize-memory-track-origins
-build:msan --copt=-fsanitize-memory-use-after-dtor
-build:msan --copt=-fno-omit-frame-pointer
-build:msan --linkopt=-fsanitize=memory
-build:msan --action_env=MSAN_OPTIONS=poison_in_dtor=1
-
-build:tsan --platform_suffix=tsan
-build:tsan --strip=never
-build:tsan --copt=-fsanitize=thread
-build:tsan --copt=-fno-omit-frame-pointer
-build:tsan --linkopt=-fsanitize=thread
-build:tsan --action_env=TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
-
-build:ubsan --platform_suffix=ubsan
-build:ubsan --strip=never
-build:ubsan --copt=-fsanitize=undefined
-build:ubsan --copt=-O0
-build:ubsan --copt=-fno-omit-frame-pointer
-build:ubsan --linkopt=-fsanitize=undefined
-build:ubsan --action_env=UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
-
-# Machine-local overrides, uncommitted (see .gitignore). A machine without
-# /large_nfs opts out of the shared caches by putting this in that file:
-#   common --disk_cache=
-#   common --repository_cache=
+# Nothing host-specific above: this file is read inside the sandbox image and
+# in every participant's kit. A shared disk cache, a local game_arena override
+# and the like go in .bazelrc.local, which is uncommitted.
 try-import %workspace%/.bazelrc.local

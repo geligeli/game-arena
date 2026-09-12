@@ -12,3 +12,9 @@ mcp_servers/.venv/
 # Generated Python gRPC stubs for the arena MCP server (see
 # mcp_servers/arena_mcp/make_stubs.sh).
 mcp_servers/arena_mcp/_pb/
+
+# Local tournament state written by arena_tournament (data dirs, kits).
+.arena/
+
+# Machine-local bazel settings (see .bazelrc).
+.bazelrc.local

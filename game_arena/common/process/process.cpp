@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -266,7 +267,15 @@ auto RunCommand(const std::string& executable,
                 const std::vector<std::string>& arguments,
                 const RunOptions& options) -> RunResult {
   RunResult result;
-  const std::string resolved = ResolveExecutable(executable);
+  // A relative path with a '/' in it is relative to where the command runs,
+  // not to where the caller happens to be: "bazel-bin/grader/grade" means the
+  // one in |cwd|.
+  const std::filesystem::path as_path(executable);
+  const std::string resolved =
+      ResolveExecutable(!options.cwd.empty() && as_path.is_relative() &&
+                                executable.find('/') != std::string::npos
+                            ? (options.cwd / as_path).string()
+                            : executable);
   if (resolved.empty()) {
     return result;  // started == false
   }
@@ -355,6 +364,145 @@ auto RunCommand(const std::string& executable,
     }
     ::usleep(20000);
   }
+}
+
+auto ExitCodeOf(int status) -> int {
+  if (WIFEXITED(status)) {
+    return WEXITSTATUS(status);
+  }
+  if (WIFSIGNALED(status)) {
+    return 128 + WTERMSIG(status);
+  }
+  return -1;
+}
+
+// The caller's environment with |extra| laid over it, "K=V" by key.
+auto MergedEnvironment(const std::vector<std::string>& extra)
+    -> std::vector<std::string> {
+  std::vector<std::string> merged;
+  for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
+    merged.emplace_back(*entry);
+  }
+  for (const std::string& kv : extra) {
+    const std::string key = kv.substr(0, kv.find('='));
+    std::erase_if(merged, [&](const std::string& have) {
+      return have.compare(0, key.size() + 1, key + "=") == 0;
+    });
+    merged.push_back(kv);
+  }
+  return merged;
+}
+
+auto Child::Start(const std::string& executable,
+                  const std::vector<std::string>& arguments,
+                  const ChildOptions& options) -> std::optional<Child> {
+  const std::string resolved = ResolveExecutable(executable);
+  if (resolved.empty()) {
+    return std::nullopt;
+  }
+  auto vectors = BuildExecVectors(resolved, arguments,
+                                  options.extra_env.empty()
+                                      ? std::vector<std::string>{}
+                                      : MergedEnvironment(options.extra_env));
+
+  const pid_t pid = ::fork();
+  if (pid == -1) {
+    return std::nullopt;
+  }
+  if (pid == 0) {
+    ::setpgid(0, 0);
+    if (!options.cwd.empty() && ::chdir(options.cwd.c_str()) == -1) {
+      _exit(127);
+    }
+    // Empty paths leave the caller's streams in place: a supervised server's
+    // log belongs on the supervisor's terminal.
+    if (!RedirectStream(options.stdout_path, STDOUT_FILENO) ||
+        !RedirectStream(options.stderr_path, STDERR_FILENO)) {
+      _exit(127);
+    }
+    char* const* env_ptr = vectors.envp.empty() ? environ : vectors.envp.data();
+    ::execve(vectors.argv[0], vectors.argv.data(), env_ptr);
+    _exit(127);
+  }
+  ::setpgid(pid, pid);
+  return Child(pid);
+}
+
+Child::Child(Child&& other) noexcept
+    : pid_(other.pid_), exit_code_(other.exit_code_) {
+  other.pid_ = -1;
+}
+
+auto Child::operator=(Child&& other) noexcept -> Child& {
+  if (this != &other) {
+    if (pid_ > 0 && !exit_code_) {
+      Stop(std::chrono::seconds(2));
+    }
+    pid_ = other.pid_;
+    exit_code_ = other.exit_code_;
+    other.pid_ = -1;
+  }
+  return *this;
+}
+
+Child::~Child() {
+  if (pid_ > 0 && !exit_code_) {
+    Stop(std::chrono::seconds(2));
+  }
+}
+
+auto Child::Poll() -> std::optional<int> {
+  if (exit_code_ || pid_ <= 0) {
+    return exit_code_;
+  }
+  for (;;) {
+    int status = 0;
+    const pid_t waited = ::waitpid(pid_, &status, WNOHANG);
+    if (waited == -1 && errno == EINTR) {
+      continue;
+    }
+    if (waited != pid_) {
+      return std::nullopt;
+    }
+    exit_code_ = ExitCodeOf(status);
+    // Reap anything else the group left behind, as RunCommand does.
+    ::kill(-pid_, SIGKILL);
+    while (::waitpid(-pid_, nullptr, WNOHANG) > 0) {
+    }
+    return exit_code_;
+  }
+}
+
+void Child::Signal(int signum) const {
+  if (pid_ > 0 && !exit_code_) {
+    ::kill(-pid_, signum);
+  }
+}
+
+auto Child::Wait() -> int {
+  while (!Poll()) {
+    ::usleep(20000);
+  }
+  return *exit_code_;
+}
+
+auto Child::Stop(std::chrono::seconds grace) -> int {
+  if (Poll()) {
+    return *exit_code_;
+  }
+  Signal(SIGTERM);
+  const auto deadline = std::chrono::steady_clock::now() + grace;
+  while (!Poll()) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      Signal(SIGKILL);
+      break;
+    }
+    ::usleep(20000);
+  }
+  while (!Poll()) {
+    ::usleep(20000);
+  }
+  return *exit_code_;
 }
 
 auto CreateInputStreamProcess(

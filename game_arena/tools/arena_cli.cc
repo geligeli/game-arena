@@ -21,6 +21,8 @@ bazel run //game_arena/tools:arena_cli -- evaluate <candidate_id> \
 // drivable from a shell. Submit and Evaluate are the write path and carry the
 // --token as x-arena-token metadata; everything else is a read and open.
 
+#include <grpcpp/grpcpp.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -29,8 +31,8 @@ bazel run //game_arena/tools:arena_cli -- evaluate <candidate_id> \
 #include <fstream>
 #include <map>
 #include <memory>
-#include <sstream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -41,7 +43,6 @@ bazel run //game_arena/tools:arena_cli -- evaluate <candidate_id> \
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "game_arena/proto/arena.grpc.pb.h"
-#include <grpcpp/grpcpp.h>
 
 ABSL_FLAG(std::string, server, "",
           "Arena address (default: $ARENA_SERVER, else localhost:50051)");
@@ -247,13 +248,12 @@ void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
 void PrintJob(const proto::Job &job) {
   // The phase only means anything while the job is still going; once it is
   // done, the last phase it reached is noise.
-  const std::string state =
-      job.state() == proto::Job::RUNNING
-          ? std::string(JobStateName(job.state())) + ", " +
-                PhaseName(job.phase())
-          : JobStateName(job.state());
-  std::printf("job %s [%s] candidate %s\n", job.job_id().c_str(),
-              state.c_str(), job.candidate_id().c_str());
+  const std::string state = job.state() == proto::Job::RUNNING
+                                ? std::string(JobStateName(job.state())) +
+                                      ", " + PhaseName(job.phase())
+                                : JobStateName(job.state());
+  std::printf("job %s [%s] candidate %s\n", job.job_id().c_str(), state.c_str(),
+              job.candidate_id().c_str());
   std::printf("games %d/%d  W/D/L %d/%d/%d  score %.3f\n", job.games_played(),
               job.games_requested(), job.wins(), job.draws(), job.losses(),
               job.elo());
@@ -275,9 +275,8 @@ auto WaitForJob(const Client &client, const std::string &server,
     request.set_job_id(job_id);
     proto::Job job;
     grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/false, &context);
-    const grpc::Status status =
-        client.stub->GetJob(&context, request, &job);
+    ConfigureContext(client, /*write=*/false, &context);
+    const grpc::Status status = client.stub->GetJob(&context, request, &job);
     if (!status.ok()) {
       return RpcError(status, server);
     }
@@ -314,8 +313,9 @@ auto CmdRules(const Client &client, const std::string &server) -> int {
   } else {
     std::printf(" (play others and be rated)\n");
   }
-  std::printf("  built against base_commit %s\n\n",
-              problem.base_commit().empty() ? "-" : problem.base_commit().c_str());
+  std::printf(
+      "  built against base_commit %s\n\n",
+      problem.base_commit().empty() ? "-" : problem.base_commit().c_str());
   if (!problem.description().empty()) {
     std::printf("%s\n\n", problem.description().c_str());
   }
@@ -344,8 +344,20 @@ auto CmdRules(const Client &client, const std::string &server) -> int {
   return 0;
 }
 
+// Under `bazel run` the working directory is the runfiles tree, so a relative
+// path is taken from the workspace the command was run in, which is where the
+// file the user means actually is.
+auto FromWorkspace(const std::string &path) -> std::filesystem::path {
+  const std::filesystem::path p(path);
+  const char *workspace = std::getenv("BUILD_WORKSPACE_DIRECTORY");
+  if (p.is_relative() && workspace != nullptr && *workspace != '\0') {
+    return std::filesystem::path(workspace) / p;
+  }
+  return p;
+}
+
 auto ReadFile(const std::string &path, std::string *content) -> bool {
-  std::ifstream stream(path, std::ios::binary);
+  std::ifstream stream(FromWorkspace(path), std::ios::binary);
   if (!stream) {
     return false;
   }
@@ -410,6 +422,9 @@ auto CmdSubmit(const Client &client, const std::string &server) -> int {
     if (entry_header.empty()) {
       if (headers.size() == 1) {
         entry_header = headers.front();
+      } else if (headers.empty() && files.size() == 1) {
+        // A standalone program: the one file is the entry.
+        entry_header = std::filesystem::path(files.front()).filename().string();
       } else {
         std::string candidates;
         for (const std::string &header : headers) {
@@ -423,9 +438,8 @@ auto CmdSubmit(const Client &client, const std::string &server) -> int {
         return kExitUsage;
       }
     }
-    request.set_entry_header(std::filesystem::path(entry_header)
-                                 .filename()
-                                 .string());
+    request.set_entry_header(
+        std::filesystem::path(entry_header).filename().string());
     for (const std::string &kv : absl::GetFlag(FLAGS_param)) {
       const auto eq = kv.find('=');
       if (eq == std::string::npos) {
@@ -479,9 +493,8 @@ auto CmdJob(const Client &client, const std::string &server,
     return RpcError(status, server);
   }
   PrintJob(job);
-  return IsTerminal(job.state()) && job.state() != proto::Job::DONE
-             ? kExitError
-             : 0;
+  return IsTerminal(job.state()) && job.state() != proto::Job::DONE ? kExitError
+                                                                    : 0;
 }
 
 auto CmdCandidates(const Client &client, const std::string &server) -> int {
@@ -565,7 +578,7 @@ auto CmdSource(const Client &client, const std::string &server,
     request.set_candidate_id(candidate_id);
     request.set_path(args[1]);
     grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/false, &context);
+    ConfigureContext(client, /*write=*/false, &context);
     proto::SourceFile source;
     const grpc::Status status =
         client.stub->GetSource(&context, request, &source);
@@ -592,11 +605,10 @@ auto CmdSource(const Client &client, const std::string &server,
               candidate.author().empty() ? "-" : candidate.author().c_str(),
               candidate.game().empty() ? "-" : candidate.game().c_str(),
               StatusName(candidate.status()));
-  std::printf("base_commit %s  parent %s\n",
-              candidate.base_commit().empty() ? "-"
-                                              : candidate.base_commit().c_str(),
-              candidate.parent_id().empty() ? "-"
-                                            : candidate.parent_id().c_str());
+  std::printf(
+      "base_commit %s  parent %s\n",
+      candidate.base_commit().empty() ? "-" : candidate.base_commit().c_str(),
+      candidate.parent_id().empty() ? "-" : candidate.parent_id().c_str());
   if (!candidate.entry_header().empty()) {
     std::printf("entry_header %s\n", candidate.entry_header().c_str());
   }
@@ -664,8 +676,8 @@ auto CmdEvaluate(const Client &client, const std::string &server,
   if (repeats > 0) {
     request.mutable_grade()->set_repeats(repeats);
   } else {
-    request.mutable_match()->set_opponent(
-        opponent.empty() ? "ladder" : opponent);
+    request.mutable_match()->set_opponent(opponent.empty() ? "ladder"
+                                                           : opponent);
     if (games > 0) {
       request.mutable_match()->set_games(games);
     }

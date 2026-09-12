@@ -7,6 +7,7 @@
 #include <fstream>
 #include <ios>
 #include <iterator>
+#include <random>
 #include <string>
 #include <utility>
 
@@ -45,6 +46,82 @@ auto HashToken(std::string_view token) -> std::string {
     hex.push_back(kHex[byte & 0x0f]);
   }
   return hex;
+}
+
+auto MintToken() -> std::string {
+  // random_device is the right source here and nowhere near a hot path.
+  std::random_device entropy;
+  std::uniform_int_distribution<unsigned> nibble(0, 15);
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string token;
+  token.reserve(64);
+  for (int i = 0; i < 64; ++i) {
+    token.push_back(kHex[nibble(entropy)]);
+  }
+  return token;
+}
+
+auto MakeClient(std::string_view client_id, std::string_view display_name,
+                std::string_view token,
+                const proto::ClientQuota &quota) -> proto::Client {
+  proto::Client client;
+  client.set_client_id(std::string(client_id));
+  if (!display_name.empty()) {
+    client.set_display_name(std::string(display_name));
+  }
+  client.set_token_sha256(HashToken(token));
+  if (quota.max_active_evaluations() > 0 || quota.max_queued_jobs() > 0) {
+    *client.mutable_quota() = quota;
+  }
+  return client;
+}
+
+auto ClientBlockText(const proto::Client &client) -> std::string {
+  // Printed through the registry message, so the block is exactly the shape
+  // Load() parses -- one "clients { ... }" entry.
+  proto::ClientRegistry one;
+  *one.add_clients() = client;
+  std::string text;
+  google::protobuf::TextFormat::PrintToString(one, &text);
+  return text;
+}
+
+auto AppendClientToRegistry(const std::filesystem::path &path,
+                            const proto::Client &client,
+                            std::string *error) -> bool {
+  std::string existing;
+  if (std::filesystem::exists(path)) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+      *error = absl::StrCat("cannot read client registry ", path.string());
+      return false;
+    }
+    existing.assign((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+    proto::ClientRegistry parsed;
+    if (!google::protobuf::TextFormat::ParseFromString(existing, &parsed)) {
+      *error = absl::StrCat("cannot parse client registry ", path.string(),
+                            "; not appending to a file that does not load");
+      return false;
+    }
+    for (const proto::Client &present : parsed.clients()) {
+      if (present.client_id() == client.client_id()) {
+        *error = absl::StrCat("client '", client.client_id(),
+                              "' is already in ", path.string());
+        return false;
+      }
+    }
+  }
+  std::ofstream out(path, std::ios::binary | std::ios::app);
+  if (!out) {
+    *error = absl::StrCat("cannot write client registry ", path.string());
+    return false;
+  }
+  if (!existing.empty() && existing.back() != '\n') {
+    out << '\n';
+  }
+  out << ClientBlockText(client);
+  return static_cast<bool>(out);
 }
 
 ClientRegistry::ClientRegistry(std::filesystem::path path,

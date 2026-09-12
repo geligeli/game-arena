@@ -162,5 +162,44 @@ TEST_F(ClientRegistryTest, AcceptsAnUppercaseHashInTheFile) {
       << "hex case is not part of the secret";
 }
 
+TEST(ClientMintTest, MintedClientsRoundTripThroughTheRegistryFile) {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "client_registry_mint_test";
+  std::filesystem::remove(path);
+
+  const std::string token = MintToken();
+  EXPECT_EQ(token.size(), 64u);
+  EXPECT_NE(token, MintToken());
+
+  proto::ClientQuota quota;
+  quota.set_max_queued_jobs(3);
+  const proto::Client client = MakeClient("alice", "Alice", token, quota);
+  EXPECT_EQ(client.token_sha256(), HashToken(token));
+  EXPECT_EQ(client.quota().max_queued_jobs(), 3u);
+
+  std::string error;
+  ASSERT_TRUE(AppendClientToRegistry(path, client, &error)) << error;
+  ASSERT_TRUE(AppendClientToRegistry(
+      path, MakeClient("bob", "", MintToken(), proto::ClientQuota()), &error))
+      << error;
+  // A second "alice" is refused, and the file is left as it was.
+  EXPECT_FALSE(AppendClientToRegistry(path, client, &error));
+  EXPECT_NE(error.find("alice"), std::string::npos);
+
+  proto::ClientQuota defaults;
+  defaults.set_max_active_evaluations(1);
+  defaults.set_max_queued_jobs(8);
+  ClientRegistry registry(path, defaults);
+  ASSERT_TRUE(registry.Load(&error)) << error;
+  EXPECT_EQ(registry.size(), 2u);
+  const auto alice = registry.Resolve(token);
+  ASSERT_TRUE(alice.has_value());
+  EXPECT_EQ(alice->client_id, "alice");
+  EXPECT_EQ(alice->display_name, "Alice");
+  EXPECT_EQ(alice->quota.max_queued_jobs(), 3u);
+  EXPECT_EQ(alice->quota.max_active_evaluations(), 1u);
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 }  // namespace tournament_arena

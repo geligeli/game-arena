@@ -1,4 +1,3 @@
-load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
@@ -25,32 +24,16 @@ cc_library(
     ],
 )
 
-# A referee for this problem: our rules, the arena's match loop. This two-line
-# rule is the whole of what "run my game in the arena" means.
-cc_binary(
-    name = "match_referee",
-    deps = [
-        ":registry",
-        "@game_arena//game_arena/referee:referee_main",
-    ],
-)
-
-# A long-running broker for local play, and the generic random client pointed
-# at our registry. Neither is on the evaluation path; both are for iterating.
-cc_binary(
-    name = "broker_server",
-    deps = [
-        ":registry",
-        "@game_arena//game_arena/referee:broker_server_main",
-    ],
-)
-
-cc_binary(
-    name = "random_client",
-    deps = [
-        ":registry",
-        "@game_arena//game_arena/client:random_client_main",
-    ],
+# Everything a participant needs from this package, for the kit that
+# `bazel run //:kit` writes. The referee is assembled at the root by
+# arena_problem(); here are only the rules.
+filegroup(
+    name = "kit",
+    srcs = glob([
+        "BUILD",
+        "*.cc",
+        "*.h",
+    ]),
 )
 
 cc_test(

@@ -272,8 +272,8 @@ TEST_F(OrderRunnerContainerTest, TheOrderSaysWhichTreeToClone) {
   ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("clone-1", "c-ok"), {}).build_ok);
 
   const std::string git_log = ReadFile(root_ / "git.log");
-  ExpectLogContains(git_log, "git clone --local " +
-                                 (root_ / "repo_src").string() + " " +
+  ExpectLogContains(git_log, "git clone " + (root_ / "repo_src").string() +
+                                 " " +
                                  (root_ / "work" / "slot0" / "repo").string());
   EXPECT_TRUE(
       std::filesystem::exists(root_ / "work" / "slot0" / "repo" / ".git"));
@@ -290,14 +290,14 @@ TEST_F(OrderRunnerContainerTest, ADifferentOrderCanNameADifferentTree) {
   runner_->RunOrder(1, order, {});
 
   ExpectLogContains(ReadFile(root_ / "git.log"),
-                    "git clone --local " + other.string() + " " +
+                    "git clone " + other.string() + " " +
                         (root_ / "work" / "slot1" / "repo").string());
 }
 
 TEST_F(OrderRunnerContainerTest, AUrlIsClonedWithoutTheHardlinkOptimisation) {
-  // --local hardlinks the objects, which is most of why a slot is cheap to
-  // create -- and it is an error for anything that is not a path on this
-  // filesystem. Now that the source arrives on the order it can be a URL.
+  // A plain path is cloned without an explicit --local: git hardlinks the
+  // objects when it can and copies them across filesystems, whereas the flag
+  // makes the second case fatal. A URL is passed through unchanged.
   proto::WorkOrder order = MakeOrder("url-1", "c-ok");
   order.set_repo_url("https://example.invalid/arena.git");
 
@@ -306,7 +306,7 @@ TEST_F(OrderRunnerContainerTest, AUrlIsClonedWithoutTheHardlinkOptimisation) {
   const std::string git_log = ReadFile(root_ / "git.log");
   ExpectLogContains(git_log, "git clone https://example.invalid/arena.git " +
                                  (root_ / "work" / "slot2" / "repo").string());
-  EXPECT_EQ(git_log.find("--local https://"), std::string::npos) << git_log;
+  EXPECT_EQ(git_log.find("--local"), std::string::npos) << git_log;
 }
 
 // The problem's registry_options have to survive all the way to the referee's

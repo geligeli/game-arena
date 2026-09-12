@@ -4,10 +4,7 @@
 # registry and no referee -- the arena builds a submission, runs one command,
 # and reads the numbers that command leaves in $ARENA_REPORT.
 #
-#   bazel run @game_arena//game_arena/server:problem_server -- \
-#       --problem_config=$PWD/problem.textproto \
-#       --data_dir=$PWD/.arena_data \
-#       --clients=$PWD/clients.textproto
+#   bazel run //:tournament -- --no_container      # see BUILD
 
 problem_id: "knapsack"
 display_name: "Knapsack"
@@ -24,13 +21,12 @@ description:
   "is exact. An infeasible answer -- over capacity, a repeated index, junk on "
   "stdout -- scores zero for that case; a crash or a timeout does too.\n"
 
-# Every path below is relative to THIS directory, because this directory is the
-# problem's repo root: the sandbox worker clones a repo and runs bazel at its
-# root, so a problem's workspace has to be that root. Living inside game-arena
-# is a convenience for reading the two examples side by side -- to run it on a
-# fleet, point repo.url at a checkout whose root is this directory.
+# Every label below is relative to THIS directory, because this directory is
+# the problem's repo root: the sandbox worker clones a repo and runs bazel at
+# its root, so a problem's workspace has to be that root.
 repo {
-  url: "/large_nfs/game-arena/examples/knapsack"
+  # Relative to this file: the problem is wherever it is checked out.
+  url: "."
   base_commit: "HEAD"
 }
 
@@ -49,12 +45,15 @@ submission {
     # examples/knapsack/README.md.
     api_dep: "@game_arena//game_arena/grader:report"
     main_src: "solve.cc"
+    # The generated binary is called what build.targets and grade.argv
+    # expect, and what a hand-written patch's BUILD must call it.
+    binary_name: "solve"
   }
 }
 
 build {
-  targets: "//grader:grade"
   targets: "//solutions/{submission_id}:solve"
+  targets: "//grader:grade"
   timeout_s: 600
 }
 

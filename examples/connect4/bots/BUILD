@@ -56,3 +56,15 @@ cc_binary(
         ":reference_strategy",
     ],
 )
+
+# What a participant receives: the API, the harness compiled around every
+# submission, and the reference strategy to start from.
+filegroup(
+    name = "kit",
+    srcs = glob([
+        "BUILD",
+        "*.cc",
+        "*.h",
+        "reference/*",
+    ]),
+)

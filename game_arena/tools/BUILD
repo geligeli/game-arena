@@ -33,3 +33,29 @@ cc_binary(
         "@grpc//:grpc++",
     ],
 )
+
+# Standing a tournament up from a problem repository, and handing out kits to
+# enter it. Driven through the targets @game_arena//game_arena/rules:problem.bzl
+# generates; the arena binaries it launches ride along as data.
+cc_binary(
+    name = "arena_tournament",
+    srcs = ["arena_tournament.cc"],
+    data = [
+        "//game_arena/sandbox/image:Dockerfile",
+        "//game_arena/sandbox/worker:sandbox_worker",
+        "//game_arena/server:problem_server",
+    ],
+    deps = [
+        "//game_arena/common/process",
+        "//game_arena/server:client_registry",
+        "//game_arena/server:problem_config",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/flags:parse",
+        "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/log:globals",
+        "@abseil-cpp//absl/log:initialize",
+        "@abseil-cpp//absl/strings",
+        "@protobuf//:protobuf",
+        "@rules_cc//cc/runfiles",
+    ],
+)

@@ -19,8 +19,11 @@ game_arena/referee/    match loop + broker protocol; entry points as libraries
 game_arena/client/     the generic reference client
 game_arena/testgame/   Nim: the arena's own game and reference registry
 game_arena/problems/   nim.textproto
-game_arena/tools/      arena_admin, arena_cli
+game_arena/rules/      arena_problem, the macro a problem repo calls
+game_arena/sandbox/image/  the Dockerfile a problem's sandbox image is built from
+game_arena/tools/      arena_admin, arena_cli, arena_tournament
 game_arena/common/     subprocess wrapper
+scripts/new_problem.sh scaffolds a problem repo from an example
 ```
 
 ## The rule that matters
@@ -47,6 +50,10 @@ both invisible to the symbol-level test because they were strings.
   `GameSession` and `arena_testgame::`. It must keep passing.
 - Use `game_arena/testgame` (Nim) for arena-side coverage. If a test needs a
   real game to be meaningful, it belongs in a consumer repo, not here.
+- `rules/problem.bzl` and `tools/arena_tournament` are how a problem repo
+  becomes a tournament. Every label, file and name they act on arrives from
+  the caller: the macro's `registry` and `kit_files`, the config's targets.
+  Nothing in either names a problem.
 
 ## The other seam
 
@@ -80,6 +87,19 @@ un-hardened counterexample.
 bazel build //...
 bazel test //...
 bazel test --config=asan //game_arena/...
+(cd examples/connect4 && bazel test //...)   # the macro, from a consumer
+(cd examples/knapsack && bazel test //...)
+```
+
+End to end, from a standalone problem repo (the examples live inside this git
+tree, and a worker clones `repo.url`, so scaffold one first):
+
+```sh
+scripts/new_problem.sh match /tmp/c4 --id=c4 && cd /tmp/c4
+bazel run //:tournament -- --no_container          # foreground; Ctrl-C stops it
+bazel run //:kit -- --out=/tmp/kit --mint=alice --check
+cd /tmp/kit && . ./arena.env && \
+  bazel run //:arena_cli -- submit --name=ref --file=bots/reference/strategy.h --wait
 ```
 
 - Sanitizer / tuning configs in `.bazelrc` (each gets its own output dir):

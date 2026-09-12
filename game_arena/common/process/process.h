@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -78,10 +79,68 @@ struct RunResult {
 };
 
 // Runs |executable| to completion with its own process group. |executable| is
-// resolved through PATH when it contains no '/'.
+// resolved through PATH when it contains no '/'; a relative path with one is
+// taken relative to |options.cwd| when that is set.
 auto RunCommand(const std::string& executable,
                 const std::vector<std::string>& arguments,
                 const RunOptions& options) -> RunResult;
+
+// ---------------------------------------------------------------------------
+// Long-running children
+// ---------------------------------------------------------------------------
+
+struct ChildOptions {
+  std::filesystem::path cwd;  // empty: inherit the caller's
+  // "K=V" entries added to the caller's environment, overriding any the caller
+  // already has. Unlike RunOptions::env this never replaces the environment
+  // wholesale: a supervised server should see the same PATH and HOME as the
+  // supervisor, plus what it is told.
+  std::vector<std::string> extra_env;
+  std::filesystem::path stdout_path;  // empty: inherit the caller's
+  std::filesystem::path stderr_path;  // empty: inherit the caller's
+};
+
+// A child that is meant to keep running -- a server this process supervises.
+// Its own process group, like RunCommand, so stopping it stops what it
+// spawned. Destroying a running Child kills it: a supervisor that exits
+// leaves nothing behind.
+class Child {
+ public:
+  // Nullopt when |executable| cannot be launched. Resolved through PATH when
+  // it contains no '/'.
+  static auto Start(const std::string& executable,
+                    const std::vector<std::string>& arguments,
+                    const ChildOptions& options) -> std::optional<Child>;
+
+  Child(Child&& other) noexcept;
+  auto operator=(Child&& other) noexcept -> Child&;
+  ~Child();
+  Child(const Child&) = delete;
+  auto operator=(const Child&) -> Child& = delete;
+
+  auto pid() const -> pid_t { return pid_; }
+
+  // The exit code once the child has exited (128 + signal when killed by
+  // one), nullopt while it runs. Reaps the child; later calls return the same
+  // code.
+  auto Poll() -> std::optional<int>;
+
+  // Sends |signum| to the child's whole process group.
+  void Signal(int signum) const;
+
+  // Blocks until the child exits and returns its exit code.
+  auto Wait() -> int;
+
+  // SIGTERM the group, wait up to |grace|, then SIGKILL it. Returns the exit
+  // code. A no-op returning the recorded code if it already exited.
+  auto Stop(std::chrono::seconds grace) -> int;
+
+ private:
+  explicit Child(pid_t pid) : pid_(pid) {}
+
+  pid_t pid_ = -1;
+  std::optional<int> exit_code_;
+};
 
 // Finds |name| on PATH, or returns it unchanged when it already contains '/'.
 // Empty when nothing executable matches.

@@ -37,6 +37,24 @@ registration, nothing to configure on the server.
 
 ## Running it
 
+From a problem repository that calls `arena_problem()` (see
+`game_arena/rules/problem.bzl` and the examples), the whole thing is:
+
+```sh
+bazel run //:tournament                      # a coordinator and a local worker
+bazel run //:tournament -- --no_container    # the same on a host without docker
+bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
+bazel run //:sandbox_image                   # the image sandbox.image names
+```
+
+`tournament` writes the effective config and all state under
+`~/.arena/<problem_id>` (`$ARENA_STATE_DIR` to move it), starts
+`problem_server` on it, waits for the port, starts `--workers` local
+`sandbox_worker`s, and forwards Ctrl-C to all of them. `--no_container`
+clears `sandbox.image` in that derived config and says so loudly: the
+committed config stays what a real run uses. Or by hand, which is what those
+run:
+
 ```sh
 # 1. The coordinator. One server per problem; --problem_config says which.
 bazel run //game_arena/server:problem_server -- \
@@ -161,9 +179,15 @@ What is enforced above that, at submit time:
   deliberately, and must rely on the sandbox instead.
 
 The image is still trusted — it carries bazel and the toolchain — and the
-network being closed means the image must carry a warm bazel repository cache,
-since a module fetch will fail. That failure is correct: it is a submission
-depending on something the problem did not offer.
+network being closed means the image must carry the repo's external
+dependencies, since a module fetch will fail. That failure is correct: it is
+a submission depending on something the problem did not offer.
+`bazel run //:sandbox_image` builds such an image from
+`game_arena/sandbox/image/Dockerfile`: a small toolchain base, `bazel vendor`
+of the problem's `MODULE.bazel` into `/opt/arena/vendor`, and a system
+bazelrc pointing bazel at it. A `game_arena` overridden with a local path is
+copied into the image too, with a warning, because `bazel vendor` only
+symlinks local overrides.
 
 ## Slots, checkouts and build cost
 

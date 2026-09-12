@@ -315,6 +315,9 @@ def arena_submit(
         request.entry_header = Path(entry_header).name
     elif len(headers) == 1:
         request.entry_header = headers[0]
+    elif not headers and len(paths) == 1:
+        # A standalone program: the one file is the entry.
+        request.entry_header = Path(paths[0]).name
     else:
         return (
             "ERROR: entry_header is required when the submission has "

@@ -1,15 +1,11 @@
 # A tournament problem: write a Connect Four bot, get rated against everyone
 # else's.
 #
-# Every path below is relative to THIS directory, because this directory is the
-# problem's repo root: the sandbox worker clones a repo and runs bazel at its
-# root, so a problem's workspace has to be that root. Living inside game-arena
-# is a convenience for reading the two examples side by side -- to run it on a
-# fleet, point repo.url at a checkout whose root is this directory.
+# Every label below is relative to THIS directory, because this directory is
+# the problem's repo root: the sandbox worker clones a repo and runs bazel at
+# its root, so a problem's workspace has to be that root.
 #
-#   bazel run @game_arena//game_arena/server:problem_server -- \
-#       --problem_config=$PWD/problem.textproto \
-#       --data_dir=$PWD/.arena_data --clients=$PWD/clients.textproto
+#   bazel run //:tournament -- --no_container      # see BUILD
 
 problem_id: "connect4"
 display_name: "Connect Four"
@@ -29,7 +25,8 @@ description:
   "matched against other submissions.\n"
 
 repo {
-  url: "/large_nfs/game-arena/examples/connect4"
+  # Relative to this file: the problem is wherever it is checked out.
+  url: "."
   base_commit: "HEAD"
 }
 
@@ -60,10 +57,12 @@ submission {
 }
 
 build {
-  # The referee builds alongside the bot: a submission that somehow breaks the
-  # rules library fails to build rather than reaching a match.
-  targets: "//game:match_referee"
+  # The bot -- the target naming {submission_id} is what the worker starts
+  # against the referee -- and the referee beside it: a submission that
+  # somehow breaks the rules library fails to build rather than reaching a
+  # match.
   targets: "//bots/submissions/{submission_id}:bot"
+  targets: "//:match_referee"
   timeout_s: 1200
 }
 
@@ -77,7 +76,7 @@ sandbox {
 
 match {
   game: "connect4"
-  referee_target: "//game:match_referee"
+  referee_target: "//:match_referee"
   games_per_order: 10
   placement_opponents: "builtin:random"
   placement_opponents: "builtin:greedy"

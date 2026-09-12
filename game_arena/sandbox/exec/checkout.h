@@ -14,18 +14,20 @@
 namespace sandbox_exec {
 
 // Clones |source| into |dest| on first use -- an existing .git means the
-// clone is already there. --local hardlinks the object store instead of
-// copying it, so a clone of a multi-gigabyte history costs almost nothing on
-// the same filesystem. Returns false with *error set.
+// clone is already there. A local source's object store is hardlinked when
+// the slot is on the same filesystem, so a clone of a multi-gigabyte history
+// costs almost nothing there, and copied otherwise. Returns false with *error
+// set.
 auto EnsureClone(const std::string &git, const std::string &source,
                  const std::filesystem::path &dest,
                  const std::filesystem::path &log_dir,
                  std::string *error) -> bool;
 
-// A best-effort fetch, then a forced checkout of |commit|. The fetch is
-// allowed to fail: a stale mirror is survivable, and the checkout decides.
-// An empty |commit| leaves the tree where it is. Returns false with *error
-// set.
+// A best-effort fetch, then a forced checkout of |commit| and a clean, so the
+// tree is exactly that commit -- a previous job's patched-in files included.
+// The fetch is allowed to fail: a stale mirror is survivable, and the checkout
+// decides. An empty |commit| leaves the tree where it is. Returns false with
+// *error set.
 auto SyncToCommit(const std::string &git, const std::filesystem::path &repo,
                   const std::string &commit,
                   const std::filesystem::path &log_dir,

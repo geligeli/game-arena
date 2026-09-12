@@ -18,7 +18,8 @@ game_arena/
   client/     the generic reference client
   testgame/   Nim: the arena's own game, and the reference registry
   problems/   nim.textproto, the reference problem
-  tools/      arena_admin, arena_cli
+  rules/      arena_problem: the one macro a problem repo calls
+  tools/      arena_admin, arena_cli, arena_tournament
   common/     small subprocess wrapper
 ```
 
@@ -79,6 +80,39 @@ its own bazel workspace:
 
 Neither is referenced from anything under `game_arena/`, which is the point.
 Start there if you are adding a problem.
+
+## From a problem to a tournament
+
+A problem repository is `MODULE.bazel` + `problem.textproto` + the rules or
+the grader + one line of BUILD:
+
+```python
+load("@game_arena//game_arena/rules:problem.bzl", "arena_problem")
+
+arena_problem(
+    name = "connect4",
+    config = "problem.textproto",
+    registry = "//game:registry",              # match problems only
+    kit_files = ["//game:kit", "//bots:kit"],  # what a participant receives
+)
+```
+
+That defines everything the two examples run:
+
+```sh
+bazel test //...                                     # the rules, and the config
+bazel run //:tournament -- --no_container            # a coordinator + a local worker
+bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
+bazel run //:sandbox_image                           # the offline sandbox image
+bazel build //:connect4                              # every binary a tournament needs
+```
+
+`kit` writes a participant's workspace: only the files `kit_files` names,
+plus the arena's CLI and MCP server as `bazel run //:arena_cli` and
+`//:mcp_server`, a README generated from the config, and a freshly minted
+token in `arena.env` and `mcp.json`. The grader, the cases and the tournament
+config stay behind. `scripts/new_problem.sh match|graded <dir>` scaffolds a
+new repo from an example.
 
 ## Build
 

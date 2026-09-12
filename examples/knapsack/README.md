@@ -30,6 +30,7 @@ has to be something to beat.
 
 | | |
 | --- | --- |
+| `BUILD` | one `arena_problem()` call: the config test, the tournament, the kit |
 | `problem.textproto` | the whole problem: what to build, what to run, what to rank |
 | `grader/grade_main.cc` | runs each case, checks the answer, writes the report |
 | `cases/*.txt`, `*.best` | the instances and their known optima |
@@ -78,6 +79,26 @@ report:
 ```sh
 printf '{"metrics": {"score": %s}}\n' "$score" > "$ARENA_REPORT"
 ```
+
+## Running it, and what a participant gets
+
+```sh
+bazel run //:tournament -- --no_container        # coordinator + a local worker
+bazel run //:kit -- --out=/srv/kits/bob --mint=bob --server=$(hostname):50051
+```
+
+The kit holds `solutions/reference/` and this README -- and not `grader/` or
+`cases/`, because `kit_files` in `BUILD` does not name them: a participant
+who can read the cases can special-case them. What a participant *can* do is
+build a `solve` and submit it:
+
+```sh
+. ./arena.env
+bazel run //:arena_cli -- submit --name="Greedy" --file=solutions/reference/solve.cc --wait
+```
+
+This directory is inside game-arena's git tree, which a worker cannot clone;
+`scripts/new_problem.sh graded <dir>` copies it out as a repository of its own.
 
 ## A note on structured submissions
 

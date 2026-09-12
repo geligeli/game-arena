@@ -106,6 +106,10 @@ message CandidateHarness {
   // "CANDIDATE_GAME_RISK2". Empty when the harness serves one game and needs
   // no selection.
   string game_define = 4;
+
+  // Name of the generated cc_binary, so build.targets and grade.argv can name
+  // it: "//solutions/{submission_id}:<binary_name>". Empty means "bot".
+  string binary_name = 5;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +124,9 @@ message BuildSpec {
   // problem whose solutions each live in their own directory can name them:
   //   "//solutions/{submission_id}:bot"
   // The same substitution applies to grade.argv and match.referee_target.
+  //
+  // For a match problem, the target naming {submission_id} is the bot the
+  // worker starts against the referee; with no such target, the first one is.
   repeated string targets = 1;
   // Extra bazel flags, e.g. "--config=native".
   repeated string bazel_flags = 2;
