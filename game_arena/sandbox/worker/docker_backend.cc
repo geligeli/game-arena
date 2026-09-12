@@ -7,9 +7,11 @@
 #include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/common/process/process.h"
 #include "game_arena/sandbox/common/files.h"
+#include "game_arena/sandbox/common/text.h"
 #include "game_arena/sandbox/worker/bot_launch.h"
 #include "game_arena/sandbox/worker/build_log.h"
 #include "game_arena/sandbox/worker/checkout.h"
+#include "game_arena/sandbox/worker/match_tally.h"
 #include "game_arena/sandbox/worker/metric_report.h"
 
 namespace tournament_arena {
@@ -21,6 +23,7 @@ using sandbox_common::HostOverlayPrelude;
 using sandbox_common::OverlayMountScript;
 using sandbox_common::ReadFile;
 using sandbox_common::ShellQuote;
+using sandbox_common::TailOf;
 
 // Both sides of an order, primary first. A builtin opponent contributes none.
 auto SidesOf(const proto::WorkOrder &order)

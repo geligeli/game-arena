@@ -22,9 +22,11 @@
 #include "game_arena/common/process/process.h"
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/common/step.h"
+#include "game_arena/sandbox/common/text.h"
 #include "game_arena/sandbox/worker/bot_launch.h"
 #include "game_arena/sandbox/worker/build_log.h"
 #include "game_arena/sandbox/worker/checkout.h"
+#include "game_arena/sandbox/worker/match_tally.h"
 #include "game_arena/sandbox/worker/metric_report.h"
 
 namespace tournament_arena {
@@ -34,6 +36,7 @@ namespace {
 using sandbox_common::ReadFile;
 using sandbox_common::RunStep;
 using sandbox_common::StepResult;
+using sandbox_common::TailOf;
 
 // The caller's environment plus |extra|. RunOptions treats an empty env as
 // "inherit", so adding one variable means rebuilding the whole list.

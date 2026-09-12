@@ -45,7 +45,28 @@ cc_library(
     name = "build_log",
     srcs = ["build_log.cc"],
     hdrs = ["build_log.h"],
+    deps = [
+        "//game_arena/sandbox/common:text",
+        "@re2",
+    ],
+)
+
+# The RESULT line a refereed match prints. Arena vocabulary -- games, draws,
+# an ELO number -- kept out of build_log, which is generic build tooling.
+cc_library(
+    name = "match_tally",
+    srcs = ["match_tally.cc"],
+    hdrs = ["match_tally.h"],
     deps = ["@re2"],
+)
+
+cc_test(
+    name = "match_tally_test",
+    srcs = ["match_tally_test.cc"],
+    deps = [
+        ":match_tally",
+        "@googletest//:gtest_main",
+    ],
 )
 
 # The host-side git work both backends do per slot: clone once, then fetch
@@ -56,8 +77,8 @@ cc_library(
     srcs = ["checkout.cc"],
     hdrs = ["checkout.h"],
     deps = [
-        ":build_log",
         "//game_arena/sandbox/common:step",
+        "//game_arena/sandbox/common:text",
     ],
 )
 
@@ -75,11 +96,13 @@ cc_library(
         "//game_arena/common/kv_options",
         ":build_log",
         ":checkout",
+        ":match_tally",
         ":metric_report",
         ":bot_launch",
         ":sandbox_backend",
         "//game_arena/common/process",
         "//game_arena/sandbox/common:files",
+        "//game_arena/sandbox/common:text",
         "//game_arena/sandbox/common:step",
         "@abseil-cpp//absl/log",
     ],
@@ -95,12 +118,14 @@ cc_library(
         "//game_arena/common/kv_options",
         ":build_log",
         ":checkout",
+        ":match_tally",
         ":metric_report",
         ":bot_launch",
         ":sandbox_backend",
         "//game_arena/common/process",
         "//game_arena/sandbox/common:docker",
         "//game_arena/sandbox/common:files",
+        "//game_arena/sandbox/common:text",
         "@abseil-cpp//absl/log",
     ],
 )

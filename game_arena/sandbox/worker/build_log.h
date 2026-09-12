@@ -30,21 +30,6 @@ struct BuildLogLimits {
 auto CompactBuildLog(const std::string &log,
                      BuildLogLimits limits = {}) -> std::string;
 
-// Keeps the last |max_chars| of |text|, marking what was dropped. Errors are
-// at the end of a build log.
-auto TailOf(const std::string &text, std::size_t max_chars) -> std::string;
-
-// Parses the "RESULT games=N wins=W draws=D losses=L elo=E" line the candidate
-// harness prints. Returns false when no such line is present.
-struct RunTally {
-  int games = 0;
-  int wins = 0;
-  int draws = 0;
-  int losses = 0;
-  double elo = 0.0;
-};
-auto ParseResultLine(const std::string &output, RunTally *tally) -> bool;
-
 }  // namespace tournament_arena
 
 #endif  // GAME_ARENA_GAME_ARENA_SANDBOX_WORKER_BUILD_LOG_H

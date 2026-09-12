@@ -4,9 +4,11 @@
 #include <system_error>
 
 #include "game_arena/sandbox/common/step.h"
-#include "game_arena/sandbox/worker/build_log.h"
+#include "game_arena/sandbox/common/text.h"
 
 namespace tournament_arena {
+
+using sandbox_common::TailOf;
 
 auto EnsureClone(const std::string &git, const std::string &source,
                  const std::filesystem::path &dest,

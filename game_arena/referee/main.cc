@@ -17,7 +17,7 @@ bazel run //game_arena/testgame:match_referee -- \
 // --player_b=builtin:<spec> as its opponent; against another submission, both
 // connect and rendezvous on "player:<the other>".
 //
-// Output contract, last line, parsed by sandbox/worker/build_log.h:
+// Output contract, last line, parsed by sandbox/worker/match_tally.h:
 //
 //   RESULT games=10 wins=6 draws=1 losses=3 elo=1523.4
 //

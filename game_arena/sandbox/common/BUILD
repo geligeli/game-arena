@@ -23,6 +23,24 @@ cc_test(
     ],
 )
 
+# Trimming captured output. Every layer reports a failure; only one of them
+# knows what bazel is, so this is here rather than beside the build-log
+# compactor it used to share a target with.
+cc_library(
+    name = "text",
+    srcs = ["text.cc"],
+    hdrs = ["text.h"],
+)
+
+cc_test(
+    name = "text_test",
+    srcs = ["text_test.cc"],
+    deps = [
+        ":text",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # One subprocess step with its output captured to files, the same shape
 # whether the step runs on the host or starts a container.
 cc_library(

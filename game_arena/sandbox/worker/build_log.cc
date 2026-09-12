@@ -4,6 +4,7 @@
 #include <sstream>
 #include <vector>
 
+#include "game_arena/sandbox/common/text.h"
 #include "re2/re2.h"
 
 namespace tournament_arena {
@@ -34,18 +35,12 @@ auto IsInteresting(const std::string &line) -> bool {
   return false;
 }
 
+using sandbox_common::TailOf;
+
 }  // namespace
 
-auto TailOf(const std::string &text, std::size_t max_chars) -> std::string {
-  if (text.size() <= max_chars) {
-    return text;
-  }
-  return "... (" + std::to_string(text.size() - max_chars) +
-         " chars truncated) ...\n" + text.substr(text.size() - max_chars);
-}
-
-auto CompactBuildLog(const std::string &log, BuildLogLimits limits)
-    -> std::string {
+auto CompactBuildLog(const std::string &log,
+                     BuildLogLimits limits) -> std::string {
   std::vector<std::string> kept;
   std::istringstream lines(log);
   std::string line;
@@ -77,24 +72,6 @@ auto CompactBuildLog(const std::string &log, BuildLogLimits limits)
     out += "... (further diagnostics omitted) ...\n";
   }
   return TailOf(out, limits.max_chars);
-}
-
-auto ParseResultLine(const std::string &output, RunTally *tally) -> bool {
-  static const RE2 kResult(
-      R"(RESULT games=(\d+) wins=(\d+) draws=(\d+) losses=(\d+) elo=([-\d.]+))");
-  std::istringstream lines(output);
-  std::string line;
-  bool found = false;
-  while (std::getline(lines, line)) {
-    RunTally parsed;
-    if (RE2::PartialMatch(line, kResult, &parsed.games, &parsed.wins,
-                          &parsed.draws, &parsed.losses, &parsed.elo)) {
-      // Last one wins: a retried run appends rather than replaces.
-      *tally = parsed;
-      found = true;
-    }
-  }
-  return found;
 }
 
 }  // namespace tournament_arena
