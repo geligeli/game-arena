@@ -184,6 +184,28 @@ class DockerBackendIntegrationTest : public ::testing::Test {
         << "fragment: " << fragment;
   }
 
+  // The whole `docker run` argv for |container|, from "docker run" up to the
+  // `-c` that introduces the entrypoint script.
+  //
+  // Every other assertion in this file is a substring match on one flag, which
+  // cannot see a flag inserted in the middle of the argv or a reordered mount
+  // list. This can. The script after `-c` is deliberately excluded: it spans
+  // lines and is already asserted byte for byte in docker_backend_test.cc.
+  static auto RunArgvFor(const std::string &log,
+                         const std::string &container) -> std::string {
+    const std::string name_flag = "--name " + container + " ";
+    const std::size_t at = log.find(name_flag);
+    if (at == std::string::npos) {
+      return "<no `docker run` for " + container + ">";
+    }
+    const std::size_t start = log.rfind("docker run", at);
+    const std::size_t end = log.find(" -c ", at);
+    if (start == std::string::npos || end == std::string::npos) {
+      return "<malformed `docker run` for " + container + ">";
+    }
+    return log.substr(start, end - start);
+  }
+
   static auto MakeOrder(const std::string &id,
                         const std::string &candidate) -> proto::WorkOrder {
     proto::WorkOrder order;
@@ -470,6 +492,52 @@ TEST_F(DockerBackendIntegrationTest, WarmupValidatesTheRepo) {
   error.clear();
   EXPECT_FALSE(not_git.Warmup(1, &error));
   EXPECT_NE(error.find("not a git repository"), std::string::npos) << error;
+}
+
+
+// The whole argv, not one flag of it.
+//
+// Every other docker assertion in this file matches a substring, so a flag
+// inserted mid-argv, a dropped one, or a reordered mount list passes them all.
+// These two pin the complete command line for the two container shapes an
+// order starts, which is what makes a refactor of the backend reviewable: the
+// emitted argv either is byte-identical or the diff says exactly how it moved.
+TEST_F(DockerBackendIntegrationTest, WholeDockerRunArgvIsPinned) {
+  ASSERT_TRUE(backend_->RunOrder(0, MakeOrder("argv-1", "c-ok")).build_ok);
+  const std::string log = ReadFile(root_ / "docker.log");
+  const std::string work = (root_ / "work").string();
+  const std::string slot = work + "/slot0";
+
+  // The build: throwaway (--rm), no network at all, and the only container
+  // that mounts the patches and the shared disk cache.
+  EXPECT_EQ(RunArgvFor(log, "saw-0-argv-1-build"),
+            "docker run --rm --name saw-0-argv-1-build "
+            "--cap-drop ALL --security-opt no-new-privileges --read-only "
+            "--tmpfs /tmp:exec --memory 4096m --pids-limit 512 "
+            "--network none "
+            "--mount type=bind,source=" + slot + "/merged,target=/workspace "
+            "--mount type=bind,source=" + slot + "/overlay,target=/sandbox "
+            "--mount type=bind,source=" + slot +
+                "/bazel_output_base,target=/output_base "
+            "--mount type=bind,source=" + slot +
+                "/patches,target=/patches,readonly "
+            "--mount type=bind,source=" + work +
+                "/disk_cache,target=/disk_cache "
+            "--entrypoint /bin/sh fake-image:1");
+
+  // The bot: same hardening, joined to the order's private bridge instead of
+  // no network, kept after it exits so its output can still be read, and with
+  // nothing of the build's staging mounted.
+  EXPECT_EQ(RunArgvFor(log, "saw-0-argv-1-bot"),
+            "docker run --name saw-0-argv-1-bot "
+            "--cap-drop ALL --security-opt no-new-privileges --read-only "
+            "--tmpfs /tmp:exec --memory 4096m --pids-limit 512 "
+            "--network saw-0-argv-1-net "
+            "--mount type=bind,source=" + slot + "/merged,target=/workspace "
+            "--mount type=bind,source=" + slot + "/overlay,target=/sandbox "
+            "--mount type=bind,source=" + slot +
+                "/bazel_output_base,target=/output_base "
+            "--entrypoint /bin/sh fake-image:1");
 }
 
 }  // namespace
