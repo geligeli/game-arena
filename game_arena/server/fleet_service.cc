@@ -100,6 +100,9 @@ auto FleetService::Attach(
       LOG(INFO) << "Worker '" << hello.worker_id() << "' order "
                 << msg.progress().order_id() << ": "
                 << proto::OrderProgress::Phase_Name(msg.progress().phase());
+      // Recorded as well as logged, so GetJob can say which phase a running
+      // job is in rather than only that it is running.
+      scheduler_->OnProgress(msg.progress());
     }
     // Heartbeats need no action: the stream itself is the liveness signal.
   }

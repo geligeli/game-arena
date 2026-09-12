@@ -148,6 +148,11 @@ class Scheduler {
 
   auto GetJob(const std::string &job_id) const -> std::optional<proto::Job>;
 
+  // Records how far |progress|'s order has got, so GetJob can say more than
+  // "running". Unknown orders are ignored: a progress report racing the
+  // result that retired the order is normal, not an error.
+  void OnProgress(const proto::OrderProgress &progress);
+
   // --- fleet side ------------------------------------------------------
 
   void AddWorker(std::shared_ptr<FleetWorker> worker);

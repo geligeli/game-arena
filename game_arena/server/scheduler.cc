@@ -550,6 +550,21 @@ void Scheduler::RemoveWorker(const std::string &worker_id) {
   DispatchLocked();
 }
 
+void Scheduler::OnProgress(const proto::OrderProgress &progress) {
+  std::lock_guard lock(mutex_);
+  const auto owner = order_owner_.find(progress.order_id());
+  if (owner == order_owner_.end()) {
+    // The order has already been retired by its result, or never existed.
+    // Either way there is nothing to annotate and nothing to complain about.
+    return;
+  }
+  const auto job_it = jobs_.find(owner->second.first);
+  if (job_it == jobs_.end()) {
+    return;
+  }
+  job_it->second.status.set_phase(progress.phase());
+}
+
 void Scheduler::OnResult(const std::string &worker_id,
                          const proto::OrderResult &result) {
   std::lock_guard lock(mutex_);

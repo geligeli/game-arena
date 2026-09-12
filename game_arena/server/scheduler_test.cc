@@ -172,6 +172,53 @@ TEST_F(SchedulerTest, PlacementDispatchesOneOrderPerBuiltin) {
             proto::Candidate::READY);
 }
 
+TEST_F(SchedulerTest, ProgressSaysHowFarARunningJobHasGot) {
+  const auto candidate = AddCandidate("Alpha", proto::Candidate::PENDING);
+  auto worker = std::make_shared<FakeWorker>("w1", 2);
+  scheduler_->AddWorker(worker);
+  const std::string job_id = scheduler_->EnqueuePlacement(candidate, Reserve());
+  ASSERT_EQ(worker->orders.size(), 1u);
+  const std::string order_id = worker->orders[0].order_id();
+
+  // Unset until a worker says something: a build can take half an hour, and
+  // "running" on its own does not say whether to keep waiting.
+  EXPECT_EQ(scheduler_->GetJob(job_id)->phase(), proto::OrderProgress::CLONING);
+
+  proto::OrderProgress progress;
+  progress.set_order_id(order_id);
+  progress.set_phase(proto::OrderProgress::BUILDING);
+  scheduler_->OnProgress(progress);
+  EXPECT_EQ(scheduler_->GetJob(job_id)->phase(),
+            proto::OrderProgress::BUILDING);
+
+  progress.set_phase(proto::OrderProgress::RUNNING);
+  scheduler_->OnProgress(progress);
+  EXPECT_EQ(scheduler_->GetJob(job_id)->phase(), proto::OrderProgress::RUNNING);
+
+  scheduler_->OnResult("w1", Result(order_id, true, 2, 0));
+  EXPECT_EQ(scheduler_->GetJob(job_id)->state(), proto::Job::DONE);
+}
+
+TEST_F(SchedulerTest, ProgressForARetiredOrderIsIgnored) {
+  const auto candidate = AddCandidate("Alpha", proto::Candidate::PENDING);
+  auto worker = std::make_shared<FakeWorker>("w1", 2);
+  scheduler_->AddWorker(worker);
+  const std::string job_id = scheduler_->EnqueuePlacement(candidate, Reserve());
+  const std::string order_id = worker->orders[0].order_id();
+  scheduler_->OnResult("w1", Result(order_id, true, 2, 0));
+
+  // A progress report racing the result that retired its order is normal, not
+  // an error, and must not resurrect or disturb a finished job.
+  proto::OrderProgress progress;
+  progress.set_order_id(order_id);
+  progress.set_phase(proto::OrderProgress::BUILDING);
+  scheduler_->OnProgress(progress);
+
+  const auto job = scheduler_->GetJob(job_id);
+  ASSERT_TRUE(job.has_value());
+  EXPECT_EQ(job->state(), proto::Job::DONE);
+}
+
 TEST_F(SchedulerTest, CandidateMatchDispatchesBothSidesNamingEachOther) {
   const auto alpha = AddCandidate("Alpha");
   const auto beta = AddCandidate("Beta");

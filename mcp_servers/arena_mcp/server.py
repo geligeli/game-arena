@@ -69,6 +69,17 @@ _JOB_STATE = {
     arena_pb2.Job.RUNNING: "running",
     arena_pb2.Job.DONE: "done",
     arena_pb2.Job.FAILED: "failed",
+    # Distinct from failed on purpose: an agent polling needs to tell "you
+    # replaced it" from "it broke", and only one of those is worth
+    # investigating.
+    arena_pb2.Job.CANCELLED: "cancelled",
+}
+# How far a running job has got. A build can take half an hour, so "running"
+# on its own does not tell an agent whether to keep waiting.
+_ORDER_PHASE = {
+    arena_pb2.OrderProgress.CLONING: "cloning",
+    arena_pb2.OrderProgress.BUILDING: "building",
+    arena_pb2.OrderProgress.RUNNING: "running",
 }
 
 
@@ -339,9 +350,14 @@ def arena_job(job_id: str) -> str:
     except grpc.RpcError as error:
         return _rpc_error(error)
 
+    # The phase only means anything while the job is still going; once it is
+    # done, the last phase it reached is noise.
+    state = _JOB_STATE.get(job.state, "?")
+    if job.state == arena_pb2.Job.RUNNING:
+        state = f"{state}, {_ORDER_PHASE.get(job.phase, '?')}"
+
     lines = [
-        f"job {job.job_id} [{_JOB_STATE.get(job.state, '?')}] "
-        f"candidate {job.candidate_id}",
+        f"job {job.job_id} [{state}] candidate {job.candidate_id}",
         f"games {job.games_played}/{job.games_requested}  "
         f"W/D/L {job.wins}/{job.draws}/{job.losses}  score {job.elo:.3f}",
     ]

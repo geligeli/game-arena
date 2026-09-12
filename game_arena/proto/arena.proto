@@ -295,6 +295,13 @@ message Job {
 
   int64 created_unix_ms = 11;
   int64 finished_unix_ms = 12;
+
+  // How far the worker has got, for a job that is RUNNING. A build can take
+  // half an hour, so "running" on its own tells an agent -- or a person
+  // watching -- nothing about whether to keep waiting. Unset until a worker
+  // reports the first phase, and left at the last one reported once the job
+  // is done.
+  OrderProgress.Phase phase = 13;
 }
 
 message LeaderboardRequest {

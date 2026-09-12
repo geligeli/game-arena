@@ -30,6 +30,7 @@ bazel run //game_arena/tools:arena_cli -- evaluate <candidate_id> \
 #include <map>
 #include <memory>
 #include <sstream>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -185,6 +186,21 @@ auto JobStateName(proto::Job::State state) -> const char * {
   }
 }
 
+// How far a running job has got. Worth showing because a build can take half
+// an hour: "running" on its own does not tell you whether to keep waiting.
+auto PhaseName(proto::OrderProgress::Phase phase) -> const char * {
+  switch (phase) {
+    case proto::OrderProgress::CLONING:
+      return "cloning";
+    case proto::OrderProgress::BUILDING:
+      return "building";
+    case proto::OrderProgress::RUNNING:
+      return "running";
+    default:
+      return "?";
+  }
+}
+
 auto IsTerminal(proto::Job::State state) -> bool {
   return state == proto::Job::DONE || state == proto::Job::FAILED ||
          state == proto::Job::CANCELLED;
@@ -229,8 +245,15 @@ void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
 }
 
 void PrintJob(const proto::Job &job) {
+  // The phase only means anything while the job is still going; once it is
+  // done, the last phase it reached is noise.
+  const std::string state =
+      job.state() == proto::Job::RUNNING
+          ? std::string(JobStateName(job.state())) + ", " +
+                PhaseName(job.phase())
+          : JobStateName(job.state());
   std::printf("job %s [%s] candidate %s\n", job.job_id().c_str(),
-              JobStateName(job.state()), job.candidate_id().c_str());
+              state.c_str(), job.candidate_id().c_str());
   std::printf("games %d/%d  W/D/L %d/%d/%d  score %.3f\n", job.games_played(),
               job.games_requested(), job.wins(), job.draws(), job.losses(),
               job.elo());
@@ -244,6 +267,9 @@ void PrintJob(const proto::Job &job) {
 auto WaitForJob(const Client &client, const std::string &server,
                 const std::string &job_id) -> int {
   proto::Job::State last = proto::Job::QUEUED;
+  // Tracked alongside the state so a long build reports cloning, then
+  // building, then running, instead of one "running" line for half an hour.
+  std::optional<proto::OrderProgress::Phase> last_phase;
   for (;;) {
     proto::GetJobRequest request;
     request.set_job_id(job_id);
@@ -255,9 +281,10 @@ auto WaitForJob(const Client &client, const std::string &server,
     if (!status.ok()) {
       return RpcError(status, server);
     }
-    if (job.state() != last) {
+    if (job.state() != last || last_phase != job.phase()) {
       PrintJob(job);
       last = job.state();
+      last_phase = job.phase();
     }
     if (IsTerminal(job.state())) {
       return job.state() == proto::Job::DONE ? 0 : kExitError;
