@@ -20,7 +20,9 @@ That call defines, in the calling package:
                    -- a participant's workspace: kit_files, the arena's CLI and
                    MCP server, a README and a token. Their own environment,
                    with whatever access they give it; only what they submit
-                   runs sandboxed
+                   runs sandboxed. `--image=TAG` builds the same as a docker
+                   image, toolchain included and everything built, to
+                   `docker run` wherever they work
   :sandbox_image   `bazel run //:sandbox_image` -- the problem's offline sandbox
                    image, from sandbox.image in the config
   :<name>          a filegroup of every binary a tournament needs, so

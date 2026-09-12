@@ -130,5 +130,10 @@ reference strategy) -- plus `//:arena_cli`, `//:mcp_server`, a
 bazel run //:arena_cli -- submit --name="My bot" --file=bots/reference/strategy.h --wait
 ```
 
+Add `--image=TAG` to the `kit` command for the same as a docker image with the
+toolchain and everything already built: `docker run -it TAG` is a shell in the
+kit, ready to submit, and `docker run -i TAG bazel run //:mcp_server` is the
+MCP server for an agent.
+
 This directory is inside game-arena's git tree, which a worker cannot clone;
 `scripts/new_problem.sh match <dir>` copies it out as a repository of its own.

@@ -21,6 +21,7 @@ game_arena/testgame/   Nim: the arena's own game and reference registry
 game_arena/problems/   nim.textproto
 game_arena/rules/      arena_problem, the macro a problem repo calls
 game_arena/sandbox/image/  the Dockerfile a problem's sandbox image is built from
+game_arena/kit/        the Dockerfile a participant's kit image is built from
 game_arena/tools/      arena_admin, arena_cli, arena_tournament
 game_arena/common/     subprocess wrapper
 scripts/new_problem.sh scaffolds a problem repo from an example

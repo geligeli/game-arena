@@ -80,6 +80,7 @@ registry), `:config_test`, and three runnable targets:
 | --- | --- |
 | `bazel run //:tournament -- [--no_container]` | a coordinator and a local worker, on this checkout |
 | `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, `//:arena_cli`, `//:mcp_server`, a README from the config, and a token |
+| `bazel run //:kit -- --mint=bob --server=HOST:PORT --image=TAG` | the same as a docker image: toolchain, kit, everything built; `docker run -it TAG` is a ready environment |
 | `bazel run //:sandbox_image` | the offline sandbox image `sandbox.image` names |
 
 `bazel build //:connect4` builds every binary a tournament needs. What a

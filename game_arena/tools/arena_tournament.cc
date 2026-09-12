@@ -3,6 +3,7 @@
 /*
 bazel run //:tournament -- [--no_container] [--workers=2]
 bazel run //:kit -- --out=/srv/kits/alice --server=arena:50051 --mint=alice
+bazel run //:kit -- --mint=bob --server=arena:50051 --image=registry/kit-bob
 bazel run //:sandbox_image -- [--push]
 bazel test //:config_test
 
@@ -18,7 +19,9 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 //           copy with no image, for a host without docker.
 //   kit     a participant's workspace: the files the problem names, the
 //           arena's CLI and MCP server reachable through @game_arena, a README
-//           from the config, and a freshly minted token.
+//           from the config, and a freshly minted token. With --image, the
+//           same as a docker image with the toolchain and everything built,
+//           ready to `docker run` wherever the participant works.
 //   check   the config parses and is consistent with the tree. What
 //           :config_test runs.
 //   image   the problem's sandbox image: toolchain + vendored deps, so builds
@@ -108,15 +111,20 @@ ABSL_FLAG(std::string, arena_override, "",
 ABSL_FLAG(bool, check, false,
           "kit: run `bazel build //...` in the kit afterwards");
 ABSL_FLAG(bool, force, false, "kit: write into a non-empty --out");
+ABSL_FLAG(std::string, image, "",
+          "kit: also build a docker image of the kit with this tag: the "
+          "toolchain, the kit, and a completed `bazel build //...`. --push "
+          "pushes it");
 
 // image
 ABSL_FLAG(std::string, tag, "",
           "image: tag to build. Default: the config's sandbox.image");
-ABSL_FLAG(bool, push, false, "image: docker push the result");
+ABSL_FLAG(bool, push, false, "image, kit --image: docker push the result");
 ABSL_FLAG(std::string, bazel_version, "",
-          "image: bazel release to install. Default: the repo's "
+          "image, kit --image: bazel release to install. Default: the repo's "
           ".bazelversion when it names a release, else the Dockerfile's");
-ABSL_FLAG(std::string, docker, "docker", "image: the docker binary");
+ABSL_FLAG(std::string, docker, "docker",
+          "image, kit --image: the docker binary");
 
 namespace {
 
@@ -720,7 +728,94 @@ auto JsonEscape(std::string_view s) -> std::string {
   return out;
 }
 
-auto RunKit() -> int {
+// Where the problem overrides game_arena with a local checkout, if it does:
+// MODULE.bazel's local_path_override, or --override_module in .bazelrc.local.
+auto LocalArenaOverride(const std::filesystem::path &root)
+    -> std::optional<std::filesystem::path> {
+  if (const auto module = ReadFile(root / "MODULE.bazel")) {
+    static const std::regex kOverride(
+        R"re(local_path_override\(\s*module_name\s*=\s*"game_arena"[^)]*?path\s*=\s*"([^"]+)")re");
+    std::smatch m;
+    if (std::regex_search(*module, m, kOverride)) {
+      return (root / m[1].str()).lexically_normal();
+    }
+  }
+  for (const char *rc : {".bazelrc.local", ".bazelrc"}) {
+    if (const auto text = ReadFile(root / rc)) {
+      static const std::regex kFlag(R"(--override_module=game_arena=(\S+))");
+      std::smatch m;
+      if (std::regex_search(*text, m, kFlag)) {
+        return (root / m[1].str()).lexically_normal();
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+// The bazel release the repo pins in .bazelversion, if it names one, else
+// --bazel_version, else empty (the Dockerfile's default).
+auto BazelVersionFor(const std::filesystem::path &root) -> std::string {
+  std::string version = absl::GetFlag(FLAGS_bazel_version);
+  if (version.empty()) {
+    if (const auto text = ReadFile(root / ".bazelversion")) {
+      const std::string trimmed(absl::StripAsciiWhitespace(*text));
+      static const std::regex kRelease(R"(\d+\.\d+\.\d+)");
+      if (std::regex_match(trimmed, kRelease)) {
+        version = trimmed;
+      }
+    }
+  }
+  return version;
+}
+
+// `docker build` of |dockerfile| with |context| as the build context, tagged
+// |tag|, then `docker push` under --push. A local game_arena override found in
+// |context| goes in as a second build context, since its host path does not
+// exist inside the build. |build_args| are NAME=value pairs.
+auto DockerBuild(const std::filesystem::path &dockerfile,
+                 const std::string &tag, const std::filesystem::path &context,
+                 const std::vector<std::string> &build_args) -> bool {
+  std::vector<std::string> args = {"build", "--file", dockerfile.string(),
+                                   "--tag", tag};
+  const std::string bazel_version = BazelVersionFor(context);
+  if (!bazel_version.empty()) {
+    args.push_back("--build-arg");
+    args.push_back("BAZEL_VERSION=" + bazel_version);
+  }
+  for (const std::string &arg : build_args) {
+    args.push_back("--build-arg");
+    args.push_back(arg);
+  }
+  if (const auto override = LocalArenaOverride(context)) {
+    LOG(WARNING) << "game_arena is overridden with the local checkout "
+                 << override->string()
+                 << "; a copy of it goes into the image. Pin a git commit in "
+                    "MODULE.bazel for an image that does not depend on this "
+                    "host";
+    args.push_back("--build-context");
+    args.push_back("game_arena=" + override->string());
+  }
+  args.push_back(context.string());
+
+  std::printf("docker %s\n", absl::StrJoin(args, " ").c_str());
+  std::fflush(stdout);
+  const std::string docker = absl::GetFlag(FLAGS_docker);
+  int code = RunInherit(docker, args, context);
+  if (code != 0) {
+    LOG(ERROR) << "docker build failed (exit " << code << ")";
+    return false;
+  }
+  if (absl::GetFlag(FLAGS_push)) {
+    code = RunInherit(docker, {"push", tag}, context);
+    if (code != 0) {
+      LOG(ERROR) << "docker push failed (exit " << code << ")";
+      return false;
+    }
+  }
+  return true;
+}
+
+auto RunKit(const ArenaRunfiles &runfiles) -> int {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
   if (!config) {
@@ -864,7 +959,10 @@ auto RunKit() -> int {
   absl::StrAppend(&mcp, "\n      }\n    }\n  }\n}\n");
   WriteFile(out / "mcp.json", mcp);
 
+  // bazel-* are symlinks --check leaves behind; .bazelrc.local names this
+  // host's paths. Neither belongs in a repository or an image of the kit.
   WriteFile(out / ".gitignore", "bazel-*\n.bazelrc.local\n");
+  WriteFile(out / ".dockerignore", "bazel-*\n.bazelrc.local\n.git\n");
   const std::string arena_override = absl::GetFlag(FLAGS_arena_override);
   if (!arena_override.empty()) {
     WriteFile(out / ".bazelrc.local",
@@ -904,36 +1002,54 @@ auto RunKit() -> int {
     }
     std::printf("Kit builds.\n");
   }
+
+  const std::string image = absl::GetFlag(FLAGS_image);
+  if (image.empty()) {
+    return 0;
+  }
+  const std::filesystem::path dockerfile =
+      runfiles.Locate("game_arena/kit/Dockerfile");
+  if (dockerfile.empty()) {
+    return 1;
+  }
+  if (server.rfind("localhost", 0) == 0 || server.rfind("127.", 0) == 0) {
+    LOG(WARNING) << "--server=" << server
+                 << " is baked into the image, and inside a container that "
+                    "is the container itself; pass --server=<host>:<port> "
+                    "as the coordinator is reached from where the kit runs, "
+                    "or override with `docker run -e ARENA_SERVER=...`";
+  }
+  std::printf(
+      "\nBuilding %s from the kit (a full build of it; the first "
+      "time takes a while)...\n",
+      image.c_str());
+  std::fflush(stdout);
+  if (!DockerBuild(dockerfile, image, out,
+                   {"ARENA_SERVER=" + server, "ARENA_HTTP=" + http,
+                    "ARENA_TOKEN=" + token, "ARENA_CLIENT_ID=" + client_id})) {
+    return 1;
+  }
+  std::printf(
+      "\nBuilt %s%s. It is one participant's environment, token "
+      "included; run it wherever they work:\n\n",
+      image.c_str(), absl::GetFlag(FLAGS_push) ? " and pushed it" : "");
+  std::printf(
+      "  docker run -it %s                          # a shell in "
+      "/kit, everything built\n",
+      image.c_str());
+  std::printf(
+      "  docker run -i %s bazel run //:mcp_server   # the MCP "
+      "server on stdio, for an agent\n",
+      image.c_str());
+  std::printf(
+      "  docker run -e ARENA_SERVER=<host:port> ...   # the same kit "
+      "against another coordinator\n");
   return 0;
 }
 
 // ---------------------------------------------------------------------------
 // image
 // ---------------------------------------------------------------------------
-
-// Where the problem overrides game_arena with a local checkout, if it does:
-// MODULE.bazel's local_path_override, or --override_module in .bazelrc.local.
-auto LocalArenaOverride(const std::filesystem::path &root)
-    -> std::optional<std::filesystem::path> {
-  if (const auto module = ReadFile(root / "MODULE.bazel")) {
-    static const std::regex kOverride(
-        R"re(local_path_override\(\s*module_name\s*=\s*"game_arena"[^)]*?path\s*=\s*"([^"]+)")re");
-    std::smatch m;
-    if (std::regex_search(*module, m, kOverride)) {
-      return (root / m[1].str()).lexically_normal();
-    }
-  }
-  for (const char *rc : {".bazelrc.local", ".bazelrc"}) {
-    if (const auto text = ReadFile(root / rc)) {
-      static const std::regex kFlag(R"(--override_module=game_arena=(\S+))");
-      std::smatch m;
-      if (std::regex_search(*text, m, kFlag)) {
-        return (root / m[1].str()).lexically_normal();
-      }
-    }
-  }
-  return std::nullopt;
-}
 
 auto RunImage(const ArenaRunfiles &runfiles) -> int {
   std::filesystem::path config_path;
@@ -961,48 +1077,8 @@ auto RunImage(const ArenaRunfiles &runfiles) -> int {
     return 1;
   }
 
-  std::string bazel_version = absl::GetFlag(FLAGS_bazel_version);
-  if (bazel_version.empty()) {
-    if (const auto text = ReadFile(root / ".bazelversion")) {
-      const std::string trimmed(absl::StripAsciiWhitespace(*text));
-      static const std::regex kRelease(R"(\d+\.\d+\.\d+)");
-      if (std::regex_match(trimmed, kRelease)) {
-        bazel_version = trimmed;
-      }
-    }
-  }
-
-  std::vector<std::string> args = {"build", "--file", dockerfile.string(),
-                                   "--tag", tag};
-  if (!bazel_version.empty()) {
-    args.push_back("--build-arg");
-    args.push_back("BAZEL_VERSION=" + bazel_version);
-  }
-  if (const auto override = LocalArenaOverride(root)) {
-    LOG(WARNING) << "game_arena is overridden with the local checkout "
-                 << override->string()
-                 << "; a copy of it goes into the image. Pin a git commit in "
-                    "MODULE.bazel for an image that does not depend on this "
-                    "host";
-    args.push_back("--build-context");
-    args.push_back("game_arena=" + override->string());
-  }
-  args.push_back(root.string());
-
-  std::printf("docker %s\n", absl::StrJoin(args, " ").c_str());
-  std::fflush(stdout);
-  const std::string docker = absl::GetFlag(FLAGS_docker);
-  int code = RunInherit(docker, args, root);
-  if (code != 0) {
-    LOG(ERROR) << "docker build failed (exit " << code << ")";
+  if (!DockerBuild(dockerfile, tag, root, {})) {
     return 1;
-  }
-  if (absl::GetFlag(FLAGS_push)) {
-    code = RunInherit(docker, {"push", tag}, root);
-    if (code != 0) {
-      LOG(ERROR) << "docker push failed (exit " << code << ")";
-      return 1;
-    }
   }
 
   std::printf("\nBuilt %s. Smoke test it offline:\n\n", tag.c_str());
@@ -1018,7 +1094,8 @@ void PrintUsage() {
                "usage: arena_tournament <up|kit|check|image> "
                "--problem_config=<path> [flags]\n"
                "  up      run a coordinator and local workers\n"
-               "  kit     write a participant's workspace (--out, --mint)\n"
+               "  kit     write a participant's workspace (--out, --mint, "
+               "--image)\n"
                "  check   validate the config\n"
                "  image   build the sandbox image (docker)\n");
 }
@@ -1040,7 +1117,7 @@ auto main(int argc, char **argv) -> int {
     return RunUp(runfiles);
   }
   if (command == "kit") {
-    return RunKit();
+    return RunKit(runfiles);
   }
   if (command == "check") {
     return RunCheck();

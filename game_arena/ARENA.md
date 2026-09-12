@@ -44,6 +44,7 @@ From a problem repository that calls `arena_problem()` (see
 bazel run //:tournament                      # a coordinator and a local worker
 bazel run //:tournament -- --no_container    # the same on a host without docker
 bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
+bazel run //:kit -- --mint=bob --image=TAG   # the same, as a docker image
 bazel run //:sandbox_image                   # the image sandbox.image names
 ```
 

@@ -103,6 +103,7 @@ That defines everything the two examples run:
 bazel test //...                                     # the rules, and the config
 bazel run //:tournament -- --no_container            # a coordinator + a local worker
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
+bazel run //:kit -- --mint=bob --server=$(hostname):50051 --image=REG/kit-bob --push
 bazel run //:sandbox_image                           # the offline sandbox image
 bazel build //:connect4                              # every binary a tournament needs
 ```
@@ -111,7 +112,10 @@ bazel build //:connect4                              # every binary a tournament
 plus the arena's CLI and MCP server as `bazel run //:arena_cli` and
 `//:mcp_server`, a README generated from the config, and a freshly minted
 token in `arena.env` and `mcp.json`. The grader, the cases and the tournament
-config stay behind. `scripts/new_problem.sh match|graded <dir>` scaffolds a
+config stay behind. `--image=TAG` also builds that workspace into a docker
+image with the toolchain and a completed build, so a participant (or their
+agent) starts with `docker run -it TAG` and is ready to submit; `docker run -i
+TAG bazel run //:mcp_server` is the MCP server on stdio. `scripts/new_problem.sh match|graded <dir>` scaffolds a
 new repo from an example.
 
 ## Build

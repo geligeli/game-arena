@@ -42,13 +42,17 @@ _repo_root = os.environ.get("ARENA_MCP_REPO_ROOT") or os.environ.get(
 REPO_ROOT = (
     Path(_repo_root) if _repo_root else Path(__file__).resolve().parents[2]
 )
-ARENA_TARGET = os.environ.get("ARENA_MCP_TARGET", "localhost:50051")
+# ARENA_MCP_* first, then the variables arena_cli reads, so a kit (or an image
+# of one) points both tools at the arena with one ARENA_SERVER/ARENA_TOKEN pair.
+ARENA_TARGET = os.environ.get(
+    "ARENA_MCP_TARGET", os.environ.get("ARENA_SERVER", "localhost:50051")
+)
 DEFAULT_AUTHOR = os.environ.get("ARENA_MCP_AUTHOR", "agent")
 # Sent as the x-arena-token metadata header on writes. An arena with a client
 # registry refuses Submit and Evaluate without it; one without a registry
 # ignores it. Metadata rather than a request field, so it never lands in a
 # stored submission or a log line.
-ARENA_TOKEN = os.environ.get("ARENA_MCP_TOKEN", "")
+ARENA_TOKEN = os.environ.get("ARENA_MCP_TOKEN", os.environ.get("ARENA_TOKEN", ""))
 
 # Hard caps so nothing the arena returns can flood the agent's context.
 MAX_SOURCE_CHARS = 20_000
