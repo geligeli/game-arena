@@ -407,8 +407,9 @@ auto DockerBackend::RunOrder(int slot,
         config_.docker,
         container_args(
             referee_name, /*detached=*/true,
-            DockerRunScript(BinaryPathForTarget(order.referee_target()),
-                            referee_args, !config_.host_overlay)),
+            DockerRunScript(
+                "./bazel-bin/" + BinaryPathForTarget(order.referee_target()),
+                referee_args, !config_.host_overlay)),
         opts);
     if (!started.started || started.exit_code != 0) {
       outcome.error = "cannot start the referee: " +

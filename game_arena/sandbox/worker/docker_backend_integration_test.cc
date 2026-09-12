@@ -350,7 +350,7 @@ TEST_F(DockerBackendIntegrationTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log, "--name saw-0-ok-1-referee");
   ExpectLogContains(log, "--network saw-0-ok-1-net");
   ExpectLogContains(log,
-                    "exec 'game_arena/testgame/"
+                    "exec './bazel-bin/game_arena/testgame/"
                     "match_referee' '--port=50051' '--game=nim' "
                     "'--games=2' '--player_a=c-ok' "
                     "'--player_b=builtin:random'");
