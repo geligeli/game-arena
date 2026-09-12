@@ -4,6 +4,10 @@
 // The overlay mount never actually happens, but the exact argv and entrypoint
 // script handed to docker are asserted from the log.
 
+#include <grpcpp/grpcpp.h>
+#include <gtest/gtest.h>
+#include <unistd.h>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -12,17 +16,16 @@
 #include <system_error>
 #include <thread>
 #include <utility>
+#include <vector>
 
-#include <grpcpp/grpcpp.h>
-#include <gtest/gtest.h>
-#include <unistd.h>
-
+#include "game_arena/sandbox/exec/container_engine.h"
 #include "game_arena/sandbox/runner/sandbox_runner.h"
 
 namespace sandbox_runner {
 namespace {
 
-namespace proto = tournament_broker::proto;
+namespace proto = sandbox_runner::proto;
+namespace sx = sandbox_exec::proto;
 
 class SandboxRunnerIntegrationTest : public ::testing::Test {
  protected:
@@ -37,12 +40,15 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
                                  std::filesystem::perm_options::add);
 
     SandboxRunnerConfig config;
-    config.docker = fake_docker_.string();
     config.docker_image = "fake-image:1";
     config.repo_dir = root_ / "repo";
     config.work_dir = root_ / "work";
     config.timeout = std::chrono::seconds(2);
-    service_ = std::make_unique<SandboxRunnerService>(std::move(config));
+    sandbox_exec::ContainerEngineConfig engine_config;
+    engine_config.docker = fake_docker_.string();
+    engine_ = std::make_unique<sandbox_exec::ContainerEngine>(engine_config);
+    service_ = std::make_unique<SandboxRunnerService>(std::move(config),
+                                                      engine_.get());
 
     grpc::ServerBuilder builder;
     int port = 0;
@@ -127,7 +133,8 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
 
   static void ExpectLogContains(const std::string &log,
                                 const std::string &fragment) {
-    EXPECT_NE(log.find(fragment), std::string::npos) << "fragment: " << fragment;
+    EXPECT_NE(log.find(fragment), std::string::npos)
+        << "fragment: " << fragment;
   }
 
   // Waits until docker has been invoked for |fragment| (or the deadline
@@ -144,8 +151,28 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
     ADD_FAILURE() << "timed out waiting for docker log fragment: " << fragment;
   }
 
-  static auto Run(const proto::RunSandboxRequest &request,
-                  proto::RunSandboxResponse *response) -> grpc::Status {
+  // `bazel run <target> -- <args...>`, which is what this tool has always
+  // sent; the words that are not data go through unquoted.
+  static void SetCommand(proto::RunRequest *request, const std::string &target,
+                         const std::vector<std::string> &args) {
+    const auto add = [request](const std::string &text, bool verbatim) {
+      sx::Token *token = request->add_argv();
+      token->set_text(text);
+      token->set_verbatim(verbatim);
+    };
+    add("bazel", true);
+    add("run", true);
+    add(target, false);
+    if (!args.empty()) {
+      add("--", true);
+      for (const std::string &arg : args) {
+        add(arg, false);
+      }
+    }
+  }
+
+  static auto Run(const proto::RunRequest &request,
+                  proto::RunResponse *response) -> grpc::Status {
     grpc::ClientContext context;
     return stub_->Run(&context, request, response);
   }
@@ -153,13 +180,14 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
   static auto Kill(const std::string &identifier) -> grpc::Status {
     grpc::ClientContext context;
     proto::KillRequest request;
-    request.set_identifier(identifier);
+    request.set_id(identifier);
     proto::KillResponse response;
     return stub_->Kill(&context, request, &response);
   }
 
   static std::filesystem::path root_;
   static std::filesystem::path fake_docker_;
+  static std::unique_ptr<sandbox_exec::ContainerEngine> engine_;
   static std::unique_ptr<SandboxRunnerService> service_;
   static std::unique_ptr<grpc::Server> server_;
   static std::unique_ptr<proto::SandboxService::Stub> stub_;
@@ -167,19 +195,22 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
 
 std::filesystem::path SandboxRunnerIntegrationTest::root_;
 std::filesystem::path SandboxRunnerIntegrationTest::fake_docker_;
+std::unique_ptr<sandbox_exec::ContainerEngine>
+    SandboxRunnerIntegrationTest::engine_;
 std::unique_ptr<SandboxRunnerService> SandboxRunnerIntegrationTest::service_;
 std::unique_ptr<grpc::Server> SandboxRunnerIntegrationTest::server_;
-std::unique_ptr<proto::SandboxService::Stub> SandboxRunnerIntegrationTest::stub_;
+std::unique_ptr<proto::SandboxService::Stub>
+    SandboxRunnerIntegrationTest::stub_;
 
 TEST_F(SandboxRunnerIntegrationTest, RunCapturesOutputAndInvocation) {
-  proto::RunSandboxRequest request;
-  request.set_identifier("basic-1");
-  request.set_bazel_target("//problem/app:target");
-  request.add_args("--flag=1");
-  request.add_args("a b");
-  (*request.mutable_patches())["problem/app/new_file.cc"] = "int main() {}";
+  proto::RunRequest request;
+  request.set_id("basic-1");
+  SetCommand(&request, "//problem/app:target", {"--flag=1", "a b"});
+  sx::StagedFile *f_problem_app_new_file_cc = request.add_files();
+  f_problem_app_new_file_cc->set_path("problem/app/new_file.cc");
+  f_problem_app_new_file_cc->set_content("int main() {}");
 
-  proto::RunSandboxResponse response;
+  proto::RunResponse response;
   const grpc::Status status = Run(request, &response);
 
   ASSERT_TRUE(status.ok()) << status.error_message();
@@ -191,20 +222,21 @@ TEST_F(SandboxRunnerIntegrationTest, RunCapturesOutputAndInvocation) {
   const std::string log = DockerLog();
   ExpectLogContains(log, "--name sbr-basic-1");
   ExpectLogContains(log, "--cap-add SYS_ADMIN");
-  ExpectLogContains(log, "--mount type=bind,source=" +
-                              (root_ / "repo").string() +
-                              ",target=/repo_lower,readonly");
-  ExpectLogContains(log, "--mount type=bind,source=" +
-                              (root_ / "work" / "sbr-basic-1" / "patches")
-                                  .string() +
-                              ",target=/patches,readonly");
+  ExpectLogContains(log,
+                    "--mount type=bind,source=" + (root_ / "repo").string() +
+                        ",target=/repo_lower,readonly");
+  ExpectLogContains(log,
+                    "--mount type=bind,source=" +
+                        (root_ / "work" / "sbr-basic-1" / "patches").string() +
+                        ",target=/patches,readonly");
   // Docker was pointed at a directory that really holds the patches, not one
   // it had to conjure up.
   ExpectLogContains(log, "patchsrc problem");
   ExpectLogContains(log, "--entrypoint /bin/sh fake-image:1 -c");
   ExpectLogContains(log, "mount -t overlay overlay -o lowerdir=/repo_lower,");
-  ExpectLogContains(log, "exec bazel run '//problem/app:target' -- "
-                         "'--flag=1' 'a b'");
+  ExpectLogContains(log,
+                    "exec bazel run '//problem/app:target' -- "
+                    "'--flag=1' 'a b'");
 }
 
 // Docker-outside-of-docker: the daemon resolves bind sources in a tree this
@@ -213,7 +245,6 @@ TEST_F(SandboxRunnerIntegrationTest, RunCapturesOutputAndInvocation) {
 // where this process can write them.
 TEST_F(SandboxRunnerIntegrationTest, HostPathsRedirectOnlyTheBindMounts) {
   SandboxRunnerConfig config;
-  config.docker = fake_docker_.string();
   config.docker_image = "fake-image:1";
   config.repo_dir = root_ / "repo";
   config.work_dir = root_ / "work";
@@ -222,23 +253,30 @@ TEST_F(SandboxRunnerIntegrationTest, HostPathsRedirectOnlyTheBindMounts) {
   config.timeout = std::chrono::seconds(2);
   // Called directly: the RPC handler ignores its ServerContext, and a second
   // service on the shared stub would need a second server.
-  SandboxRunnerService service(std::move(config));
+  sandbox_exec::ContainerEngineConfig local_engine_config;
+  local_engine_config.docker = fake_docker_.string();
+  sandbox_exec::ContainerEngine local_engine(local_engine_config);
+  SandboxRunnerService service(std::move(config), &local_engine);
 
-  proto::RunSandboxRequest request;
-  request.set_identifier("hostpaths-1");
-  request.set_bazel_target("//x:y");
-  (*request.mutable_patches())["only.cc"] = "int only;";
-  proto::RunSandboxResponse response;
+  proto::RunRequest request;
+  request.set_id("hostpaths-1");
+  SetCommand(&request, "//x:y", {});
+  sx::StagedFile *f_only_cc = request.add_files();
+  f_only_cc->set_path("only.cc");
+  f_only_cc->set_content("int only;");
+  proto::RunResponse response;
   const grpc::Status status = service.Run(nullptr, &request, &response);
 
   ASSERT_TRUE(status.ok()) << status.error_message();
   const std::string log = DockerLog();
   ExpectLogContains(
-      log, "--mount type=bind,source=/host/view/repo,target=/repo_lower,"
-           "readonly");
+      log,
+      "--mount type=bind,source=/host/view/repo,target=/repo_lower,"
+      "readonly");
   ExpectLogContains(
-      log, "--mount type=bind,source=/host/view/work/sbr-hostpaths-1/patches,"
-           "target=/patches,readonly");
+      log,
+      "--mount type=bind,source=/host/view/work/sbr-hostpaths-1/patches,"
+      "target=/patches,readonly");
   // The overlay's lower dir is a fixed mount point, so the host path never
   // leaks into the in-container script.
   ExpectLogContains(log, "mount -t overlay overlay -o lowerdir=/repo_lower,");
@@ -249,11 +287,11 @@ TEST_F(SandboxRunnerIntegrationTest, HostPathsRedirectOnlyTheBindMounts) {
 }
 
 TEST_F(SandboxRunnerIntegrationTest, RunPropagatesExitCode) {
-  proto::RunSandboxRequest request;
-  request.set_identifier("fail3-1");
-  request.set_bazel_target("//broken:target");
+  proto::RunRequest request;
+  request.set_id("fail3-1");
+  SetCommand(&request, "//broken:target", {});
 
-  proto::RunSandboxResponse response;
+  proto::RunResponse response;
   const grpc::Status status = Run(request, &response);
 
   ASSERT_TRUE(status.ok()) << status.error_message();
@@ -261,27 +299,29 @@ TEST_F(SandboxRunnerIntegrationTest, RunPropagatesExitCode) {
 }
 
 TEST_F(SandboxRunnerIntegrationTest, RunValidatesRequests) {
-  proto::RunSandboxResponse response;
+  proto::RunResponse response;
 
-  proto::RunSandboxRequest no_id;
-  no_id.set_bazel_target("//x:y");
+  proto::RunRequest no_id;
+  SetCommand(&no_id, "//x:y", {});
   EXPECT_EQ(Run(no_id, &response).error_code(),
             grpc::StatusCode::INVALID_ARGUMENT);
 
-  proto::RunSandboxRequest escaping_patch;
-  escaping_patch.set_identifier("bad-patch");
-  escaping_patch.set_bazel_target("//x:y");
-  (*escaping_patch.mutable_patches())["../outside.cc"] = "x";
+  proto::RunRequest escaping_patch;
+  escaping_patch.set_id("bad-patch");
+  SetCommand(&escaping_patch, "//x:y", {});
+  sx::StagedFile *f____outside_cc = escaping_patch.add_files();
+  f____outside_cc->set_path("../outside.cc");
+  f____outside_cc->set_content("x");
   EXPECT_EQ(Run(escaping_patch, &response).error_code(),
             grpc::StatusCode::INVALID_ARGUMENT);
 }
 
 TEST_F(SandboxRunnerIntegrationTest, TimeoutKillsContainer) {
-  proto::RunSandboxRequest request;
-  request.set_identifier("block-timeout");
-  request.set_bazel_target("//slow:target");
+  proto::RunRequest request;
+  request.set_id("block-timeout");
+  SetCommand(&request, "//slow:target", {});
 
-  proto::RunSandboxResponse response;
+  proto::RunResponse response;
   const grpc::Status status = Run(request, &response);
 
   ASSERT_TRUE(status.ok()) << status.error_message();
@@ -292,11 +332,11 @@ TEST_F(SandboxRunnerIntegrationTest, TimeoutKillsContainer) {
 }
 
 TEST_F(SandboxRunnerIntegrationTest, KillAbortsRunMidFlight) {
-  proto::RunSandboxRequest request;
-  request.set_identifier("block-kill");
-  request.set_bazel_target("//slow:target");
+  proto::RunRequest request;
+  request.set_id("block-kill");
+  SetCommand(&request, "//slow:target", {});
 
-  proto::RunSandboxResponse response;
+  proto::RunResponse response;
   grpc::Status run_status;
   std::thread runner([&] { run_status = Run(request, &response); });
   WaitForLog("--name sbr-block-kill");
@@ -313,16 +353,16 @@ TEST_F(SandboxRunnerIntegrationTest, KillUnknownIdentifierIsNotFound) {
 }
 
 TEST_F(SandboxRunnerIntegrationTest, DuplicateIdentifierIsRejected) {
-  proto::RunSandboxRequest request;
-  request.set_identifier("block-dup");
-  request.set_bazel_target("//slow:target");
+  proto::RunRequest request;
+  request.set_id("block-dup");
+  SetCommand(&request, "//slow:target", {});
 
-  proto::RunSandboxResponse background_response;
+  proto::RunResponse background_response;
   std::thread runner(
       [&] { grpc::Status unused = Run(request, &background_response); });
   WaitForLog("--name sbr-block-dup");
 
-  proto::RunSandboxResponse response;
+  proto::RunResponse response;
   EXPECT_EQ(Run(request, &response).error_code(),
             grpc::StatusCode::ALREADY_EXISTS);
 

@@ -103,19 +103,12 @@ py_library(
     deps = [":arena_py_proto"],
 )
 
-proto_library(
-    name = "sandbox_runner_proto",
-    srcs = ["sandbox_runner.proto"],
-)
-
-cc_proto_library(
-    name = "sandbox_runner_cc_proto",
-    deps = [":sandbox_runner_proto"],
-)
-
-cc_grpc_library(
-    name = "sandbox_runner_cc_grpc",
-    srcs = [":sandbox_runner_proto"],
-    grpc_only = True,
-    deps = [":sandbox_runner_cc_proto"],
-)
+# The sandbox job description is NOT here: it lives beside the engine that
+# consumes it, at //game_arena/sandbox/exec:sandbox_job_proto, and the dev
+# runner's service with the runner at
+# //game_arena/sandbox/runner:sandbox_service_proto.
+#
+# The rule this package carries -- "the contract with every deployed worker
+# and client" -- is true of arena.proto and not of a job description handed
+# between two libraries in one process. Keeping it out also makes the
+# engine's independence checkable by reading one BUILD file.

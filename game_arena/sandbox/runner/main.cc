@@ -29,6 +29,8 @@ bazel run //game_arena/sandbox/runner:sandbox_runner -- \
 // --work_dir must land somewhere both sides can see -- a path under the
 // checkout is the easy choice, since that bind mount already spans them.
 
+#include <grpcpp/grpcpp.h>
+
 #include <chrono>
 #include <condition_variable>
 #include <csignal>
@@ -38,13 +40,12 @@ bazel run //game_arena/sandbox/runner:sandbox_runner -- \
 #include <string>
 #include <system_error>
 
-#include <grpcpp/grpcpp.h>
-
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
+#include "game_arena/sandbox/exec/container_engine.h"
 #include "game_arena/sandbox/runner/sandbox_runner.h"
 
 ABSL_FLAG(int, port, 50052, "Port for the SandboxService gRPC server");
@@ -68,6 +69,17 @@ ABSL_FLAG(std::string, host_work_dir, "",
 ABSL_FLAG(int, timeout_s, 1800,
           "Wall-clock limit per run; the container is killed when it fires. "
           "0 disables the limit");
+ABSL_FLAG(bool, host_overlay, false,
+          "Assemble the overlay on the host instead of in the sandbox. Off by "
+          "default because a development box is often not root -- but the "
+          "in-sandbox form needs CAP_SYS_ADMIN, so turning this on is what "
+          "gets the same boundary the fleet worker has");
+ABSL_FLAG(int, memory_limit_mb, 0, "cgroup memory cap; 0 disables it");
+ABSL_FLAG(double, cpus, 0.0, "cgroup CPU cap; 0 disables it");
+ABSL_FLAG(int, pids_limit, 0, "cgroup pid cap; 0 disables it");
+ABSL_FLAG(std::string, run_as_user, "",
+          "Run as this user inside the sandbox, e.g. \"1000:1000\". Empty "
+          "leaves the image's default, which for most images is root");
 ABSL_FLAG(std::string, docker, "docker", "docker binary");
 
 namespace {
@@ -115,13 +127,23 @@ auto main(int argc, char **argv) -> int {
   }
 
   sandbox_runner::SandboxRunnerConfig config;
-  config.docker = absl::GetFlag(FLAGS_docker);
   config.docker_image = absl::GetFlag(FLAGS_docker_image);
   config.repo_dir = absl::GetFlag(FLAGS_repo_dir);
   config.work_dir = absl::GetFlag(FLAGS_work_dir);
   config.host_repo_dir = absl::GetFlag(FLAGS_host_repo_dir);
   config.host_work_dir = absl::GetFlag(FLAGS_host_work_dir);
   config.timeout = std::chrono::seconds(absl::GetFlag(FLAGS_timeout_s));
+  config.host_overlay = absl::GetFlag(FLAGS_host_overlay);
+  config.memory_limit_mb = absl::GetFlag(FLAGS_memory_limit_mb);
+  config.cpus = absl::GetFlag(FLAGS_cpus);
+  config.pids_limit = absl::GetFlag(FLAGS_pids_limit);
+  config.run_as_user = absl::GetFlag(FLAGS_run_as_user);
+  if (!config.host_overlay) {
+    LOG(WARNING) << "--host_overlay=false: the sandbox mounts its own overlay, "
+                    "so it runs with CAP_SYS_ADMIN and a writable root. That "
+                    "is not a boundary. Pass --host_overlay to get the one "
+                    "the fleet worker has";
+  }
 
   if (config.repo_dir.empty() && !config.host_repo_dir.empty()) {
     LOG(ERROR) << "--host_repo_dir needs --repo_dir: without the latter no "
@@ -165,11 +187,15 @@ auto main(int argc, char **argv) -> int {
       config.repo_dir.empty() ? ""
                               : ", lower dir " + config.MountRepoDir().string();
 
-  sandbox_runner::SandboxRunnerService service(std::move(config));
+  sandbox_exec::ContainerEngineConfig engine_config;
+  engine_config.docker = absl::GetFlag(FLAGS_docker);
+  sandbox_exec::ContainerEngine engine(engine_config);
+  sandbox_runner::SandboxRunnerService service(std::move(config), &engine);
 
   grpc::ServerBuilder builder;
-  builder.AddListeningPort("0.0.0.0:" + std::to_string(absl::GetFlag(FLAGS_port)),
-                           grpc::InsecureServerCredentials());
+  builder.AddListeningPort(
+      "0.0.0.0:" + std::to_string(absl::GetFlag(FLAGS_port)),
+      grpc::InsecureServerCredentials());
   builder.RegisterService(&service);
   std::unique_ptr<grpc::Server> server = builder.BuildAndStart();
   if (!server) {
@@ -180,9 +206,8 @@ auto main(int argc, char **argv) -> int {
   std::signal(SIGINT, OnShutdownSignal);
   std::signal(SIGTERM, OnShutdownSignal);
 
-  LOG(INFO) << "Sandbox runner on :" << absl::GetFlag(FLAGS_port)
-            << ", image " << absl::GetFlag(FLAGS_docker_image)
-            << lower_dir_note
+  LOG(INFO) << "Sandbox runner on :" << absl::GetFlag(FLAGS_port) << ", image "
+            << absl::GetFlag(FLAGS_docker_image) << lower_dir_note
             << ", timeout " << absl::GetFlag(FLAGS_timeout_s) << "s";
   WaitForShutdownSignal();
   LOG(INFO) << "Shutting down";

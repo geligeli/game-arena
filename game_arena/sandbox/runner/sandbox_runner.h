@@ -1,64 +1,58 @@
 #ifndef GAME_ARENA_GAME_ARENA_SANDBOX_RUNNER_SANDBOX_RUNNER_H
 #define GAME_ARENA_GAME_ARENA_SANDBOX_RUNNER_SANDBOX_RUNNER_H
 
-// Standalone sandbox runner: executes `bazel run //<target>` inside a
-// throwaway docker container, behind the SandboxService interface from
-// sandbox_runner.proto.
+// Driving the sandbox engine by hand, over RPC.
 //
-// Each Run request gets its own container. When the server was started with
-// --repo_dir, that directory is mounted read-only and becomes the lower dir
-// of an overlay mounted at /workspace, so the container patches and builds
-// against a private copy-on-write view and the host checkout is never
-// touched. Patches from the request ([path, content] tuples) are written into
-// the merged tree, then `bazel run` executes at its root.
+// A development tool, and now a thin one: the container lifecycle, the
+// overlay, the timeout handling and the kill all live in
+// //game_arena/sandbox/exec, which the fleet worker runs on too. What is left
+// here is the request's own concerns -- validating what a caller sent, naming
+// the run, and refusing a duplicate id.
 //
-// Two filesystems are in play and the config keeps them apart. Paths this
-// process reads and writes (work_dir, and the patches under it) are resolved
-// here; bind-mount sources are resolved by whatever machine the docker daemon
-// runs on. They coincide in the ordinary case, but not when the runner is
-// itself containerized and driving the host's daemon over a mounted socket
-// (docker-outside-of-docker), where the same tree carries different paths on
-// either side. host_repo_dir/host_work_dir supply the daemon's view.
-//
-// Run blocks until the container exits, the server-side timeout fires, or a
-// Kill RPC with the same identifier stops the container mid-flight.
+// That sharing is the point. Before it, this tool and the worker each built
+// their own `docker run`, and only one of them was hardened: this one passed
+// --cap-add SYS_ADMIN and no network restriction, while the worker dropped
+// every capability. Two container launchers, one boundary.
 
 #include <grpcpp/grpcpp.h>
 
 #include <chrono>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 
-#include "game_arena/proto/sandbox_runner.grpc.pb.h"
-#include "game_arena/proto/sandbox_runner.pb.h"
+#include "game_arena/sandbox/exec/engine.h"
+#include "game_arena/sandbox/runner/sandbox_service.grpc.pb.h"
 
 namespace sandbox_runner {
 
 struct SandboxRunnerConfig {
-  std::string docker = "docker";
-  // Image the containers are started from; must contain bazel.
+  // The image every sandbox starts from. Must contain bazel, a toolchain and
+  // /bin/sh.
   std::string docker_image;
-  // Mounted read-only as the overlay's lower dir. Empty: /workspace is plain
-  // container filesystem, so the image must carry the repository itself.
+  // The overlay's lower dir, mounted read-only. Empty means the image carries
+  // the repository and there is nothing to overlay.
   std::filesystem::path repo_dir;
-  // Scratch for the patch files and captured output of each run, as *this*
-  // process resolves it: the patches are written here.
   std::filesystem::path work_dir = "/tmp/sandbox_runner";
-  // The same two directories as the *docker daemon* resolves them, for the
-  // bind mounts. Empty (the ordinary case): the daemon shares our filesystem
-  // and repo_dir/work_dir are handed to it verbatim. Under
-  // docker-outside-of-docker they differ, and only these reach docker.
-  std::filesystem::path host_repo_dir;
-  std::filesystem::path host_work_dir;
-  // Wall-clock limit per run; the container is killed when it fires.
-  // Zero disables the limit.
   std::chrono::seconds timeout{1800};
 
-  // The bind-mount sources docker is given. Never open these locally: under
-  // docker-outside-of-docker they name paths in a filesystem this process
-  // cannot see.
+  // Under docker-outside-of-docker the daemon resolves bind-mount sources on
+  // its own filesystem, not this process's. These say what it will see.
+  std::filesystem::path host_repo_dir;
+  std::filesystem::path host_work_dir;
+
+  // Assemble the overlay on the host rather than in the sandbox. Off by
+  // default here, unlike the fleet worker: a development box is often not
+  // root, and the in-sandbox form only needs CAP_SYS_ADMIN. Turning it on
+  // gets the same boundary the fleet has.
+  bool host_overlay = false;
+  int memory_limit_mb = 0;
+  double cpus = 0.0;
+  int pids_limit = 0;
+  std::string run_as_user;
+
   auto MountRepoDir() const -> const std::filesystem::path & {
     return host_repo_dir.empty() ? repo_dir : host_repo_dir;
   }
@@ -67,39 +61,33 @@ struct SandboxRunnerConfig {
   }
 };
 
-// True when |path| is relative and free of '.'/'..' components, so it can be
-// safely written under a scratch directory or the in-container workspace.
+// True when |path| is safe to stage: relative, and free of any ".." or "."
+// component. The engine checks this too; here it is the difference between a
+// clear error and a confusing one, because this server's callers are people.
 auto IsSafePatchPath(const std::string &path) -> bool;
 
-// Stable docker container name for a run identifier, within docker's
-// [a-zA-Z0-9][a-zA-Z0-9_.-]* alphabet. The name doubles as the scratch
-// directory name and as the handle Kill uses to stop the container.
-//
-// Shell quoting and the name-sanitising alphabet come from
-// sandbox/common/docker.h, shared with the fleet worker's docker backend.
-auto ContainerName(const std::string &identifier) -> std::string;
+// The sandbox a run of |id| gets. Its own function because the CLI's Kill
+// needs to be able to name it.
+auto ContainerName(const std::string &id) -> std::string;
 
-class SandboxRunnerService final
-    : public tournament_broker::proto::SandboxService::Service {
+class SandboxRunnerService final : public proto::SandboxService::Service {
  public:
-  explicit SandboxRunnerService(SandboxRunnerConfig config);
+  SandboxRunnerService(SandboxRunnerConfig config,
+                       sandbox_exec::Engine *engine);
 
-  auto Run(grpc::ServerContext *context,
-           const tournament_broker::proto::RunSandboxRequest *request,
-           tournament_broker::proto::RunSandboxResponse *response)
-      -> grpc::Status override;
+  auto Run(grpc::ServerContext *context, const proto::RunRequest *request,
+           proto::RunResponse *response) -> grpc::Status override;
 
-  auto Kill(grpc::ServerContext *context,
-            const tournament_broker::proto::KillRequest *request,
-            tournament_broker::proto::KillResponse *response)
-      -> grpc::Status override;
+  auto Kill(grpc::ServerContext *context, const proto::KillRequest *request,
+            proto::KillResponse *response) -> grpc::Status override;
 
  private:
-  SandboxRunnerConfig config_;
+  const SandboxRunnerConfig config_;
+  sandbox_exec::Engine *const engine_;
 
   std::mutex mutex_;
-  // identifier -> container name for every run in flight; Kill's only view of
-  // what can be aborted.
+  // The runs in flight, so a duplicate id is refused rather than raced. The
+  // engine owns aborting them; this is only what it may be asked about.
   std::map<std::string, std::string> active_;
 };
 

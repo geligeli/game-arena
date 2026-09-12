@@ -10,9 +10,10 @@ and "make this benchmark faster" are both problems here.
 
 ```
 game_arena/
-  proto/      wire protocols: arena, sandbox_runner, tournament_broker, problem
+  proto/      wire protocols: arena, tournament_broker, problem
   server/     the coordinator: submissions, scheduling, ELO/metric standings, HTTP
-  sandbox/    common/ (docker mechanics), worker/ (fleet), runner/ (dev tool)
+  sandbox/    exec/ (the engine), common/ (docker mechanics),
+              worker/ (fleet), runner/ (dev tool)
   referee/    the match loop and the broker protocol
   client/     the generic reference client
   testgame/   Nim: the arena's own game, and the reference registry

@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+// Driving the sandbox engine by hand, over RPC.
+//
+// A development tool: build a target in a throwaway sandbox against a patch
+// you have not committed, and watch it. Its own service rather than a message
+// in game_arena/proto, because nothing deployed speaks it -- and its request
+// is the engine's own job description rather than a second vocabulary that
+// has to be kept in step with it.
+//
+// This replaces the bazel-specific RunSandboxRequest that used to live in
+// game_arena/proto/sandbox_runner.proto. Nothing outside this directory ever
+// spoke that.
+package sandbox_runner.proto;
+
+import "game_arena/sandbox/exec/sandbox_job.proto";
+
+message RunRequest {
+  // Names this run, and every sandbox it creates. Rejected if a run is
+  // already in flight under the same one, so a mistyped repeat does not
+  // silently race the first.
+  string id = 1;
+
+  // The command to run in the sandbox, and the files to stage into the
+  // workspace first. The server fills in the rest of the job -- the image,
+  // the workspace layout and the isolation -- from its own configuration,
+  // because those are the operator's decision about this host and not the
+  // caller's.
+  repeated sandbox_exec.proto.Token argv = 2;
+  repeated sandbox_exec.proto.StagedFile files = 3;
+  map<string, string> env = 4;
+  int32 timeout_s = 5;  // 0: the server's default
+}
+
+message RunResponse {
+  string stdout = 1;
+  string stderr = 2;
+  // The step's own exit code, or 124 when the timeout fired -- the
+  // convention timeout(1) uses.
+  int32 exit_code = 3;
+  bool timed_out = 4;
+  // Set when the sandbox could not be run at all, as opposed to a command
+  // that ran and failed. An exit code of 1 is the command's business; a
+  // missing docker binary is not.
+  sandbox_exec.proto.Status status = 5;
+}
+
+message KillRequest { string id = 1; }
+message KillResponse {}
+
+service SandboxService {
+  rpc Run(RunRequest) returns (RunResponse);
+  rpc Kill(KillRequest) returns (KillResponse);
+}

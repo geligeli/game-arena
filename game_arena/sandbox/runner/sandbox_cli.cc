@@ -17,6 +17,9 @@ bazel run //game_arena/sandbox/runner:sandbox_cli -- \
 // sends Kill for the in-flight identifier instead of just dropping the RPC,
 // so the container on the server actually stops; a second Ctrl-C aborts.
 
+#include <grpcpp/grpcpp.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -31,15 +34,12 @@ bazel run //game_arena/sandbox/runner:sandbox_cli -- \
 #include <utility>
 #include <vector>
 
-#include <grpcpp/grpcpp.h>
-#include <unistd.h>
-
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
-#include "game_arena/proto/sandbox_runner.grpc.pb.h"
+#include "game_arena/sandbox/runner/sandbox_service.grpc.pb.h"
 
 ABSL_FLAG(std::string, server, "localhost:50052",
           "host:port of the sandbox runner");
@@ -63,7 +63,8 @@ ABSL_FLAG(std::string, kill, "",
 
 namespace {
 
-namespace proto = tournament_broker::proto;
+namespace proto = sandbox_runner::proto;
+namespace sx = sandbox_exec::proto;
 
 // Polled by the killer thread rather than signalled through a condition
 // variable, since locking a mutex in signal context is not safe.
@@ -105,7 +106,7 @@ auto ReadFile(const std::filesystem::path &path, std::string *content) -> bool {
 // --patch_dir: send the whole tree, keyed by path relative to the dir, which
 // is exactly the layout the runner copies onto the workspace.
 auto AddPatchDir(const std::filesystem::path &dir,
-                 proto::RunSandboxRequest *request) -> bool {
+                 proto::RunRequest *request) -> bool {
   std::error_code ec;
   if (!std::filesystem::is_directory(dir, ec)) {
     LOG(ERROR) << "--patch_dir " << dir << " is not a directory";
@@ -123,7 +124,9 @@ auto AddPatchDir(const std::filesystem::path &dir,
       LOG(ERROR) << "Cannot read " << entry.path();
       return false;
     }
-    (*request->mutable_patches())[key] = std::move(content);
+    sx::StagedFile *file = request->add_files();
+    file->set_path(key);
+    file->set_content(std::move(content));
   }
   if (ec) {
     LOG(ERROR) << "Cannot walk --patch_dir " << dir << ": " << ec.message();
@@ -134,8 +137,7 @@ auto AddPatchDir(const std::filesystem::path &dir,
 
 // --patch: comma-separated <repo/path>=<host file>, or bare <repo/path> when
 // the host file sits at the same relative path under the current directory.
-auto AddPatchFlag(const std::string &spec, proto::RunSandboxRequest *request)
-    -> bool {
+auto AddPatchFlag(const std::string &spec, proto::RunRequest *request) -> bool {
   for (std::string::size_type pos = 0; pos < spec.size();) {
     const std::string::size_type comma = spec.find(',', pos);
     const std::string entry = spec.substr(pos, comma - pos);
@@ -153,7 +155,9 @@ auto AddPatchFlag(const std::string &spec, proto::RunSandboxRequest *request)
       LOG(ERROR) << "Cannot read patch source '" << source << "'";
       return false;
     }
-    (*request->mutable_patches())[key] = std::move(content);
+    sx::StagedFile *file = request->add_files();
+    file->set_path(key);
+    file->set_content(std::move(content));
   }
   return true;
 }
@@ -165,12 +169,12 @@ auto WriteAll(std::FILE *stream, const std::string &data) -> void {
   std::fflush(stream);
 }
 
-auto DoKill(proto::SandboxService::Stub *stub, const std::string &identifier)
-    -> int {
+auto DoKill(proto::SandboxService::Stub *stub,
+            const std::string &identifier) -> int {
   grpc::ClientContext context;
   ApplyDeadline(&context);
   proto::KillRequest request;
-  request.set_identifier(identifier);
+  request.set_id(identifier);
   proto::KillResponse response;
   const grpc::Status status = stub->Kill(&context, request, &response);
   if (!status.ok()) {
@@ -202,15 +206,29 @@ auto main(int argc, char **argv) -> int {
     return 2;
   }
 
-  proto::RunSandboxRequest request;
-  request.set_bazel_target(absl::GetFlag(FLAGS_target));
+  proto::RunRequest request;
   const std::string identifier = absl::GetFlag(FLAGS_identifier).empty()
                                      ? DefaultIdentifier()
                                      : absl::GetFlag(FLAGS_identifier);
-  request.set_identifier(identifier);
+  request.set_id(identifier);
+
+  // `bazel run <target> -- <args>`, word by word. The words that are not
+  // data go through unquoted; the target and the arguments are quoted,
+  // because they came from a command line.
+  const auto add = [&request](const std::string &text, bool verbatim) {
+    sx::Token *token = request.add_argv();
+    token->set_text(text);
+    token->set_verbatim(verbatim);
+  };
+  add("bazel", true);
+  add("run", true);
+  add(absl::GetFlag(FLAGS_target), false);
   // Everything absl left unparsed (i.e. after `--`) is the target's own argv.
-  for (std::size_t i = 1; i < positional.size(); ++i) {
-    request.add_args(positional[i]);
+  if (positional.size() > 1) {
+    add("--", true);
+    for (std::size_t i = 1; i < positional.size(); ++i) {
+      add(positional[i], false);
+    }
   }
   if (!absl::GetFlag(FLAGS_patch_dir).empty() &&
       !AddPatchDir(absl::GetFlag(FLAGS_patch_dir), &request)) {
@@ -222,9 +240,10 @@ auto main(int argc, char **argv) -> int {
   }
 
   LOG(INFO) << "run " << identifier << " on " << absl::GetFlag(FLAGS_server)
-            << ": bazel run " << request.bazel_target() << " ("
-            << request.args_size() << " arg(s), " << request.patches_size()
-            << " patch file(s)); Ctrl-C kills the run";
+            << ": bazel run " << absl::GetFlag(FLAGS_target) << " ("
+            << (positional.size() > 1 ? positional.size() - 1 : 0)
+            << " arg(s), " << request.files_size()
+            << " staged file(s)); Ctrl-C kills the run";
 
   // The Run RPC blocks until the container exits, so the Kill on Ctrl-C has
   // to come from a second thread; it also unblocks Run, which then returns.
@@ -242,7 +261,7 @@ auto main(int argc, char **argv) -> int {
 
   grpc::ClientContext context;
   ApplyDeadline(&context);
-  proto::RunSandboxResponse response;
+  proto::RunResponse response;
   const grpc::Status status = stub->Run(&context, request, &response);
 
   done.store(true);
