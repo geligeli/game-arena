@@ -157,9 +157,8 @@ TEST_F(SchedulerTest, PlacementDispatchesOneOrderPerBuiltin) {
       << order.candidate().patch();
   // Templates are expanded here; the worker never sees "{submission_id}".
   ASSERT_EQ(order.candidate().build_targets_size(), 1);
-  EXPECT_EQ(
-      order.candidate().build_targets(0),
-      "//game_arena/candidates/" + candidate.candidate_id() + ":bot");
+  EXPECT_EQ(order.candidate().build_targets(0),
+            "//game_arena/candidates/" + candidate.candidate_id() + ":bot");
   EXPECT_EQ(order.candidate().bot_target(), order.candidate().build_targets(0));
 
   scheduler_->OnResult("w1", Result(order.order_id(), true, 2, 0));
@@ -170,6 +169,45 @@ TEST_F(SchedulerTest, PlacementDispatchesOneOrderPerBuiltin) {
   EXPECT_EQ(job->games_played(), 2);
   EXPECT_EQ(store_->Get(candidate.candidate_id())->status(),
             proto::Candidate::READY);
+}
+
+TEST_F(SchedulerTest, EveryOrderCarriesTheProblemsSandboxAndTree) {
+  // A worker has none of this: it takes one flag, the coordinator's address.
+  // Two submissions are only comparable if they were built the same way, so
+  // what to build and what the sandbox may do travel with every order -- the
+  // argument base_commit already made for the tree's revision.
+  SchedulerConfig config;
+  config.placement_opponents = {"builtin:random"};
+  config.placement_games = 2;
+  config.repo_url = "/srv/arena";
+  config.bazel_flags = {"--config=native"};
+  config.turn_timeout_ms = 5000;
+  config.game_time_budget_ms = 60000;
+  config.max_moves_per_game = 100;
+  config.sandbox.set_image("registry/arena-build:1");
+  config.sandbox.set_memory_limit_mb(2048);
+  config.sandbox.set_host_overlay(true);
+  EloStandings standings(elo_.get(), store_.get(), "risk2");
+  Scheduler scheduler(config, store_.get(), elo_.get(), &standings);
+
+  const auto candidate = AddCandidate("Alpha", proto::Candidate::PENDING);
+  auto worker = std::make_shared<FakeWorker>("w1", 2);
+  scheduler.AddWorker(worker);
+  scheduler.EnqueuePlacement(candidate, Reserve());
+
+  ASSERT_FALSE(worker->orders.empty());
+  const proto::WorkOrder &order = worker->orders[0];
+  EXPECT_EQ(order.repo_url(), "/srv/arena");
+  ASSERT_EQ(order.bazel_flags_size(), 1);
+  EXPECT_EQ(order.bazel_flags(0), "--config=native");
+  EXPECT_EQ(order.sandbox().image(), "registry/arena-build:1");
+  EXPECT_EQ(order.sandbox().memory_limit_mb(), 2048u);
+  EXPECT_TRUE(order.sandbox().host_overlay());
+  // The referee's own limits, which used to reach it as its flag defaults
+  // however the problem was configured.
+  EXPECT_EQ(order.turn_timeout_ms(), 5000u);
+  EXPECT_EQ(order.game_time_budget_ms(), 60000u);
+  EXPECT_EQ(order.max_moves_per_game(), 100u);
 }
 
 TEST_F(SchedulerTest, ProgressSaysHowFarARunningJobHasGot) {

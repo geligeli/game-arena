@@ -41,59 +41,73 @@ class ProgressObserver final : public sandbox_exec::Observer {
 
 }  // namespace
 
-OrderRunner::OrderRunner(sandbox_exec::Engine *engine, OrderJobConfig config,
-                         std::string machine_class)
-    : engine_(engine),
+OrderRunner::OrderRunner(sandbox_exec::Engine *process_engine,
+                         sandbox_exec::Engine *container_engine,
+                         OrderJobConfig config, std::string machine_class)
+    : process_engine_(process_engine),
+      container_engine_(container_engine),
       config_(std::move(config)),
       machine_class_(std::move(machine_class)) {}
 
 auto OrderRunner::Warmup(int slots, std::string *error) -> bool {
-  if (engine_->capabilities().isolates) {
-    // A container mounts the repo, so it has to be a path on this host rather
-    // than a URL to clone from.
-    if (!std::filesystem::is_directory(config_.source_repo)) {
-      *error = "--repo '" + config_.source_repo +
-               "' is not a directory; the docker backend needs a local path, "
-               "because it is mounted into the containers";
-      return false;
-    }
-    if (!std::filesystem::exists(std::filesystem::path(config_.source_repo) /
-                                 ".git")) {
-      *error = "--repo '" + config_.source_repo +
-               "' is not a git repository; the backend checks candidates out "
-               "at a commit";
-      return false;
-    }
-  }
+  // Only the directories now. The tree itself arrives with the order -- a
+  // worker has no repository of its own -- so the clone happens in the
+  // engine's PrepareWorkspace, which is idempotent and therefore pays for
+  // itself once per slot rather than once per order.
+  //
+  // These still exist up front because docker conjures a missing bind-mount
+  // source up as an empty directory owned by root, which is a confusing way
+  // to find out the path was wrong.
   std::error_code ec;
-  // Bind-mount sources must exist before docker will accept them.
   std::filesystem::create_directories(config_.disk_cache, ec);
   for (int slot = 0; slot < slots; ++slot) {
     const std::filesystem::path slot_dir =
         config_.work_dir / ("slot" + std::to_string(slot));
     std::filesystem::create_directories(slot_dir / "overlay", ec);
     std::filesystem::create_directories(slot_dir / "bazel_output_base", ec);
+    std::filesystem::create_directories(SlotLogDir(config_, slot), ec);
     if (ec) {
       *error = "cannot create slot directories under " +
                config_.work_dir.string() + ": " + ec.message();
-      return false;
-    }
-    if (!sandbox_exec::EnsureClone(config_.git, config_.source_repo,
-                                   slot_dir / "repo", SlotLogDir(config_, slot),
-                                   error)) {
       return false;
     }
   }
   return true;
 }
 
+auto OrderRunner::engines() const -> std::string {
+  if (process_engine_ != nullptr && container_engine_ != nullptr) {
+    return process_engine_->name() + "+" + container_engine_->name();
+  }
+  if (container_engine_ != nullptr) {
+    return container_engine_->name();
+  }
+  return process_engine_ != nullptr ? process_engine_->name() : "none";
+}
+
+auto OrderRunner::EngineFor(const proto::WorkOrder &order) const
+    -> sandbox_exec::Engine * {
+  // The problem decides, by naming an image or not. The coordinator already
+  // refuses a problem that sets require_container without one
+  // (server/problem_config.cc), so "needs a container" and "named an image"
+  // cannot disagree.
+  return order.sandbox().image().empty() ? process_engine_ : container_engine_;
+}
+
 auto OrderRunner::Refusal(const proto::WorkOrder &order) const -> std::string {
-  if (order.require_container() && !engine_->capabilities().isolates) {
-    // The problem said its submissions need a container, and this engine is
-    // not one: a submitted genrule here runs as this worker's own user.
+  const sandbox_exec::Engine *engine = EngineFor(order);
+  if (engine == nullptr) {
+    return order.sandbox().image().empty()
+               ? "this worker cannot run unsandboxed orders"
+               : "this problem needs a container and this worker has no "
+                 "container engine";
+  }
+  if (order.require_container() && !engine->capabilities().isolates) {
+    // The problem said its submissions need a container and this engine is
+    // not one: a submitted genrule here would run as this worker's own user.
     // Better to hand the order back than to quietly run it.
-    return "this problem requires a container; run the worker with "
-           "--backend=docker";
+    return "this problem requires a container, and this order named no image "
+           "to run one from";
   }
   const std::string &required = order.grade().require_machine_class();
   if (!required.empty() && required != machine_class_) {
@@ -115,9 +129,10 @@ auto OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
     return outcome;
   }
 
+  sandbox_exec::Engine *engine = EngineFor(order);
   sandbox_exec::proto::Job job;
   std::string error;
-  if (!JobForOrder(slot, order, config_, engine_->capabilities(), &job,
+  if (!JobForOrder(slot, order, config_, engine->capabilities(), &job,
                    &error)) {
     outcome.error = error;
     return outcome;
@@ -125,13 +140,13 @@ auto OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    job_ids_[order.order_id()] = job.id();
+    running_[order.order_id()] = InFlight{job.id(), engine};
   }
   ProgressObserver observer(order.order_id(), &progress);
-  const sandbox_exec::proto::JobResult result = engine_->Run(job, &observer);
+  const sandbox_exec::proto::JobResult result = engine->Run(job, &observer);
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    job_ids_.erase(order.order_id());
+    running_.erase(order.order_id());
   }
 
   return OutcomeFor(order, result);
@@ -139,15 +154,17 @@ auto OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
 
 void OrderRunner::Cancel(const std::string &order_id) {
   std::string job_id;
+  sandbox_exec::Engine *engine = nullptr;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = job_ids_.find(order_id);
-    if (it == job_ids_.end()) {
+    const auto it = running_.find(order_id);
+    if (it == running_.end()) {
       return;
     }
-    job_id = it->second;
+    job_id = it->second.job_id;
+    engine = it->second.engine;
   }
-  engine_->Cancel(job_id);
+  engine->Cancel(job_id);
 }
 
 }  // namespace tournament_arena

@@ -407,7 +407,31 @@ message WorkOrder {
   // because it is the *problem* that knows whether its patches can touch BUILD
   // files -- and a problem whose submissions can run arbitrary code at build
   // time must not quietly land on a worker that runs them as its own user.
+  //
+  // Belongs with the rest of the sandbox in |sandbox| below; it stays here
+  // because moving a field breaks the wire for no gain.
   bool require_container = 19;
+
+  // Everything else about the sandbox this order runs in.
+  SandboxOrder sandbox = 21;
+
+  // Where the tree comes from, so a worker has no repository of its own to
+  // disagree with the problem about. A local path is cloned with hardlinks; a
+  // URL is fetched.
+  string repo_url = 22;
+
+  // Extra bazel flags from the problem's BuildSpec, e.g. "--config=native".
+  // On the order for the same reason the image is: a flag that changes what
+  // gets built changes whether two ratings mean the same thing.
+  repeated string bazel_flags = 23;
+
+  // How the referee bounds a game, from ProblemConfig.match. The referee has
+  // flags for all three and was getting its own defaults, because nothing
+  // passed these along -- so a problem asking for a 5s turn limit silently
+  // got 10s.
+  uint32 turn_timeout_ms = 24;
+  uint32 game_time_budget_ms = 25;
+  uint32 max_moves_per_game = 26;
 
   // ProblemConfig.match.registry_options, forwarded verbatim to the referee.
   // The worker does not interpret these; only the linked registry does.
@@ -444,6 +468,36 @@ message GradeOrder {
   // number from the wrong kind of host is worse than no number: it looks like a
   // result.
   string require_machine_class = 6;
+}
+
+// The sandbox a problem asks for, flattened from ProblemConfig.sandbox for the
+// same reason GradeOrder is flattened from GradeSpec: a work order is the
+// worker protocol, and a worker that had to link the problem-config schema to
+// read one would be a worker that needs redeploying when that schema changes.
+//
+// It travels on the order rather than being configured per worker because two
+// submissions are only comparable if they were built the same way -- the same
+// argument WorkOrder.base_commit already makes. A fleet whose hosts were
+// started with different images produces ratings that cannot be compared, and
+// nothing would notice.
+message SandboxOrder {
+  // Image every container starts from. Empty means this order does not need a
+  // container, and is what tells a worker to run it as plain subprocesses.
+  string image = 1;
+
+  uint32 memory_limit_mb = 2;
+  double cpus = 3;
+  uint32 pids_limit = 4;
+  string run_as_user = 5;
+
+  // Assemble the overlay on the host and bind-mount the merged tree in. The
+  // in-container alternative needs CAP_SYS_ADMIN, and a container with that
+  // running submitted build code is not a boundary -- so a worker that cannot
+  // mount overlayfs fails the order rather than quietly downgrading.
+  bool host_overlay = 6;
+  // Let the build reach the network. A build that can fetch can also
+  // exfiltrate, and a submitted genrule is arbitrary code.
+  bool allow_build_network = 7;
 }
 
 message CancelOrder { string order_id = 1; }

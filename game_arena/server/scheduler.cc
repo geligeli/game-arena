@@ -206,6 +206,13 @@ auto Scheduler::MakeOrderLocked(
   order.set_referee_target(config_.referee_target);
   order.set_match_deadline_s(config_.match_deadline_s);
   order.set_require_container(config_.require_container);
+  *order.mutable_sandbox() = config_.sandbox;
+  order.set_repo_url(config_.repo_url);
+  order.mutable_bazel_flags()->Assign(config_.bazel_flags.begin(),
+                                      config_.bazel_flags.end());
+  order.set_turn_timeout_ms(config_.turn_timeout_ms);
+  order.set_game_time_budget_ms(config_.game_time_budget_ms);
+  order.set_max_moves_per_game(config_.max_moves_per_game);
   *order.mutable_registry_options() = config_.registry_options;
 
   if (!FillSideLocked(candidate, order.mutable_candidate())) {

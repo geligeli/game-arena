@@ -25,32 +25,28 @@
 
 namespace tournament_arena {
 
+// What only this host knows.
+//
+// Everything about *what* to build and *what the sandbox may do* arrives on
+// the order, because two submissions are only comparable if they were built
+// the same way. What is left here is this machine's own layout: where to put
+// the slots, and what its tools are called.
+//
+// The tool paths are not worker flags either. They exist as fields because
+// the whole sandbox test suite injects fake `docker`, `git` and `mount`
+// scripts through them and asserts the exact argv without a daemon.
 struct OrderJobConfig {
   // Per-slot state lives under <work_dir>/slot<N>: a persistent checkout and
   // a persistent bazel output base, reused across orders. The difference
   // between a candidate build taking seconds and taking minutes.
   std::filesystem::path work_dir;
   std::filesystem::path disk_cache;
-  std::string source_repo;  // a local path or a git URL
   std::string git = "git";
   std::string mount = "mount";
   std::string umount = "umount";
   // The build tool. A path for the process engine; inside a container it is
   // whatever the image calls bazel.
   std::string bazel = "bazel";
-  std::vector<std::string> bazel_flags;
-
-  // --- the sandbox, from the worker's own flags ---
-  //
-  // Not from the order: a WorkOrder carries only require_container. What a
-  // sandbox may do is the operator's decision about this host.
-  std::string image;
-  int memory_limit_mb = 4096;
-  double cpus = 0.0;
-  int pids_limit = 512;
-  std::string run_as_user;
-  bool host_overlay = true;
-  bool allow_build_network = false;
 };
 
 // Builds the job for |order| in |slot|. |capabilities| decides the rendezvous:

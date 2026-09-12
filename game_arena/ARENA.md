@@ -43,27 +43,35 @@ bazel run //game_arena/server:problem_server -- \
     --problem_config=game_arena/problems/nim.textproto \
     --data_dir=tournament_data --base_commit=$(git rev-parse HEAD)
 
-# 2. One or more workers, here or on any other host with the repo and bazel.
+# 2. One or more workers, here or on any other host with bazel and docker.
 bazel run //game_arena/sandbox/worker:sandbox_worker -- \
-    --server=<arena-host>:50051 --repo=/large_nfs/game-mcts --slots=2
-
-# Same worker, but each build and run happens in a throwaway container.
-# --repo is mounted into the containers, so it must be a local path; the image
-# must carry the bazel that matches the repo's MODULE.bazel.lock.
-bazel run //game_arena/sandbox/worker:sandbox_worker -- \
-    --server=<arena-host>:50051 --repo=/large_nfs/game-mcts --slots=2 \
-    --backend=docker --docker_image=<image-with-bazel>
+    --server=<arena-host>:50051
 ```
 
-There is no `--broker_advertise` any more, and nothing for a bot to dial across
-the network: a match's referee is started by the worker that runs the match, on
-a private network beside the two bots. A worker needs a route to the fleet
-service and nothing else.
+**A worker takes one flag.** Which repository to build, which image to build it
+in, what the sandbox may do, how long a turn may take -- all of it arrives on
+each order, from the problem's config. The reason is the one
+`WorkOrder.base_commit` already gives: two submissions are only comparable if
+they were built the same way, and a fleet whose hosts were each configured by
+hand is a fleet that cannot promise that. A worker with its own `--docker_image`
+could quietly rate one problem's submissions against two different toolchains.
 
-`--machine_class` matters for graded problems. A timing from a laptop and one
-from a server are not the same measurement, and
-`GradeSpec.require_machine_class` is what stops a leaderboard from ranking the
-fleet instead of the submissions.
+Which engine an order runs on is the problem's choice too: it names an image or
+it does not. A worker holds both and refuses an order it has no engine for,
+rather than running submitted code unsandboxed.
+
+Three things are facts about the host rather than the problem, and come from
+the environment so that the flag surface stays at one:
+
+| | |
+|---|---|
+| `ARENA_MACHINE_CLASS` | what kind of host this is, e.g. `bench-c7i`. Nothing can derive a semantic label, and a graded problem can require one -- unset, this worker refuses those orders |
+| `ARENA_SLOTS` | orders at once; how much of this box to lend the arena. Default 2 |
+| `ARENA_WORK_DIR` | where per-slot checkouts and bazel output bases live. Default `/tmp/arena_sandbox`. Keep it off the repo: a work dir inside makes `bazel test //...` descend into the worker's own clone |
+
+There is nothing for a bot to dial across the network either: a match's referee
+is started by the worker that runs the match, on a private network beside the
+two bots. A worker needs a route to the fleet service and nothing else.
 
 ## Writing a candidate
 

@@ -14,8 +14,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-#include <vector>
 #include <thread>
+#include <vector>
 
 #include "game_arena/sandbox/exec/process_engine.h"
 #include "game_arena/sandbox/worker/order_runner.h"
@@ -56,12 +56,12 @@ class OrderRunnerProcessTest : public ::testing::Test {
     engine_ = std::make_unique<sandbox_exec::ProcessEngine>();
 
     OrderJobConfig config;
-    config.source_repo = (root_ / "origin").string();
     config.work_dir = root_ / "work";
     config.git = (root_ / "git").string();
     config.bazel = (root_ / "bazel").string();
     std::filesystem::create_directories(root_ / "origin");
-    runner_ = std::make_unique<OrderRunner>(engine_.get(), std::move(config));
+    runner_ = std::make_unique<OrderRunner>(
+        engine_.get(), /*container_engine=*/nullptr, std::move(config));
     std::string error;
     ASSERT_TRUE(runner_->Warmup(1, &error)) << error;
   }
@@ -77,6 +77,8 @@ class OrderRunnerProcessTest : public ::testing::Test {
     proto::WorkOrder order;
     order.set_order_id("g-1");
     order.set_base_commit(kFakeCommit);
+    // A worker has no repository of its own; the order names the tree.
+    order.set_repo_url((root_ / "origin").string());
     order.mutable_candidate()->set_candidate_id("cand-1");
     order.mutable_candidate()->set_patch("diff --git a/x b/x\n");
     order.mutable_candidate()->add_build_targets("//bench");
@@ -259,11 +261,11 @@ TEST_F(OrderRunnerProcessTest, RefusesAnOrderForAnotherMachineClass) {
   // it looks like a result. This is what stops a leaderboard from ranking the
   // fleet instead of the submissions.
   OrderJobConfig config;
-  config.source_repo = (root_ / "origin").string();
   config.work_dir = root_ / "work_mc";
   config.git = (root_ / "git").string();
   config.bazel = (root_ / "bazel").string();
-  OrderRunner bench(engine_.get(), config, "bench-c7i");
+  OrderRunner bench(engine_.get(), /*container_engine=*/nullptr, config,
+                    "bench-c7i");
   std::string error;
   ASSERT_TRUE(bench.Warmup(1, &error)) << error;
 
@@ -298,8 +300,10 @@ TEST_F(OrderRunnerProcessTest, AnUnsetMachineClassCannotSatisfyARequirement) {
 TEST_F(OrderRunnerProcessTest, ReportsEveryPhaseItReaches) {
   std::vector<proto::OrderProgress::Phase> seen;
   runner_->RunOrder(
-      0, MakeOrder("#!/usr/bin/env bash\nprintf '{\"metrics\": {\"wall_ms\": 1}}' > \"$ARENA_REPORT\"\n",
-                   1, proto::GradeOrder::MIN),
+      0,
+      MakeOrder("#!/usr/bin/env bash\nprintf '{\"metrics\": {\"wall_ms\": 1}}' "
+                "> \"$ARENA_REPORT\"\n",
+                1, proto::GradeOrder::MIN),
       [&seen](const std::string &, proto::OrderProgress::Phase phase) {
         seen.push_back(phase);
       });

@@ -40,7 +40,8 @@ auto SlotDir(const OrderJobConfig &config, int slot) -> std::filesystem::path {
   return config.work_dir / ("slot" + std::to_string(slot));
 }
 
-auto Isolation(const OrderJobConfig &config, bool container) -> sx::Isolation {
+auto Isolation(const proto::SandboxOrder &sandbox,
+               bool container) -> sx::Isolation {
   sx::Isolation isolation;
   if (!container) {
     // No image and no cgroups. The one limit this engine can apply is an
@@ -50,12 +51,12 @@ auto Isolation(const OrderJobConfig &config, bool container) -> sx::Isolation {
     // limit a problem means for a solution, and it dies at startup.
     return isolation;
   }
-  isolation.set_image(config.image);
-  isolation.set_memory_limit_mb(config.memory_limit_mb);
-  isolation.set_cpus(config.cpus);
-  isolation.set_pids_limit(config.pids_limit);
-  isolation.set_run_as_user(config.run_as_user);
-  if (config.host_overlay) {
+  isolation.set_image(sandbox.image());
+  isolation.set_memory_limit_mb(sandbox.memory_limit_mb());
+  isolation.set_cpus(sandbox.cpus());
+  isolation.set_pids_limit(sandbox.pids_limit());
+  isolation.set_run_as_user(sandbox.run_as_user());
+  if (sandbox.host_overlay()) {
     // Nothing left to mount, so nothing to be privileged for: the defaults
     // (drop every capability, no new privileges, a read-only root) stand, and
     // /tmp is the one writable place.
@@ -77,12 +78,12 @@ auto Isolation(const OrderJobConfig &config, bool container) -> sx::Isolation {
 // The isolation for a step that runs the submission itself: the problem's
 // memory limit, as an address-space cap the process engine can enforce. Not
 // applied to the build, for the reason in Isolation() above.
-auto SolutionIsolation(const OrderJobConfig &config, bool container,
+auto SolutionIsolation(const proto::SandboxOrder &sandbox, bool container,
                        const sx::Isolation &base) -> sx::Isolation {
   sx::Isolation isolation = base;
-  if (!container && config.memory_limit_mb > 0) {
+  if (!container && sandbox.memory_limit_mb() > 0) {
     isolation.set_address_space_limit_bytes(
-        static_cast<std::uint64_t>(config.memory_limit_mb) * 1024 * 1024);
+        static_cast<std::uint64_t>(sandbox.memory_limit_mb()) * 1024 * 1024);
   }
   return isolation;
 }
@@ -126,7 +127,7 @@ auto WorkspaceFor(const proto::WorkOrder &order, const OrderJobConfig &config,
                   std::string *error) -> std::optional<sx::Workspace> {
   const std::filesystem::path slot_dir = SlotDir(config, slot);
   sx::Workspace ws;
-  ws.set_source_repo(config.source_repo);
+  ws.set_source_repo(order.repo_url());
   ws.set_lower_dir((slot_dir / "repo").string());
   ws.set_base_commit(order.base_commit());
   ws.set_git(config.git);
@@ -150,8 +151,9 @@ auto WorkspaceFor(const proto::WorkOrder &order, const OrderJobConfig &config,
     ws.set_merged_dir((slot_dir / "merged").string());
     ws.set_mount_binary(config.mount);
     ws.set_umount_binary(config.umount);
-    ws.set_overlay(config.host_overlay ? sx::Workspace::OVERLAY_HOST
-                                       : sx::Workspace::OVERLAY_IN_SANDBOX);
+    ws.set_overlay(order.sandbox().host_overlay()
+                       ? sx::Workspace::OVERLAY_HOST
+                       : sx::Workspace::OVERLAY_IN_SANDBOX);
     // Applied by git inside the sandbox, in both overlay modes, so the
     // workspace the build sees is the one the patch was checked against.
     ws.set_patch(sx::Workspace::PATCH_IN_ENTRYPOINT);
@@ -182,7 +184,7 @@ void AddBuildPhase(int slot, const proto::WorkOrder &order,
   // exfiltrate, and a submitted genrule is arbitrary code.
   sx::Isolation *isolation = phase->mutable_isolation();
   *isolation = job->isolation();
-  isolation->set_network(config.allow_build_network
+  isolation->set_network(order.sandbox().allow_build_network()
                              ? sx::Isolation::NETWORK_EGRESS
                              : sx::Isolation::NETWORK_NONE);
 
@@ -221,7 +223,7 @@ void AddBuildPhase(int slot, const proto::WorkOrder &order,
   if (!paths.disk_cache.empty()) {
     *build->add_argv() = Verbatim("--disk_cache=" + paths.disk_cache);
   }
-  for (const std::string &flag : config.bazel_flags) {
+  for (const std::string &flag : order.bazel_flags()) {
     *build->add_argv() = Quoted(flag);
   }
   // One build, every target: both sides of a match and the referee share an
@@ -236,8 +238,8 @@ void AddBuildPhase(int slot, const proto::WorkOrder &order,
   }
 }
 
-void AddMatchPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
-                   const BuildPaths &paths, bool container,
+void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
+                   bool container,
                    const sandbox_exec::Capabilities &capabilities,
                    sx::Job *job) {
   const int run_timeout_s =
@@ -289,6 +291,20 @@ void AddMatchPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
   }
   *referee->add_argv() =
       Quoted("--deadline_s=" + std::to_string(match_deadline_s));
+  // Omitted when the problem said nothing, so the referee keeps its own
+  // default rather than being handed a zero that means something else.
+  if (order.turn_timeout_ms() > 0) {
+    *referee->add_argv() =
+        Quoted("--turn_timeout_ms=" + std::to_string(order.turn_timeout_ms()));
+  }
+  if (order.game_time_budget_ms() > 0) {
+    *referee->add_argv() = Quoted("--game_time_budget_ms=" +
+                                  std::to_string(order.game_time_budget_ms()));
+  }
+  if (order.max_moves_per_game() > 0) {
+    *referee->add_argv() = Quoted("--max_moves_per_game=" +
+                                  std::to_string(order.max_moves_per_game()));
+  }
   // Opaque to the worker: whatever the problem set, handed to the registry
   // linked into the referee. Omitted entirely when empty so an order that
   // sets nothing produces the argv it always did.
@@ -323,12 +339,13 @@ void AddMatchPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
   sx::Step *bot = phase->mutable_foreground();
   bot->set_name("bot");
   bot->set_timeout_s(run_timeout_s);
-  *bot->mutable_isolation() = SolutionIsolation(config, container, *isolation);
+  *bot->mutable_isolation() =
+      SolutionIsolation(order.sandbox(), container, *isolation);
   add_bot(bot, order.candidate(), order.opponent_spec());
 }
 
-void AddGradePhases(const proto::WorkOrder &order, const OrderJobConfig &config,
-                    bool container, sx::Job *job) {
+void AddGradePhases(const proto::WorkOrder &order, bool container,
+                    sx::Job *job) {
   const proto::GradeOrder &grade = order.grade();
   const int repeats = std::max(1, grade.repeats());
   const int timeout_s =
@@ -349,7 +366,7 @@ void AddGradePhases(const proto::WorkOrder &order, const OrderJobConfig &config,
     step->set_name("grade");
     step->set_timeout_s(timeout_s);
     *step->mutable_isolation() =
-        SolutionIsolation(config, container, *isolation);
+        SolutionIsolation(order.sandbox(), container, *isolation);
     // Exported rather than fixed, so the command needs no knowledge of the
     // sandbox's directory layout.
     // The engine resolves {{scratch}} to wherever the step can write: a
@@ -383,7 +400,7 @@ auto JobForOrder(int slot, const proto::WorkOrder &order,
   job->set_id(sandbox_exec::SandboxName(
       "saw-" + std::to_string(slot) + "-" + order.order_id(), ""));
   job->set_log_dir(SlotLogDir(config, slot).string());
-  *job->mutable_isolation() = Isolation(config, container);
+  *job->mutable_isolation() = Isolation(order.sandbox(), container);
 
   std::optional<sx::Workspace> workspace =
       WorkspaceFor(order, config, slot, container, error);
@@ -396,9 +413,9 @@ auto JobForOrder(int slot, const proto::WorkOrder &order,
   AddBuildPhase(slot, order, config, paths, container, job);
 
   if (order.has_grade()) {
-    AddGradePhases(order, config, container, job);
+    AddGradePhases(order, container, job);
   } else {
-    AddMatchPhase(order, config, paths, container, capabilities, job);
+    AddMatchPhase(order, paths, container, capabilities, job);
   }
   return true;
 }

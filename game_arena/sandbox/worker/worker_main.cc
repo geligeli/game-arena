@@ -18,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -30,61 +31,45 @@
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
-#include "absl/strings/str_split.h"
+#include "game_arena/common/process/process.h"
 #include "game_arena/proto/arena.grpc.pb.h"
 #include "game_arena/sandbox/exec/container_engine.h"
 #include "game_arena/sandbox/exec/process_engine.h"
 #include "game_arena/sandbox/worker/order_runner.h"
 
 ABSL_FLAG(std::string, server, "localhost:50051",
-          "host:port of the arena's SandboxFleet service");
-ABSL_FLAG(std::string, worker_id, "",
-          "Stable id for this worker; defaults to <hostname>-<pid>");
-ABSL_FLAG(int, slots, 2, "Orders to run concurrently");
-ABSL_FLAG(std::string, repo, "",
-          "Repository to clone candidates into: a local path or a git URL "
-          "(required)");
-ABSL_FLAG(std::string, work_dir, "/tmp/arena_sandbox",
-          "Where per-slot checkouts and bazel output bases live");
-ABSL_FLAG(std::string, disk_cache, "",
-          "Shared bazel --disk_cache across slots; defaults to "
-          "<work_dir>/disk_cache");
-ABSL_FLAG(std::string, backend, "local",
-          "How orders are executed: local or docker");
-ABSL_FLAG(std::string, docker_image, "",
-          "Image for --backend=docker; must contain bazel matching the repo's "
-          "MODULE.bazel.lock (required with --backend=docker)");
-ABSL_FLAG(std::string, bazel, "bazel",
-          "bazel binary. A path for --backend=local; inside a container, "
-          "whatever the image calls it");
-ABSL_FLAG(std::string, docker, "docker", "docker binary");
-ABSL_FLAG(std::string, git, "git", "git binary");
-ABSL_FLAG(std::string, bazel_flags, "",
-          "Comma-separated extra bazel flags, e.g. --config=native");
-ABSL_FLAG(bool, host_overlay, true,
-          "Assemble each slot's overlay on the host and bind-mount the merged "
-          "tree in, so containers need no CAP_SYS_ADMIN. Requires this worker "
-          "to be able to mount overlayfs (root, or a user namespace). Turning "
-          "it off falls back to mounting inside the container, which needs "
-          "CAP_SYS_ADMIN and is not a security boundary");
-ABSL_FLAG(bool, allow_build_network, false,
-          "Let the build container reach the network. Off by default: a build "
-          "that can fetch can also exfiltrate, and a submitted genrule is "
-          "arbitrary code. The image must carry a warm bazel repository cache");
-ABSL_FLAG(std::string, run_as_user, "",
-          "Run containers as this user, e.g. \"1000:1000\". Empty leaves the "
-          "image's default, which for most images is root");
-ABSL_FLAG(double, container_cpus, 0.0, "CPU cap per container. 0 is unlimited");
-ABSL_FLAG(int, pids_limit, 512, "Process cap per container. 0 is unlimited");
-ABSL_FLAG(std::string, machine_class, "",
-          "What kind of host this is, e.g. \"bench-c7i\". A graded problem can "
-          "require one: a timing from a laptop and one from a server are not "
-          "the same measurement, and a board that mixes them ranks the fleet "
-          "rather than the submissions");
-ABSL_FLAG(int, reconnect_delay_s, 5,
-          "Delay before re-attaching after the arena drops the stream");
+          "host:port of the arena's SandboxFleet service. The only flag: what "
+          "to build, what the sandbox may do, and where the tree comes from "
+          "all arrive on each order, because two submissions are only "
+          "comparable if they were built the same way");
 
 namespace {
+
+// The three things a coordinator cannot know, because they are facts about
+// this host rather than about the problem. Environment rather than flags, so
+// the flag surface stays at one and so a systemd unit or a container spec is
+// the natural place to state them.
+//
+//   ARENA_MACHINE_CLASS   what kind of host this is, e.g. "bench-c7i". A
+//                         graded problem can require one, and nothing can
+//                         derive a semantic label -- without it that gate is
+//                         unenforceable.
+//   ARENA_SLOTS           how many orders to run at once: how much of this
+//                         box to lend the arena.
+//   ARENA_WORK_DIR        where the per-slot checkouts and bazel output bases
+//                         live. Keep it off the repo: a work dir inside makes
+//                         `bazel test //...` descend into the worker's own
+//                         clone.
+//   ARENA_WORKER_ID       stable across reconnects; defaults to
+//                         <hostname>-<pid>.
+// How long to wait before re-attaching. Not configurable: nothing about a
+// problem or a host makes a different number right.
+constexpr std::chrono::seconds kReconnectDelay{5};
+
+auto EnvOr(const char *name, const std::string &fallback) -> std::string {
+  const char *value = std::getenv(name);
+  return value != nullptr && *value != '\0' ? std::string(value) : fallback;
+}
 
 using tournament_arena::OrderJobConfig;
 using tournament_arena::OrderOutcome;
@@ -253,71 +238,42 @@ auto main(int argc, char **argv) -> int {
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
 
-  if (absl::GetFlag(FLAGS_repo).empty()) {
-    LOG(ERROR) << "Missing required --repo=<path or git url>";
-    return 2;
-  }
+  const int slots = std::max(1, std::atoi(EnvOr("ARENA_SLOTS", "2").c_str()));
+  const std::string machine_class = EnvOr("ARENA_MACHINE_CLASS", "");
+  const std::string worker_id = EnvOr("ARENA_WORKER_ID", DefaultWorkerId());
 
-  const int slots = std::max(1, absl::GetFlag(FLAGS_slots));
-  const std::string machine_class = absl::GetFlag(FLAGS_machine_class);
-  const std::string worker_id = absl::GetFlag(FLAGS_worker_id).empty()
-                                    ? DefaultWorkerId()
-                                    : absl::GetFlag(FLAGS_worker_id);
-
-  // One config for both engines: what differs is which engine reads it.
+  // This host's own layout, and nothing about any problem.
+  const std::filesystem::path work_dir =
+      EnvOr("ARENA_WORK_DIR", "/tmp/arena_sandbox");
   OrderJobConfig job_config;
-  job_config.source_repo = absl::GetFlag(FLAGS_repo);
-  job_config.work_dir = absl::GetFlag(FLAGS_work_dir);
-  job_config.disk_cache =
-      absl::GetFlag(FLAGS_disk_cache).empty()
-          ? job_config.work_dir / "disk_cache"
-          : std::filesystem::path(absl::GetFlag(FLAGS_disk_cache));
-  job_config.git = absl::GetFlag(FLAGS_git);
-  job_config.bazel = absl::GetFlag(FLAGS_bazel);
-  job_config.image = absl::GetFlag(FLAGS_docker_image);
-  job_config.host_overlay = absl::GetFlag(FLAGS_host_overlay);
-  job_config.allow_build_network = absl::GetFlag(FLAGS_allow_build_network);
-  job_config.run_as_user = absl::GetFlag(FLAGS_run_as_user);
-  job_config.cpus = absl::GetFlag(FLAGS_container_cpus);
-  job_config.pids_limit = absl::GetFlag(FLAGS_pids_limit);
-  if (!absl::GetFlag(FLAGS_bazel_flags).empty()) {
-    job_config.bazel_flags = absl::StrSplit(absl::GetFlag(FLAGS_bazel_flags),
-                                            ',', absl::SkipEmpty());
-  }
+  job_config.work_dir = work_dir;
+  job_config.disk_cache = work_dir / "disk_cache";
 
-  std::unique_ptr<sandbox_exec::Engine> engine;
-  if (absl::GetFlag(FLAGS_backend) == "local") {
-    engine = std::make_unique<sandbox_exec::ProcessEngine>();
-  } else if (absl::GetFlag(FLAGS_backend) == "docker") {
-    if (absl::GetFlag(FLAGS_docker_image).empty()) {
-      LOG(ERROR) << "--backend=docker requires --docker_image=<image>";
-      return 2;
-    }
-    if (!std::filesystem::is_directory(absl::GetFlag(FLAGS_repo))) {
-      LOG(ERROR) << "--backend=docker needs --repo as a local path (it is "
-                    "mounted into the containers), got '"
-                 << absl::GetFlag(FLAGS_repo) << "'";
-      return 2;
-    }
-    if (!job_config.host_overlay) {
-      LOG(WARNING) << "--host_overlay=false: containers run with CAP_SYS_ADMIN "
-                      "so they can mount their own overlay. Submitted build "
-                      "code then runs privileged, which is not a boundary";
-    }
-    sandbox_exec::ContainerEngineConfig engine_config;
-    engine_config.docker = absl::GetFlag(FLAGS_docker);
-    engine = std::make_unique<sandbox_exec::ContainerEngine>(engine_config);
+  // Both engines, always. Which one an order runs on is the problem's
+  // decision -- it names an image or it does not -- so a worker does not get
+  // to have an opinion, and does not need a flag to express one.
+  auto process_engine = std::make_unique<sandbox_exec::ProcessEngine>();
+  std::unique_ptr<sandbox_exec::ContainerEngine> container_engine;
+  if (process::ResolveExecutable("docker").empty()) {
+    LOG(WARNING) << "no docker on PATH: this worker can only run orders that "
+                    "name no image, and will refuse the rest rather than run "
+                    "submitted code unsandboxed";
   } else {
-    LOG(ERROR) << "Unsupported --backend='" << absl::GetFlag(FLAGS_backend)
-               << "' (local or docker)";
-    return 2;
+    container_engine = std::make_unique<sandbox_exec::ContainerEngine>(
+        sandbox_exec::ContainerEngineConfig{});
   }
 
-  OrderRunner runner(engine.get(), std::move(job_config), machine_class);
+  OrderRunner runner(process_engine.get(), container_engine.get(),
+                     std::move(job_config), machine_class);
 
+  // No repository named here: each order says where its tree comes from.
   LOG(INFO) << "Worker '" << worker_id << "' warming up " << slots
-            << " slot(s) from " << absl::GetFlag(FLAGS_repo) << " via the "
-            << runner.engine_name() << " engine";
+            << " slot(s) under " << work_dir << ", " << runner.engines()
+            << " engine(s)"
+            << (machine_class.empty()
+                    ? ", no machine class (ARENA_MACHINE_CLASS unset: graded "
+                      "problems that require one will refuse this worker)"
+                    : ", machine class '" + machine_class + "'");
   std::string error;
   if (!runner.Warmup(slots, &error)) {
     LOG(ERROR) << "Cannot prepare slots: " << error;
@@ -336,7 +292,7 @@ auto main(int argc, char **argv) -> int {
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id(worker_id);
     hello.mutable_hello()->set_slots(slots);
-    hello.mutable_hello()->set_backend(runner.engine_name());
+    hello.mutable_hello()->set_backend(runner.engines());
     // The class of host this is. Stamped on every result too, but the
     // arena cannot schedule on what it is never told up front.
     hello.mutable_hello()->set_machine_class(machine_class);
@@ -364,9 +320,7 @@ auto main(int argc, char **argv) -> int {
     const grpc::Status status = stream->Finish();
     LOG(WARNING) << "Detached from the arena ("
                  << (status.ok() ? "stream closed" : status.error_message())
-                 << "); reconnecting in "
-                 << absl::GetFlag(FLAGS_reconnect_delay_s) << "s";
-    std::this_thread::sleep_for(
-        std::chrono::seconds(absl::GetFlag(FLAGS_reconnect_delay_s)));
+                 << "); reconnecting in " << kReconnectDelay.count() << "s";
+    std::this_thread::sleep_for(kReconnectDelay);
   }
 }

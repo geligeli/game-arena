@@ -63,6 +63,18 @@ struct SchedulerConfig {
   // Stamped on every order: the problem, not the worker, knows whether its
   // submissions may run arbitrary code at build time.
   bool require_container = false;
+  // The rest of the sandbox, where the tree comes from, and the build's extra
+  // flags. All on every order because a worker has none of its own to
+  // disagree with: two submissions are only comparable if they were built the
+  // same way, which is the argument base_commit already makes.
+  proto::SandboxOrder sandbox;
+  std::string repo_url;
+  std::vector<std::string> bazel_flags;
+  // How the referee bounds a game. Forwarded rather than left to the
+  // referee's own flag defaults, which is what used to happen.
+  int turn_timeout_ms = 0;
+  int game_time_budget_ms = 0;
+  int max_moves_per_game = 0;
   // Opponents a freshly submitted candidate is placed against.
   std::vector<std::string> placement_opponents = {"builtin:random",
                                                   "builtin:mcts"};

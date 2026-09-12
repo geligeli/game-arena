@@ -137,6 +137,22 @@ auto SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem)
   config.build_targets.assign(problem.build().targets().begin(),
                               problem.build().targets().end());
   config.require_container = problem.sandbox().require_container();
+  config.repo_url = problem.repo().url();
+  config.bazel_flags.assign(problem.build().bazel_flags().begin(),
+                            problem.build().bazel_flags().end());
+
+  // The sandbox, translated rather than embedded: see SandboxOrder.
+  const auto &sandbox = problem.sandbox();
+  config.sandbox.set_image(sandbox.image());
+  config.sandbox.set_memory_limit_mb(sandbox.memory_limit_mb());
+  config.sandbox.set_cpus(sandbox.cpus());
+  config.sandbox.set_pids_limit(sandbox.pids_limit());
+  config.sandbox.set_run_as_user(sandbox.run_as_user());
+  config.sandbox.set_allow_build_network(sandbox.allow_build_network());
+  // Unset means on, which is what host_overlay_set exists to distinguish:
+  // the hardened mode is the default and "false" still has to be sayable.
+  config.sandbox.set_host_overlay(
+      sandbox.host_overlay_set() ? sandbox.host_overlay() : true);
   if (problem.has_match()) {
     const auto &match = problem.match();
     config.placement_opponents.assign(match.placement_opponents().begin(),
@@ -145,6 +161,9 @@ auto SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem)
     config.default_games = static_cast<int>(match.games_per_order());
     config.run_timeout_s = static_cast<int>(match.timeout_s());
     config.referee_target = match.referee_target();
+    config.turn_timeout_ms = static_cast<int>(match.turn_timeout_ms());
+    config.game_time_budget_ms = static_cast<int>(match.game_time_budget_ms());
+    config.max_moves_per_game = static_cast<int>(match.max_moves_per_game());
     config.registry_options = match.registry_options();
     // Kept under the worker's own run timeout, so a stuck match comes back as a
     // partial tally rather than an order-level failure.
@@ -293,12 +312,10 @@ auto main(int argc, char **argv) -> int {
                              tournament_arena::proto::MetricSpec::MINIMIZE);
   }
 
-  tournament_arena::ArenaService arena(&candidates, &scheduler, standings.get(),
-                                       problem->repo().base_commit(), graded,
-                                       problem->has_match()
-                                           ? problem->match().game()
-                                           : "",
-                                       std::move(info), clients.get());
+  tournament_arena::ArenaService arena(
+      &candidates, &scheduler, standings.get(), problem->repo().base_commit(),
+      graded, problem->has_match() ? problem->match().game() : "",
+      std::move(info), clients.get());
   tournament_arena::FleetService fleet(&scheduler);
 
   grpc::ServerBuilder builder;

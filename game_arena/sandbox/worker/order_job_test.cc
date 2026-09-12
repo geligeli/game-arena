@@ -26,8 +26,6 @@ auto Config() -> OrderJobConfig {
   OrderJobConfig config;
   config.work_dir = "/w";
   config.disk_cache = "/w/disk_cache";
-  config.source_repo = "/repo";
-  config.image = "img:1";
   return config;
 }
 
@@ -39,6 +37,13 @@ auto MatchOrder() -> proto::WorkOrder {
   order.set_referee_target("//testgame:match_referee");
   order.set_opponent_spec("builtin:random");
   order.set_num_games(2);
+  order.set_repo_url("/repo");
+  proto::SandboxOrder *sandbox = order.mutable_sandbox();
+  sandbox->set_image("img:1");
+  sandbox->set_memory_limit_mb(4096);
+  sandbox->set_pids_limit(512);
+  sandbox->set_host_overlay(true);
+
   proto::Side *side = order.mutable_candidate();
   side->set_candidate_id("c-ok");
   side->set_patch("a patch");
@@ -197,13 +202,15 @@ TEST(JobForOrderTest, AHostOverlayNeedsNoCapabilities) {
 }
 
 TEST(JobForOrderTest, TheInSandboxOverlayCostsExactlyTheseRelaxations) {
-  OrderJobConfig config = Config();
-  config.host_overlay = false;
+  // The problem asks for it, not the worker: whether submitted build code may
+  // run privileged is a property of the problem's threat model.
+  proto::WorkOrder order = MatchOrder();
+  order.mutable_sandbox()->set_host_overlay(false);
 
   sx::Job job;
   std::string error;
-  ASSERT_TRUE(JobForOrder(0, MatchOrder(), config, ContainerCapabilities(),
-                          &job, &error));
+  ASSERT_TRUE(
+      JobForOrder(0, order, Config(), ContainerCapabilities(), &job, &error));
 
   // The mode ARENA.md says is not a boundary, stated as what it gives up.
   EXPECT_EQ(job.workspace().overlay(), sx::Workspace::OVERLAY_IN_SANDBOX);

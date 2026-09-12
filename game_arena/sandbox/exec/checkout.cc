@@ -20,9 +20,19 @@ auto EnsureClone(const std::string &git, const std::string &source,
     return true;
   }
   std::filesystem::create_directories(dest.parent_path(), ec);
-  const sandbox_common::StepResult clone = sandbox_common::RunStep(
-      git, {"clone", "--local", source, dest.string()}, dest.parent_path(),
-      log_dir, "clone", std::chrono::seconds(900));
+  // --local hardlinks the objects instead of copying them, which is most of
+  // why a slot is cheap to create. It is an error for anything that is not a
+  // path on this filesystem, and the source now arrives on the order, so it
+  // can be a URL.
+  std::vector<std::string> args = {"clone"};
+  if (std::filesystem::exists(std::filesystem::path(source) / ".git")) {
+    args.emplace_back("--local");
+  }
+  args.push_back(source);
+  args.push_back(dest.string());
+  const sandbox_common::StepResult clone =
+      sandbox_common::RunStep(git, args, dest.parent_path(), log_dir, "clone",
+                              std::chrono::seconds(900));
   if (!clone.run.started || clone.run.exit_code != 0) {
     *error = "git clone failed: " + TailOf(clone.output, 2000);
     return false;

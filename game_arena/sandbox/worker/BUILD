@@ -135,6 +135,7 @@ cc_binary(
     srcs = ["worker_main.cc"],
     deps = [
         ":order_runner",
+        "//game_arena/common/process",
         "//game_arena/sandbox/exec:container_engine",
         "//game_arena/sandbox/exec:engine",
         "//game_arena/sandbox/exec:process_engine",

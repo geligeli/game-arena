@@ -140,16 +140,13 @@ message SandboxSpec {
   double cpus = 3;
   uint32 pids_limit = 4;
 
-  enum Network {
-    // No interface at all. The default, and the only correct setting for a
-    // graded run: a solution timed against a stopwatch has no business
-    // reaching the network.
-    NETWORK_NONE = 0;
-    // A per-order internal bridge, no egress. Match evaluation needs it so the
-    // two bot containers can reach their referee.
-    NETWORK_INTERNAL_BRIDGE = 1;
-  }
-  Network network = 5;
+  // Reserved: a single network setting cannot express what actually happens,
+  // which is per phase -- a build and a graded run get no interface at all,
+  // and a match gets an egress-free bridge so the bots can reach their
+  // referee and nothing else. That is not a problem's choice to make, so
+  // there is nothing here to set. See sandbox/worker/order_job.cc.
+  reserved 5;
+  reserved "network";
 
   // Refuse to run this problem on the local (non-container) backend. Any
   // problem whose patches may touch BUILD files should set this: on the local

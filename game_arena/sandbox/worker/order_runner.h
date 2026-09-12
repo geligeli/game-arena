@@ -28,7 +28,12 @@ class OrderRunner {
   using ProgressSink = std::function<void(const std::string &order_id,
                                           proto::OrderProgress::Phase phase)>;
 
-  OrderRunner(sandbox_exec::Engine *engine, OrderJobConfig config,
+  // Either engine may be null: a host with no docker passes only a process
+  // engine, and an order that needs a container is then refused rather than
+  // quietly run unsandboxed. Which one an order gets is the *problem's*
+  // decision -- it names an image or it does not -- not a worker flag.
+  OrderRunner(sandbox_exec::Engine *process_engine,
+              sandbox_exec::Engine *container_engine, OrderJobConfig config,
               std::string machine_class = {});
 
   // Prepares per-slot state up front, so the first order does not pay for
@@ -45,20 +50,30 @@ class OrderRunner {
   // thread while a slot thread is inside RunOrder.
   void Cancel(const std::string &order_id);
 
-  auto engine_name() const -> std::string { return engine_->name(); }
+  // What this worker can run, for the hello. Both engines when it has both.
+  auto engines() const -> std::string;
 
  private:
   // Why this worker will not run |order| at all, or empty if it will. Refused
   // rather than attempted: an order run on the wrong kind of host produces a
   // number that looks like a result.
   auto Refusal(const proto::WorkOrder &order) const -> std::string;
+  // The engine this order runs on, or null when this worker has none for it.
+  auto EngineFor(const proto::WorkOrder &order) const -> sandbox_exec::Engine *;
 
-  sandbox_exec::Engine *const engine_;
+  // What a Cancel needs: which job, and which engine took it.
+  struct InFlight {
+    std::string job_id;
+    sandbox_exec::Engine *engine = nullptr;
+  };
+
+  sandbox_exec::Engine *const process_engine_;    // may be null
+  sandbox_exec::Engine *const container_engine_;  // may be null
   const OrderJobConfig config_;
   const std::string machine_class_;
 
   std::mutex mutex_;
-  std::map<std::string, std::string> job_ids_;  // order_id -> job id
+  std::map<std::string, InFlight> running_;  // keyed by order id
 };
 
 }  // namespace tournament_arena
