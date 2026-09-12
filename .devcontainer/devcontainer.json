@@ -1,0 +1,69 @@
+{
+    // "image": "takumi.city/jax-cpu-training",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.autopep8",
+                "GitHub.copilot-chat",
+                "GitHub.copilot",
+                "ms-python.python",
+                "ms-toolsai.jupyter",
+                "BazelBuild.vscode-bazel",
+                "llvm-vs-code-extensions.vscode-clangd",
+                "moonshot-ai.kimi-code",
+                "pbkit.vscode-pbkit",
+                "Tyriar.sort-lines",
+                "anthropic.claude-code"
+            ]
+        }
+    },
+    "runArgs": [
+        "--network=host"
+    ],
+    "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+    // Runs on the host before the container is created: a bind mount whose
+    // source is missing gets created by docker as root, which the container's
+    // ubuntu user could not then write to.
+    "initializeCommand": "mkdir -p /large_nfs/bazel-cache/disk /large_nfs/bazel-cache/repo",
+    "mounts": [
+        // Shared bazel disk + repository cache (see .bazelrc). Mounted at the
+        // same path it has on the host, so the paths committed in .bazelrc
+        // resolve identically inside and outside the container.
+        "source=/large_nfs/bazel-cache,target=/large_nfs/bazel-cache,type=bind",
+        "source=${localEnv:HOME}/.cache,target=/home/ubuntu/.cache,type=bind",
+        // Share the host's Claude Code credentials + settings with the container.
+        "source=${localEnv:HOME}/.claude,target=/home/ubuntu/.claude,type=bind",
+        // Same for Kimi Code. Mounted off to the side, NOT over ~/.kimi-code:
+        // that dir holds the container's own kimi binary, which is on PATH.
+        "source=${localEnv:HOME}/.kimi-code,target=/home/ubuntu/.kimi-shared,type=bind",
+        // opencode needs no credentials (it talks to the local llama.cpp server
+        // over --network=host), but its sessions live here and would otherwise
+        // be lost on every rebuild.
+        "source=${localEnv:HOME}/.local/share/opencode,target=/home/ubuntu/.local/share/opencode,type=bind",
+        "source=${localEnv:HOME}/.local/state/opencode,target=/home/ubuntu/.local/state/opencode,type=bind"
+    ],
+    "containerEnv": {
+        // Keep .claude.json (project state) inside the mounted dir too, so no
+        // single-file bind mount is needed and atomic rewrites still work.
+        "CLAUDE_CONFIG_DIR": "/home/ubuntu/.claude",
+        // Point kimi at the mounted host config (config.toml + credentials/)
+        // while leaving its install at ~/.kimi-code.
+        "KIMI_CODE_HOME": "/home/ubuntu/.kimi-shared"
+    },
+    "features": {
+        // Sole provider of the docker CLI now that the Dockerfile no longer
+        // installs one itself. moby=false makes it install docker-ce-cli +
+        // buildx + compose from download.docker.com -- the same packages, from
+        // the same place, as the apt repo the Dockerfile used to set up by hand.
+        // Flip to "true" to take Ubuntu's older moby-cli instead.
+        "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+            "version": "latest",
+            "enableNonRootDocker": "true",
+            "moby": "false"
+        }
+    },
+    "workspaceFolder": "/large_nfs/game-arena"
+}

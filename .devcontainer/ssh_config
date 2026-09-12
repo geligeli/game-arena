@@ -1,0 +1,5 @@
+Host *
+    User geli
+    IdentityFile /id_rsa
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
