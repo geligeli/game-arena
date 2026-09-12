@@ -53,6 +53,16 @@ cc_library(
     ],
 )
 
+cc_test(
+    name = "step_test",
+    srcs = ["step_test.cc"],
+    deps = [
+        ":files",
+        ":step",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # Docker mechanics: container naming, bind-mount syntax, the fixed
 # in-container mount points, entrypoint script preludes, lifecycle helpers,
 # and the one shape a `docker run` argv takes.
@@ -60,7 +70,10 @@ cc_library(
     name = "docker",
     srcs = ["docker.cc"],
     hdrs = ["docker.h"],
-    deps = ["//game_arena/common/process"],
+    deps = [
+        ":step",
+        "//game_arena/common/process",
+    ],
 )
 
 cc_test(

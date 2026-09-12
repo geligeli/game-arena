@@ -76,6 +76,34 @@ auto RemoveContainer(const std::string &docker,
   return process::RunCommand(docker, {"rm", "-f", name}, options);
 }
 
+auto WaitForContainer(const std::string &docker, const std::string &name,
+                      std::chrono::seconds timeout,
+                      const std::filesystem::path &log_dir,
+                      const std::string &tag) -> StepResult {
+  return RunStep(docker, {"wait", name}, /*cwd=*/{}, log_dir, tag, timeout);
+}
+
+auto ContainerLogs(const std::string &docker, const std::string &name,
+                   const std::filesystem::path &log_dir,
+                   const std::string &tag) -> StepResult {
+  return RunStep(docker, {"logs", name}, /*cwd=*/{}, log_dir, tag,
+                 std::chrono::seconds(60));
+}
+
+auto CreateInternalNetwork(const std::string &docker, const std::string &name,
+                           const std::filesystem::path &log_dir,
+                           const std::string &tag) -> StepResult {
+  return RunStep(docker, {"network", "create", "--internal", name},
+                 /*cwd=*/{}, log_dir, tag, std::chrono::seconds(60));
+}
+
+auto RemoveNetwork(const std::string &docker,
+                   const std::string &name) -> process::RunResult {
+  process::RunOptions options;
+  options.timeout = std::chrono::seconds(60);
+  return process::RunCommand(docker, {"network", "rm", name}, options);
+}
+
 auto DockerRunArgs(const DockerRunSpec &spec) -> std::vector<std::string> {
   std::vector<std::string> args = {"run"};
   if (spec.rm) {

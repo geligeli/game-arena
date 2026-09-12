@@ -341,24 +341,19 @@ auto DockerBackend::RunOrder(int slot,
     for (const std::string &name : {referee_name, bot_name, opponent_name}) {
       sandbox_common::RemoveContainer(config_.docker, name);
     }
-    process::RunOptions rm;
-    rm.timeout = std::chrono::seconds(60);
-    process::RunCommand(config_.docker, {"network", "rm", network}, rm);
+    sandbox_common::RemoveNetwork(config_.docker, network);
   };
   // A worker killed mid-order leaves containers behind under these exact
   // names; clear them so a redelivered order can start fresh.
   cleanup();
 
   {
-    process::RunOptions opts;
-    opts.timeout = std::chrono::seconds(60);
-    opts.stdout_path = logs / "network.out";
-    opts.stderr_path = logs / "network.err";
-    const process::RunResult made = process::RunCommand(
-        config_.docker, {"network", "create", "--internal", network}, opts);
-    if (!made.started || made.exit_code != 0) {
+    const sandbox_common::StepResult made =
+        sandbox_common::CreateInternalNetwork(config_.docker, network, logs,
+                                              "network");
+    if (!made.run.started || made.run.exit_code != 0) {
       outcome.error = "cannot create the match network: " +
-                      TailOf(ReadFile(opts.stderr_path), 500);
+                      TailOf(ReadFile(logs / "network.err"), 500);
       return outcome;
     }
   }
@@ -483,21 +478,13 @@ auto DockerBackend::RunOrder(int slot,
 
   // Wait for the referee to finish counting, then read its verdict. Its own
   // --deadline_s bounds this, so a bot that exited early cannot hang the slot.
-  {
-    process::RunOptions opts;
-    opts.timeout = std::chrono::seconds(match_deadline_s + 60);
-    opts.stdout_path = logs / "referee_wait.out";
-    opts.stderr_path = logs / "referee_wait.err";
-    process::RunCommand(config_.docker, {"wait", referee_name}, opts);
-  }
+  sandbox_common::WaitForContainer(config_.docker, referee_name,
+                                   std::chrono::seconds(match_deadline_s + 60),
+                                   logs, "referee_wait");
 
-  process::RunOptions logs_opts;
-  logs_opts.timeout = std::chrono::seconds(60);
-  logs_opts.stdout_path = logs / "referee.out";
-  logs_opts.stderr_path = logs / "referee.err";
-  process::RunCommand(config_.docker, {"logs", referee_name}, logs_opts);
-  const std::string referee_output = ReadFile(logs_opts.stdout_path);
-  const std::string referee_errors = ReadFile(logs_opts.stderr_path);
+  sandbox_common::ContainerLogs(config_.docker, referee_name, logs, "referee");
+  const std::string referee_output = ReadFile(logs / "referee.out");
+  const std::string referee_errors = ReadFile(logs / "referee.err");
   cleanup();
 
   // The referee's tally, not the bot's: a bot only knows what it was told,

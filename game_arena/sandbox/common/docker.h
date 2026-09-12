@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "game_arena/common/process/process.h"
+#include "game_arena/sandbox/common/step.h"
 
 namespace sandbox_common {
 
@@ -69,6 +70,33 @@ auto KillContainer(const std::string &docker,
 // mid-order left behind, so a redelivered order starts fresh.
 auto RemoveContainer(const std::string &docker,
                      const std::string &name) -> process::RunResult;
+
+// `docker wait <name>`: block on the daemon until the container exits, rather
+// than polling it. |timeout| bounds the wait itself, so a container that never
+// exits cannot hold the caller.
+auto WaitForContainer(const std::string &docker, const std::string &name,
+                      std::chrono::seconds timeout,
+                      const std::filesystem::path &log_dir,
+                      const std::string &tag) -> StepResult;
+
+// `docker logs <name>`: what a container printed, read back after it exited.
+// This is how a detached container's verdict gets home -- it is started with
+// nobody attached to its stdout, so the output has to be asked for.
+auto ContainerLogs(const std::string &docker, const std::string &name,
+                   const std::filesystem::path &log_dir,
+                   const std::string &tag) -> StepResult;
+
+// `docker network create --internal <name>`: a bridge with no egress. The
+// containers on it reach each other and nothing else, which is what a match
+// needs and the most a match may have.
+auto CreateInternalNetwork(const std::string &docker, const std::string &name,
+                           const std::filesystem::path &log_dir,
+                           const std::string &tag) -> StepResult;
+
+// `docker network rm <name>`. Removing one that is already gone is a no-op,
+// the same race KillContainer is written for.
+auto RemoveNetwork(const std::string &docker,
+                   const std::string &name) -> process::RunResult;
 
 // One `docker run` invocation. The flag order is fixed here -- call sites
 // express only what differs between a build, a graded run and a match
