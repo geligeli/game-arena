@@ -2,9 +2,10 @@
 # cpp_format.sh — lint / diff / fix C++ across a Bazel repo, or any target
 # pattern, WITHOUT adding cpp_format_targets to your BUILD files.
 #
-# It runs the cpp_format aspect over the matching cc_* targets (each emits an
-# edit-record file, parallel + cached), then merges every target's records into
-# one repository-wide change with `cpp_format --aggregate`.
+# It runs the cpp_format aspect over the matching cc_* targets (one action per
+# source file emits that file's edit records -- parallel, cached, and per file,
+# so editing one .cpp re-parses one file), then merges every record into one
+# repository-wide change with `cpp_format --aggregate`.
 #
 #   Usage: cpp_format.sh <check|diff|fix> [target-pattern]
 #
@@ -44,7 +45,7 @@ esac
 # 1. Enumerate first-party cc_* targets under the pattern. This deliberately
 #    excludes any cpp_format_targets() rule targets, so the aspect is applied to
 #    each source target exactly once (two applications would collide on the
-#    shared record file). `no-cpp-format`-tagged targets are skipped.
+#    shared record files). `no-cpp-format`-tagged targets are skipped.
 mapfile -t targets < <("$BAZEL" query \
   "kind('cc_(library|binary|test) rule', $pattern) except attr(tags, 'no-cpp-format', $pattern)" \
   2>/dev/null)
@@ -53,7 +54,7 @@ if [[ ${#targets[@]} -eq 0 ]]; then
   exit 0
 fi
 
-# 2. Emit one edit-record file per target via the aspect.
+# 2. Emit one edit-record file per source file via the aspect.
 "$BAZEL" build "${targets[@]}" \
   --aspects="$ASPECT" --output_groups=+cpp_format_edits >/dev/null
 
@@ -61,25 +62,38 @@ fi
 "$BAZEL" build "$BIN_LABEL" >/dev/null 2>&1 || true
 bin="$("$BAZEL" cquery --output=files "$BIN_LABEL" 2>/dev/null | tail -1)"
 [[ -n "$bin" ]] || { echo "cpp_format: cannot locate $BIN_LABEL" >&2; exit 1; }
-[[ "$bin" = /* ]] || bin="$("$BAZEL" info execution_root)/$bin"
+exec_root="$("$BAZEL" info execution_root)"
+[[ "$bin" = /* ]] || bin="$exec_root/$bin"
 
 bazel_bin="$("$BAZEL" info bazel-bin)"
 workspace="$("$BAZEL" info workspace)"
 
-# Record file paths are deterministic: //pkg:name -> <bazel-bin>/pkg/name.json.
-# Header-/source-less targets emit nothing, so only keep files that exist.
-records=()
+# Each target's manifest is at a deterministic path -- //pkg:name ->
+# <bazel-bin>/pkg/name.cpp_format.manifest -- and lists that target's per-file
+# record files, exec-root relative.  It is read rather than the records
+# directory globbed because Bazel never deletes the record of a source that
+# was since removed from the target, and a stale record would apply stale
+# edits.  Header-/source-less targets write no manifest, so only read the ones
+# that exist.  The records go to the aggregator through a list file: a
+# repository's worth of them does not fit on a command line.
+list="$(mktemp)"
+trap 'rm -f "$list"' EXIT
 for t in "${targets[@]}"; do
   rel="${t#//}"
   pkg="${rel%%:*}"
   name="${rel##*:}"
-  f="$bazel_bin/$pkg/$name.cpp_format.json"
-  [[ -f "$f" ]] && records+=("$f")
+  manifest="$bazel_bin/$pkg/$name.cpp_format.manifest"
+  [[ -f "$manifest" ]] || continue
+  while IFS= read -r rec; do
+    [[ -n "$rec" ]] && printf '%s\n' "$exec_root/$rec"
+  done < "$manifest" >> "$list"
 done
-if [[ ${#records[@]} -eq 0 ]]; then
+if [[ ! -s "$list" ]]; then
   echo "cpp_format: no records emitted for $pattern" >&2
   exit 0
 fi
 
-# 4. Merge every target's records into one repository-wide change.
-exec "$bin" --aggregate "${agg[@]}" --root="$workspace" "${records[@]}"
+# 4. Merge every file's records into one repository-wide change.
+rc=0
+"$bin" --aggregate "${agg[@]}" --root="$workspace" --records-from="$list" || rc=$?
+exit $rc
