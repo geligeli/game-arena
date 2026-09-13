@@ -1,1 +1,13 @@
-return_types: leading
+# Google C++ Style Guide, as far as cpp_format's scopes reach.
+const_placement: west        # `const int x`, not `int const x`
+return_types: leading        # "use trailing return types only where impractical"
+
+normalize_variables:
+  - scope: local             # locals and parameters
+    style: snake_case
+  - scope: member            # data members: snake_case with a trailing underscore
+    style: trailing_
+  - scope: method            # member functions
+    style: UpperCamelCase
+  - scope: const_global      # constexpr/const namespace-scope constants
+    style: kConstant
