@@ -14,8 +14,9 @@
 #include <set>
 #include <string>
 
-#include "game_arena/server/elo_standings.h"
-#include "game_arena/server/metric_standings.h"
+#include "game_arena/standings/candidate_view.h"
+#include "game_arena/standings/elo_standings.h"
+#include "game_arena/standings/metric_standings.h"
 
 namespace tournament_arena {
 namespace {
@@ -54,45 +55,56 @@ auto Metrics(std::initializer_list<std::pair<std::string, double>> values,
   return result;
 }
 
+// The candidates the standings read, without the store that writes them: this
+// package must not depend on the coordinator, and a test is a dependency like
+// any other.
+class FakeCandidates : public CandidateView {
+ public:
+  auto Add(const std::string &name) -> std::string {
+    proto::Candidate candidate;
+    candidate.set_candidate_id(name + "-abc123");
+    candidate.set_display_name(name);
+    candidate.set_game("risk2");
+    candidate.set_status(proto::Candidate::READY);
+    candidates_.insert(candidates_.begin(), candidate);
+    return candidate.candidate_id();
+  }
+
+  auto List() const -> std::vector<proto::Candidate> override {
+    return candidates_;
+  }
+
+  auto Get(const std::string &candidate_id) const
+      -> std::optional<proto::Candidate> override {
+    for (const proto::Candidate &candidate : candidates_) {
+      if (candidate.candidate_id() == candidate_id) {
+        return candidate;
+      }
+    }
+    return std::nullopt;
+  }
+
+ private:
+  std::vector<proto::Candidate> candidates_;
+};
+
 class EloStandingsTest : public ::testing::Test {
  protected:
   void SetUp() override {
     dir_ = TempDir("elo_standings");
     elo_ = std::make_unique<tournament_broker::EloStore>(dir_ / "ratings.pb",
                                                          32.0);
-    SubmissionRules rules;
-    rules.files_submit_dir = "solutions";
-    rules.policy.add_allowed_dep_prefixes("//problem/lib:");
-    rules.policy.add_allowed_dep_prefixes("//problem/lib:");
-    rules.policy.add_allowed_dep_prefixes("//problem/game:");
-    rules.policy.add_allowed_dep_prefixes("//problem/strategies:");
-    rules.policy.add_allowed_dep_prefixes("@abseil-cpp//");
-    rules.harness.set_api_dep("//problem/harness:api");
-    rules.harness.set_main_src("//problem/harness:main.cc");
-    store_ = std::make_unique<CandidateStore>(dir_ / "candidates",
-                                              CandidateLimits{}, rules);
+    store_ = std::make_unique<FakeCandidates>();
     standings_ =
         std::make_unique<EloStandings>(elo_.get(), store_.get(), "risk2");
   }
   void TearDown() override { std::filesystem::remove_all(dir_); }
 
-  auto Add(const std::string &name) -> std::string {
-    proto::SubmitRequest request;
-    request.set_display_name(name);
-    request.set_entry_header("strategy.h");
-    auto *file = request.add_files();
-    file->set_path("strategy.h");
-    file->set_content("// " + name + "\n");
-    std::string error;
-    const auto candidate = store_->Create(request, "commit0", &error);
-    EXPECT_TRUE(candidate.has_value()) << error;
-    store_->SetStatus(candidate->candidate_id(), proto::Candidate::READY, "");
-    return candidate->candidate_id();
-  }
+  auto Add(const std::string &name) -> std::string { return store_->Add(name); }
 
   std::filesystem::path dir_;
   std::unique_ptr<tournament_broker::EloStore> elo_;
-  std::unique_ptr<CandidateStore> store_;
+  std::unique_ptr<FakeCandidates> store_;
   std::unique_ptr<EloStandings> standings_;
 };
 

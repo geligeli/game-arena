@@ -83,7 +83,7 @@ printf '{"metrics": {"score": %s}}\n' "$score" > "$ARENA_REPORT"
 ## Running it, and what a participant gets
 
 ```sh
-bazel run //:tournament -- --no_container        # coordinator + a local worker
+bazel run //:play                                # coordinator, a worker, your kit
 bazel run //:kit -- --out=/srv/kits/bob --mint=bob --server=$(hostname):50051
 ```
 
@@ -93,8 +93,8 @@ who can read the cases can special-case them. What a participant *can* do is
 build a `solve` and submit it:
 
 ```sh
-. ./arena.env
-bazel run //:arena_cli -- submit --name="Greedy" --file=solutions/reference/solve.cc --wait
+. ./arena.env                              # arena_cli on PATH, address, token
+arena_cli submit --name="Greedy" --wait    # kit.submit_files says what that is
 ```
 
 This directory is inside game-arena's git tree, which a worker cannot clone;

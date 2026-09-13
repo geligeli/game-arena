@@ -37,10 +37,10 @@ bazel run //game_arena/referee:broker_server -- \
 #include "game_arena/referee/broker_service.h"
 #include "game_arena/referee/game_registry.h"
 #include "game_arena/referee/matchmaker.h"
-#include "game_arena/server/elo_standings.h"
-#include "game_arena/server/elo_store.h"
-#include "game_arena/server/game_history.h"
-#include "game_arena/server/http_leaderboard.h"
+#include "game_arena/standings/elo_standings.h"
+#include "game_arena/standings/elo_store.h"
+#include "game_arena/standings/game_history.h"
+#include "game_arena/standings/http_leaderboard.h"
 
 ABSL_FLAG(int, grpc_port, 50051, "Port for the gRPC tournament broker");
 ABSL_FLAG(int, http_port, 8090, "Port for the HTTP leaderboard");

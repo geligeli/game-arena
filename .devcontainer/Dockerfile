@@ -73,7 +73,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # above the apt layer made a version bump re-run the apt install too.
 ARG BAZEL_VERSION=8.7.0
 ARG BUILDIFIER_VERSION=8.2.1
-ARG BAZEL_COMPILE_COMMANDS_VERSION=0.20.1
 
 # Release binaries, one layer, downloads kept in a cache mount so a version bump
 # only fetches the binary that changed. curl gets -f so an HTTP error fails the
@@ -88,13 +87,8 @@ RUN --mount=type=cache,target=/var/cache/download,sharing=locked \
       "https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-linux-x86_64"; \
     dl "buildifier-${BUILDIFIER_VERSION}" \
       "https://github.com/bazelbuild/buildtools/releases/download/v${BUILDIFIER_VERSION}/buildifier-linux-amd64"; \
-    dl "bazel-compile-commands-${BAZEL_COMPILE_COMMANDS_VERSION}.zip" \
-      "https://github.com/kiron1/bazel-compile-commands/releases/download/v${BAZEL_COMPILE_COMMANDS_VERSION}/bazel-compile-commands_${BAZEL_COMPILE_COMMANDS_VERSION}-linux_amd64.zip"; \
     install -m 0755 "/var/cache/download/bazel-${BAZEL_VERSION}" /usr/local/bin/bazel; \
-    install -m 0755 "/var/cache/download/buildifier-${BUILDIFIER_VERSION}" /usr/local/bin/buildifier; \
-    unzip -oj "/var/cache/download/bazel-compile-commands-${BAZEL_COMPILE_COMMANDS_VERSION}.zip" \
-      'usr/bin/*' -d /usr/local/bin; \
-    chmod 0755 /usr/local/bin/bazel-compile-commands /usr/local/bin/bazel-clangd-wrapper
+    install -m 0755 "/var/cache/download/buildifier-${BUILDIFIER_VERSION}" /usr/local/bin/buildifier
 
 RUN adduser ubuntu sudo \
  && echo '%sudo ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/nopasswd \

@@ -237,20 +237,22 @@ TEST_F(OrderRunnerProcessTest, CancelStopsARunThatIsAlreadyUnderWay) {
   EXPECT_FALSE(outcome.error.empty());
 }
 
-// A problem whose submissions can run arbitrary code at build time must not
-// quietly land on a backend that runs them as the worker's own user.
-TEST_F(OrderRunnerProcessTest, RefusesAnOrderThatRequiresAContainer) {
+// Every problem names a sandbox image, and an order carrying one is a
+// container's to run. A runner without a container engine -- which is what a
+// worker on a host with no docker would be -- hands it back rather than
+// running submitted code as its own user.
+TEST_F(OrderRunnerProcessTest, RefusesAnOrderThatNamesAnImage) {
   proto::WorkOrder order = MakeOrder(
       "#!/usr/bin/env bash\nprintf '{\"metrics\": {\"wall_ms\": 1}}' "
       "> \"$ARENA_REPORT\"\n",
       1, proto::GradeOrder::MIN);
-  order.set_require_container(true);
+  order.mutable_sandbox()->set_image("arena/sandbox:test");
 
   const OrderOutcome outcome = runner_->RunOrder(0, order, {});
 
   EXPECT_FALSE(outcome.build_ok);
   EXPECT_TRUE(outcome.metrics.empty());
-  EXPECT_NE(outcome.error.find("requires a container"), std::string::npos)
+  EXPECT_NE(outcome.error.find("container engine"), std::string::npos)
       << outcome.error;
 }
 

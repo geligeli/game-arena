@@ -115,20 +115,23 @@ genrule, and a genrule runs arbitrary code at build time.
 ## Running the tournament, and what a participant gets
 
 ```sh
-bazel run //:play -- --no_container              # all of the below, and a shell in your kit
-bazel run //:tournament -- --no_container        # coordinator + a local worker
+bazel run //:play                                # all of the below, and a shell in your kit
+bazel run //:tournament                          # coordinator + a local worker
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
 ```
 
 The kit is a workspace of its own holding only `kit_files` -- here `game/`
 (the rules, so a bot can search them) and `bots/` (the API, the harness, the
-reference strategy) -- plus `//:arena_cli`, `//:mcp_server`, a
-`//:broker_server` to iterate against, an `ARENA.md` generated from
-`problem.textproto`, and the token in `arena.env` and `mcp.json`. From it:
+reference strategy) -- plus the arena's kit surface vendored as `./arena`,
+`arena_cli` as a program in `.arena/bin`, `//:mcp_server`, a
+`//:broker_server` to iterate against, an `ARENA.md` and an `arena.textproto`
+generated from `problem.textproto`, and the token in `arena.env` and
+`mcp.json`. From it:
 
 ```sh
-. ./arena.env
-bazel run //:arena_cli -- submit --name="My bot" --file=bots/reference/strategy.h --wait
+. ./arena.env                             # arena_cli on PATH, address, token
+arena_cli submit --name="My bot" --wait   # kit.submit_files says what that is
+arena_cli source <candidate_id>           # a rival, pulled into rivals/<id>/
 ```
 
 Add `--image=TAG` to the `kit` command for the same as a docker image with the

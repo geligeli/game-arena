@@ -10,18 +10,25 @@ and "make this benchmark faster" are both problems here.
 
 ```
 game_arena/
-  proto/      wire protocols: arena, tournament_broker, problem
-  server/     the coordinator: submissions, scheduling, ELO/metric standings, HTTP
+  proto/      wire protocols: arena, tournament_broker, problem, kit
+  server/     the coordinator: submissions, scheduling, HTTP
+  standings/  how results are rated, kept and shown; shared with a kit's broker
   sandbox/    exec/ (the engine), common/ (docker mechanics),
               worker/ (fleet), runner/ (dev tool)
   referee/    the match loop and the broker protocol
   client/     the generic reference client
+  cli/        arena_cli: the participant's client, installed into every kit
   testgame/   Nim: the arena's own game, and the reference registry
   problems/   nim.textproto, the reference problem
   rules/      arena_problem: the one macro a problem repo calls
-  tools/      arena_admin, arena_cli, arena_tournament
+  tools/      arena_admin, arena_tournament (operator tooling)
   common/     small subprocess wrapper
 ```
+
+The first five of those, plus `cli/` and the MCP server, are the **kit
+surface** (`//:kit_surface`): the packages a participant's workspace builds
+against, vendored into every kit. The coordinator, the fleet and the sandbox
+are not among them.
 
 Start with [game_arena/ARENA.md](game_arena/ARENA.md) for the submission loop
 and [game_arena/README.md](game_arena/README.md) for the broker protocol.
@@ -101,8 +108,8 @@ That defines everything the two examples run:
 
 ```sh
 bazel test //...                                     # the rules, and the config
-bazel run //:play -- --no_container                  # all of it, and a shell in your kit
-bazel run //:tournament -- --no_container            # a coordinator + a local worker
+bazel run //:play                                    # all of it, and a shell in your kit
+bazel run //:tournament                              # a coordinator + a local worker
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
 bazel run //:kit -- --mint=bob --server=$(hostname):50051 --image=REG/kit-bob --push
 bazel run //:sandbox_image                           # the offline sandbox image
@@ -110,19 +117,30 @@ bazel run //:tournament -- --image=REG/c4-arena --push   # the tournament, deplo
 bazel build //:connect4                              # every binary a tournament needs
 ```
 
-`kit` writes a participant's workspace: only the files `kit_files` names,
-plus the arena's CLI and MCP server as `bazel run //:arena_cli` and
-`//:mcp_server`, a README generated from the config, and a freshly minted
-token in `arena.env` and `mcp.json`. The grader, the cases and the tournament
-config stay behind. `--image=TAG` also builds that workspace into a docker
-image with the toolchain and a completed build, so a participant (or their
-agent) starts with `docker run -it TAG` and is ready to submit; `docker run -i
-TAG bazel run //:mcp_server` is the MCP server on stdio. `tournament --image`
+`kit` writes a participant's workspace: only the files `kit_files` names, the
+arena's kit surface vendored beside them as `./arena`, `arena_cli` as a
+program in `.arena/bin` (sourcing `arena.env` puts it on `PATH` with the
+address and the token), `arena.textproto` saying what that CLI does by
+default, an MCP server as `bazel run //:mcp_server`, and a README generated
+from the config. The grader, the cases, the tournament config and the rest of
+the arena stay behind. By default the kit is built once as it is written, so
+the participant's first build is warm. `--image=TAG` also builds that
+workspace into a docker image with the toolchain, vendored dependencies and a
+completed build, so a participant (or their agent) starts with `docker run -it
+TAG` and is ready to submit; `docker run -i TAG bazel run //:mcp_server` is
+the MCP server on stdio. A problem that needs more in that image names its own
+`kit.dockerfile`. `tournament --image`
 does the same for the coordinator and its workers: one image to `docker run`
 on any host with a docker socket and the sandbox image, with `docker exec ...
 arena_tournament kit --mint=bob` to admit participants from inside. See
 `game_arena/ARENA.md`. `scripts/new_problem.sh match|graded <dir>` scaffolds a
 new repo from an example.
+
+Every submission is built and run in a container. `sandbox.image` is required,
+a worker links no other engine, and `up` builds the image if the daemon does
+not have it -- there is no flag anywhere that runs submitted code on the host,
+because a submission that may write a BUILD file can run anything at build
+time.
 
 ## Build
 

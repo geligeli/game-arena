@@ -12,7 +12,10 @@ Read `README.md` first, then `game_arena/ARENA.md` (the submission loop) and
 
 ```
 game_arena/proto/      wire protocols; the coordinator's contract
-game_arena/server/     coordinator: submissions, scheduling, standings, HTTP
+game_arena/server/     coordinator: submissions, scheduling, HTTP
+game_arena/standings/  rating, history and the leaderboard page -- shared with
+                       the local broker a participant runs, so it depends on
+                       nothing in server/
 game_arena/sandbox/    exec/ (the execution engine), common/ (docker mechanics),
                        worker/ (the fleet's own policy), runner/ (dev tool)
 game_arena/referee/    match loop + broker protocol; entry points as libraries
@@ -22,7 +25,8 @@ game_arena/problems/   nim.textproto
 game_arena/rules/      arena_problem, the macro a problem repo calls
 game_arena/image/      the Dockerfile a problem's three images come from:
                        sandbox, a participant's kit, the tournament itself
-game_arena/tools/      arena_admin, arena_cli, arena_tournament
+game_arena/cli/        arena_cli: the participant's client, a kit's builtin
+game_arena/tools/      arena_admin, arena_tournament (operator tooling)
 game_arena/common/     subprocess wrapper
 scripts/new_problem.sh scaffolds a problem repo from an example
 ```
@@ -88,6 +92,35 @@ persist in named volumes, so a worker is "anything with a docker socket" and
 no sandbox needs a capability. `Mount::BIND` exists only as a host's opt-in
 for its caches. Do not add a bind mount to make something work.
 
+There is no unsandboxed backend. `sandbox_worker` links the container engine
+and nothing else, `sandbox.image` is required by `ValidateProblemConfig`, and
+`exec:process_engine` is visible only to the two packages whose tests use it.
+It exists to test the step kernel without a daemon and to give
+`capabilities().isolates` a false case; do not link it into anything that
+runs a submission, and do not add a flag that would.
+
+## What a participant gets
+
+A kit is the third thing this repo produces, after the coordinator and the
+fleet, and it is the one with a person on the other end. Its rule: **only what
+they need to work on the problem.**
+
+- `//:kit_surface` is the arena a kit vendors -- `proto/`, `referee/`,
+  `client/`, `cli/`, `standings/`, `common/kv_options/` and the MCP server.
+  Each is closed under dependency and `//game_arena:kit_surface_test` fails
+  when that stops being true. Adding a package to it is a decision about what
+  a participant should be reading, not a build fix.
+- `arena_cli` is a program in the kit, not a bazel target: entering a
+  tournament must not require a toolchain. It reads the kit's
+  `arena.textproto` (`proto/kit.proto`) for its defaults, which the
+  participant may edit -- the coordinator enforces the problem's policy on
+  whatever arrives, so a widened kit config changes what is sent, never what
+  is accepted.
+- What of each other participants may read is `SourcePolicy` in the problem
+  config, enforced in `arena_service.cc` on `GetSource` and on the patch bytes
+  of every manifest. The default is that everything is readable; that is the
+  point of the arena, and a problem opts out of it deliberately.
+
 ## Build / test / run
 
 ```sh
@@ -103,14 +136,19 @@ tree, and a worker clones `repo.url`, so scaffold one first):
 
 ```sh
 scripts/new_problem.sh match /tmp/c4 --id=c4 && cd /tmp/c4
-bazel run //:play -- --no_container                # tournament + your kit + a shell in it
-bazel run //:arena_cli -- submit --name=ref --file=bots/reference/strategy.h --wait
-exit                                               # stops the tournament
+# Edit sandbox.image to a tag you can build, then:
+bazel run //:play              # tournament + your kit + a shell in it
+arena_cli submit --name=ref --wait   # the kit's builtin; arena.env is sourced
+exit                           # stops the tournament
 ```
 
-Or the pieces `play` runs: `bazel run //:tournament -- --no_container` in one
-shell, `bazel run //:kit -- --out=/tmp/kit --mint=alice --check` in another,
-then `. ./arena.env` in the kit.
+`play` builds the sandbox image first if the daemon does not have it, which is
+the slow part of a first run. Every submission is built and run in a
+container; there is no flag that skips that.
+
+Or the pieces `play` runs: `bazel run //:tournament` in one shell,
+`bazel run //:kit -- --out=/tmp/kit --mint=alice` in another, then
+`. ./arena.env` in the kit.
 
 - Sanitizer / tuning configs in `.bazelrc` (each gets its own output dir):
   `--config=asan`, `--config=tsan`, `--config=ubsan`, `--config=msan`,
@@ -145,6 +183,11 @@ then `. ./arena.env` in the kit.
 
 - Do not let a game, a problem, or a consumer repo's labels into
   `server/`, `sandbox/`, `proto/` or `referee/` — as code or as a string.
+- Do not add a path that runs a submission outside a container, and do not
+  link `exec:process_engine` into anything that runs one. The flag that used
+  to do this (`--no_container`) is gone on purpose.
+- Do not widen `//:kit_surface` to make a kit build. What a participant can
+  read is a decision, not a dependency fix.
 - Do not bump proto field numbers or "fix" them: `proto/` is the contract with
   every deployed worker and client. That rule is about the contract, not the
   directory: `sandbox/exec/sandbox_job.proto` and

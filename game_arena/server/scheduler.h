@@ -32,9 +32,9 @@
 #include "game_arena/proto/arena.pb.h"
 #include "game_arena/proto/clients.pb.h"
 #include "game_arena/server/candidate_store.h"
-#include "game_arena/server/elo_store.h"
+#include "game_arena/standings/elo_store.h"
 #include "game_arena/server/fleet_worker.h"
-#include "game_arena/server/standings.h"
+#include "game_arena/standings/standings.h"
 
 namespace tournament_arena {
 
@@ -60,9 +60,6 @@ struct SchedulerConfig {
   // to the referee untouched. The coordinator never reads these: what they
   // mean is known only to the registry linked into the referee.
   google::protobuf::Map<std::string, std::string> registry_options;
-  // Stamped on every order: the problem, not the worker, knows whether its
-  // submissions may run arbitrary code at build time.
-  bool require_container = false;
   // The rest of the sandbox, where the tree comes from, and the build's extra
   // flags. All on every order because a worker has none of its own to
   // disagree with: two submissions are only comparable if they were built the

@@ -1,4 +1,4 @@
-#include "game_arena/server/elo_standings.h"
+#include "game_arena/standings/elo_standings.h"
 
 #include <algorithm>
 #include <string>
@@ -25,7 +25,7 @@ auto OpponentName(const std::string &opponent) -> std::string {
 }  // namespace
 
 EloStandings::EloStandings(tournament_broker::EloStore *elo_store,
-                           const CandidateStore *candidates,
+                           const CandidateView *candidates,
                            std::string problem_id)
     : elo_store_(elo_store),
       candidates_(candidates),

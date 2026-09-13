@@ -1,5 +1,5 @@
-#ifndef GAME_ARENA_GAME_ARENA_SERVER_ELO_STORE_H
-#define GAME_ARENA_GAME_ARENA_SERVER_ELO_STORE_H
+#ifndef GAME_ARENA_GAME_ARENA_STANDINGS_ELO_STORE_H
+#define GAME_ARENA_GAME_ARENA_STANDINGS_ELO_STORE_H
 
 // Persistent per-(game, player) ELO ratings. Loaded from disk at startup,
 // updated online after each finished game (standard E = 1/(1+10^((Rb-Ra)/400)),
@@ -59,4 +59,4 @@ class EloStore {
 
 }  // namespace tournament_broker
 
-#endif  // GAME_ARENA_GAME_ARENA_SERVER_ELO_STORE_H
+#endif  // GAME_ARENA_GAME_ARENA_STANDINGS_ELO_STORE_H

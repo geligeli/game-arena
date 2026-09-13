@@ -97,10 +97,11 @@ auto OrderRunner::engines() const -> std::string {
 
 auto OrderRunner::EngineFor(const proto::WorkOrder &order) const
     -> sandbox_exec::Engine * {
-  // The problem decides, by naming an image or not. The coordinator already
-  // refuses a problem that sets require_container without one
-  // (server/problem_config.cc), so "needs a container" and "named an image"
-  // cannot disagree.
+  // The problem decides, by naming an image or not -- and the coordinator
+  // requires one (server/problem_config.cc), so in a tournament this is
+  // always the container engine. A worker binary is built with no other
+  // (sandbox/worker/worker_main.cc); the process engine reaches this class
+  // only from a test.
   return order.sandbox().image().empty() ? process_engine_ : container_engine_;
 }
 
@@ -111,13 +112,6 @@ auto OrderRunner::Refusal(const proto::WorkOrder &order) const -> std::string {
                ? "this worker cannot run unsandboxed orders"
                : "this problem needs a container and this worker has no "
                  "container engine";
-  }
-  if (order.require_container() && !engine->capabilities().isolates) {
-    // The problem said its submissions need a container and this engine is
-    // not one: a submitted genrule here would run as this worker's own user.
-    // Better to hand the order back than to quietly run it.
-    return "this problem requires a container, and this order named no image "
-           "to run one from";
   }
   const std::string &required = order.grade().require_machine_class();
   if (!required.empty() && required != machine_class_) {

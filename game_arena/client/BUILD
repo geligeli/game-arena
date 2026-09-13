@@ -39,3 +39,10 @@ cc_library(
         "@grpc//:grpc++",
     ],
 )
+
+# Every file of this package, for the arena a participant's kit builds
+# against: a kit gets these packages whole (see //:kit_surface).
+filegroup(
+    name = "kit_surface_files",
+    srcs = glob(["**"]),
+)

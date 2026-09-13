@@ -205,7 +205,6 @@ auto Scheduler::MakeOrderLocked(
   order.set_run_timeout_s(config_.run_timeout_s);
   order.set_referee_target(config_.referee_target);
   order.set_match_deadline_s(config_.match_deadline_s);
-  order.set_require_container(config_.require_container);
   *order.mutable_sandbox() = config_.sandbox;
   order.set_repo_url(config_.repo_url);
   order.mutable_bazel_flags()->Assign(config_.bazel_flags.begin(),

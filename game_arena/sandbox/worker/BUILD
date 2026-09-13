@@ -130,6 +130,9 @@ cc_library(
 
 
 
+# A worker links the container engine and nothing else: there is no
+# unsandboxed backend for an order to land on, by construction rather than by
+# configuration.
 cc_binary(
     name = "sandbox_worker",
     srcs = ["worker_main.cc"],
@@ -138,7 +141,6 @@ cc_binary(
         "//game_arena/common/process",
         "//game_arena/sandbox/exec:container_engine",
         "//game_arena/sandbox/exec:engine",
-        "//game_arena/sandbox/exec:process_engine",
         "//game_arena/proto:arena_cc_grpc",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",

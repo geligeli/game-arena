@@ -1,1 +1,28 @@
 exports_files(["cpp_format.yaml"])
+
+# The arena a participant's kit builds against: the packages a kit's own
+# targets reach, and nothing else. `arena_tournament kit` copies these into
+# <kit>/arena and points the kit's MODULE.bazel at them, so a participant gets
+# the game side of the arena without the coordinator, the fleet, the sandbox,
+# or the tools that decide their score.
+#
+# Each package here is closed under dependency -- its only in-repo deps are the
+# others -- which is what makes this list checkable rather than hopeful:
+# //game_arena:kit_surface_test asserts it.
+filegroup(
+    name = "kit_surface",
+    srcs = [
+        ".bazelversion",
+        "MODULE.bazel",
+        "protobuf_python_dist_build.patch",
+        "protobuf_python_dist_bzl.patch",
+        "//game_arena/cli:kit_surface_files",
+        "//game_arena/client:kit_surface_files",
+        "//game_arena/common/kv_options:kit_surface_files",
+        "//game_arena/proto:kit_surface_files",
+        "//game_arena/referee:kit_surface_files",
+        "//game_arena/standings:kit_surface_files",
+        "//mcp_servers:kit_surface_files",
+    ],
+    visibility = ["//visibility:public"],
+)

@@ -4,7 +4,7 @@
 # registry and no referee -- the arena builds a submission, runs one command,
 # and reads the numbers that command leaves in $ARENA_REPORT.
 #
-#   bazel run //:tournament -- --no_container      # see BUILD
+#   bazel run //:play                              # see BUILD
 
 problem_id: "knapsack"
 display_name: "Knapsack"
@@ -62,7 +62,13 @@ sandbox {
   memory_limit_mb: 4096
   # A grader run has no business reaching the network.
   network: NETWORK_NONE
-  require_container: true
+}
+
+# What a participant's environment is: `arena_cli submit --name=...` sends the
+# solution, wherever they started it from.
+kit {
+  submit_files: "solutions/reference/solve.cc"
+  source_dir: "rivals"
 }
 
 grade {

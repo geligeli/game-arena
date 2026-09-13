@@ -17,7 +17,7 @@
 #include <thread>
 #include <vector>
 
-#include "game_arena/server/elo_standings.h"
+#include "game_arena/standings/elo_standings.h"
 #include "gtest/gtest.h"
 
 namespace tournament_arena {

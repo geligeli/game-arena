@@ -40,7 +40,6 @@ sandbox {
   image: "takumi.city/jax-cpu-training:latest"
   memory_limit_mb: 2048
   network: NETWORK_INTERNAL_BRIDGE
-  require_container: true
 }
 
 match {

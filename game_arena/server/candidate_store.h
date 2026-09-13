@@ -37,6 +37,7 @@
 
 #include "game_arena/proto/arena.pb.h"
 #include "game_arena/proto/problem.pb.h"
+#include "game_arena/standings/candidate_view.h"
 
 namespace tournament_arena {
 
@@ -63,7 +64,7 @@ struct SubmissionRules {
   proto::CandidateHarness harness;
 };
 
-class CandidateStore {
+class CandidateStore : public CandidateView {
  public:
   explicit CandidateStore(std::filesystem::path dir,
                           CandidateLimits limits = {},
@@ -84,7 +85,7 @@ class CandidateStore {
               std::string *error) -> std::optional<proto::Candidate>;
 
   auto Get(const std::string &candidate_id) const
-      -> std::optional<proto::Candidate>;
+      -> std::optional<proto::Candidate> override;
 
   // Reads one submitted file. |path| is matched against the manifest's
   // file_paths, so it cannot escape the candidate's directory.
@@ -96,7 +97,7 @@ class CandidateStore {
                  std::string *error) const -> std::optional<std::string>;
 
   // All candidates, newest first.
-  auto List() const -> std::vector<proto::Candidate>;
+  auto List() const -> std::vector<proto::Candidate> override;
 
   // Records a build outcome. |build_error| is trimmed to the configured cap.
   auto SetStatus(const std::string &candidate_id,

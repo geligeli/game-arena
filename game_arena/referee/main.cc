@@ -49,8 +49,8 @@ bazel run //game_arena/testgame:match_referee -- \
 #include "game_arena/referee/broker_service.h"
 #include "game_arena/referee/game_registry.h"
 #include "game_arena/referee/matchmaker.h"
-#include "game_arena/server/elo_store.h"
-#include "game_arena/server/game_history.h"
+#include "game_arena/standings/elo_store.h"
+#include "game_arena/standings/game_history.h"
 
 ABSL_FLAG(int, port, 50051, "Port the two sides dial");
 ABSL_FLAG(std::string, game, "", "Game registry key (required)");

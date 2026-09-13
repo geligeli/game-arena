@@ -26,8 +26,11 @@ service Arena {
   // Manifest only; use GetSource for file contents.
   rpc GetCandidate(GetCandidateRequest) returns (Candidate);
 
-  // One file of a candidate's source. Any agent may read any candidate: the
-  // point of the arena is that strategies are improved upon, not hidden.
+  // One file of a candidate's source. By default any agent may read any
+  // candidate: the point of the arena is that strategies are improved upon,
+  // not hidden. A problem can narrow that to your own submissions or to
+  // nothing (ProblemInfo.source_visibility); under those, this call and the
+  // patch bytes on a manifest are gated on your token.
   rpc GetSource(GetSourceRequest) returns (SourceFile);
 
   rpc ListCandidates(ListCandidatesRequest) returns (ListCandidatesResponse);
@@ -79,6 +82,17 @@ message ProblemInfo {
   // Non-empty when the structured form (files + entry_header) is accepted, and
   // the directory those files are placed under. Empty means patches only.
   string files_submit_dir = 13;
+
+  // What this arena serves of other candidates' source. Mirrors the problem's
+  // SourcePolicy, flattened like the fields above: ProblemInfo is a curated
+  // view, not the config. An agent should ask rather than discover the rule by
+  // being refused.
+  enum SourceVisibility {
+    SOURCE_ALL = 0;   // any candidate's files
+    SOURCE_OWN = 1;   // only your own; reads need your token
+    SOURCE_NONE = 2;  // nobody's
+  }
+  SourceVisibility source_visibility = 14;
 }
 
 service SandboxFleet {
@@ -401,16 +415,14 @@ message WorkOrder {
   // partial tally rather than an order-level failure.
   int32 match_deadline_s = 17;
 
-  // Refuse this order on a non-container backend.
-  //
-  // Carried on the order rather than left to the worker's own configuration,
-  // because it is the *problem* that knows whether its patches can touch BUILD
-  // files -- and a problem whose submissions can run arbitrary code at build
-  // time must not quietly land on a worker that runs them as its own user.
-  //
-  // Belongs with the rest of the sandbox in |sandbox| below; it stays here
-  // because moving a field breaks the wire for no gain.
-  bool require_container = 19;
+  // Was require_container: whether this order refused a non-container
+  // backend. Every order does now, so there is nothing to carry: a worker
+  // runs an order in a container or hands it back (sandbox/worker/
+  // order_runner.cc). An older worker still reading this field sees it unset
+  // and refuses nothing it would have run anyway -- it has no unsandboxed
+  // backend to fall onto either.
+  reserved 19;
+  reserved "require_container";
 
   // Everything else about the sandbox this order runs in.
   SandboxOrder sandbox = 21;

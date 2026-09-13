@@ -22,10 +22,10 @@
 #include "game_arena/server/arena_service.h"
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/client_registry.h"
-#include "game_arena/server/elo_standings.h"
-#include "game_arena/server/elo_store.h"
 #include "game_arena/server/fleet_service.h"
 #include "game_arena/server/scheduler.h"
+#include "game_arena/standings/elo_standings.h"
+#include "game_arena/standings/elo_store.h"
 #include "gtest/gtest.h"
 
 namespace tournament_arena {
@@ -59,8 +59,7 @@ class ArenaIntegrationTest : public ::testing::Test {
     SchedulerConfig config;
     config.placement_opponents = {"builtin:random"};
     config.placement_games = 2;
-    config.referee_target =
-        "//game_arena/referee:match_referee";
+    config.referee_target = "//game_arena/referee:match_referee";
     config.build_targets = {"//game_arena/candidates/{submission_id}:bot"};
     config.bot_target = "//game_arena/candidates/{submission_id}:bot";
     standings_ =
@@ -72,8 +71,7 @@ class ArenaIntegrationTest : public ::testing::Test {
     clients_ = MakeClients();
     arena_ = std::make_unique<ArenaService>(
         store_.get(), scheduler_.get(), standings_.get(), "deadbeef",
-        /*graded=*/false, /*game=*/"risk2", proto::ProblemInfo{},
-        clients_.get());
+        /*graded=*/false, /*game=*/"risk2", MakeProblemInfo(), clients_.get());
     fleet_ = std::make_unique<FleetService>(scheduler_.get());
 
     grpc::ServerBuilder builder;
@@ -95,6 +93,10 @@ class ArenaIntegrationTest : public ::testing::Test {
   virtual auto MakeClients() -> std::unique_ptr<ClientRegistry> {
     return nullptr;
   }
+
+  // The problem as submitters see it. Default: empty, which means the arena's
+  // default source policy -- everything readable.
+  virtual auto MakeProblemInfo() -> proto::ProblemInfo { return {}; }
 
   void TearDown() override {
     server_->Shutdown(std::chrono::system_clock::now() +
@@ -205,17 +207,15 @@ TEST_F(ArenaIntegrationTest, SubmitReachesAWorkerAndComesBackRated) {
   EXPECT_EQ(order.num_games(), 2);
   // The worker starts this itself, beside the bot, on a private network:
   // there is no broker address to hand out any more.
-  EXPECT_EQ(order.referee_target(),
-            "//game_arena/referee:match_referee");
+  EXPECT_EQ(order.referee_target(), "//game_arena/referee:match_referee");
   // The submission travels as a patch, generated BUILD included, so the worker
   // only ever runs `git apply`.
   EXPECT_NE(order.candidate().patch().find("+// alpha strategy"),
             std::string::npos)
       << order.candidate().patch();
   EXPECT_NE(order.candidate().patch().find("/BUILD"), std::string::npos);
-  EXPECT_EQ(
-      order.candidate().bot_target(),
-      "//game_arena/candidates/" + submitted.candidate_id() + ":bot");
+  EXPECT_EQ(order.candidate().bot_target(),
+            "//game_arena/candidates/" + submitted.candidate_id() + ":bot");
 
   ReportSuccess(worker.get(), order.order_id(), /*wins=*/2, /*losses=*/0,
                 /*elo=*/1532.0);
@@ -247,8 +247,7 @@ TEST_F(ArenaIntegrationTest, AnyAgentCanReadAnyCandidatesSource) {
   request.set_candidate_id(submitted.candidate_id());
   // Paths are repo-relative now: a submission is a patch, and a patch touches
   // repo paths. GetCandidate lists them, so an agent never has to guess.
-  request.set_path("solutions/" + submitted.candidate_id() +
-                   "/strategy.h");
+  request.set_path("solutions/" + submitted.candidate_id() + "/strategy.h");
   proto::SourceFile file;
   ASSERT_TRUE(arena_stub_->GetSource(&context, request, &file).ok());
   EXPECT_EQ(file.content(), "// the secret sauce\n");
@@ -573,6 +572,140 @@ TEST_F(AuthenticatedArenaTest, BoundsQueuedWorkWithNoWorkerAttached) {
   EXPECT_EQ(over.error_code(), grpc::StatusCode::RESOURCE_EXHAUSTED);
   EXPECT_NE(over.error_message().find("queued"), std::string::npos)
       << over.error_message();
+}
+
+// --- the source policy ------------------------------------------------------
+//
+// Reading every rival's code is the arena's default and most of the point of
+// it. A problem that says otherwise is saying something about its tournament,
+// and the coordinator is where that has to hold: the kit's config, the CLI
+// and the MCP server all describe the rule, but only this refuses.
+
+class SourcePolicyTest : public AuthenticatedArenaTest {
+ protected:
+  static constexpr char kOtherToken[] = "other-token";
+
+  auto MakeClients() -> std::unique_ptr<ClientRegistry> override {
+    const auto path = dir_ / "clients.textproto";
+    {
+      std::ofstream out(path);
+      out << "clients { client_id: \"agent-1\" token_sha256: \""
+          << HashToken(kToken) << "\" }\n"
+          << "clients { client_id: \"agent-2\" token_sha256: \""
+          << HashToken(kOtherToken) << "\" }\n";
+    }
+    auto registry =
+        std::make_unique<ClientRegistry>(path, proto::ClientQuota{});
+    std::string error;
+    EXPECT_TRUE(registry->Load(&error)) << error;
+    return registry;
+  }
+
+  auto MakeProblemInfo() -> proto::ProblemInfo override {
+    proto::ProblemInfo info;
+    info.set_source_visibility(visibility_);
+    return info;
+  }
+
+  auto GetSourceAs(const std::string &token, const std::string &candidate_id,
+                   const std::string &path) -> grpc::Status {
+    proto::GetSourceRequest request;
+    request.set_candidate_id(candidate_id);
+    request.set_path(path);
+    grpc::ClientContext context;
+    if (!token.empty()) {
+      context.AddMetadata("x-arena-token", token);
+    }
+    proto::SourceFile file;
+    return arena_stub_->GetSource(&context, request, &file);
+  }
+
+  auto ListAs(const std::string &token) -> proto::ListCandidatesResponse {
+    grpc::ClientContext context;
+    if (!token.empty()) {
+      context.AddMetadata("x-arena-token", token);
+    }
+    proto::ListCandidatesResponse listing;
+    EXPECT_TRUE(
+        arena_stub_
+            ->ListCandidates(&context, proto::ListCandidatesRequest{}, &listing)
+            .ok());
+    return listing;
+  }
+
+  proto::ProblemInfo::SourceVisibility visibility_ =
+      proto::ProblemInfo::SOURCE_OWN;
+};
+
+TEST_F(SourcePolicyTest, OwnServesYoursAndRefusesTheirs) {
+  ASSERT_TRUE(SubmitAs(kToken, "Mine").ok());
+  const std::string mine = last_response_.candidate_id();
+  ASSERT_TRUE(SubmitAs(kOtherToken, "Theirs").ok());
+  const std::string theirs = last_response_.candidate_id();
+
+  // Repo-relative, as the manifest lists them: a submission is a patch.
+  const std::string my_file = "solutions/" + mine + "/strategy.h";
+  const std::string their_file = "solutions/" + theirs + "/strategy.h";
+
+  EXPECT_TRUE(GetSourceAs(kToken, mine, my_file).ok());
+  EXPECT_EQ(GetSourceAs(kToken, theirs, their_file).error_code(),
+            grpc::StatusCode::PERMISSION_DENIED);
+  // No token, no own candidates, and no reading anyone else's either: a read
+  // is gated exactly like a write under this policy.
+  EXPECT_EQ(GetSourceAs("", mine, my_file).error_code(),
+            grpc::StatusCode::UNAUTHENTICATED);
+}
+
+// A manifest is public -- who submitted what, and how it scored. The patch on
+// it is source, and a listing that carried it would serve through the side
+// door what GetSource refuses at the front.
+TEST_F(SourcePolicyTest, OwnRedactsTheirPatchFromListings) {
+  ASSERT_TRUE(SubmitAs(kToken, "Mine").ok());
+  ASSERT_TRUE(SubmitAs(kOtherToken, "Theirs").ok());
+
+  const proto::ListCandidatesResponse listing = ListAs(kToken);
+  ASSERT_EQ(listing.candidates_size(), 2);
+  int redacted = 0;
+  int served = 0;
+  for (const proto::CandidateStanding &row : listing.candidates()) {
+    // Either way the row is there: a rival you cannot read is still a rival.
+    EXPECT_FALSE(row.candidate().candidate_id().empty());
+    if (row.candidate().author() == "agent-1") {
+      EXPECT_FALSE(row.candidate().patch().empty());
+      ++served;
+    } else {
+      EXPECT_TRUE(row.candidate().patch().empty())
+          << "another author's patch reached a listing";
+      ++redacted;
+    }
+  }
+  EXPECT_EQ(served, 1);
+  EXPECT_EQ(redacted, 1);
+}
+
+// A standing is not source. Someone with no token at all still sees who is
+// on the board and how they scored -- they just see no patches.
+TEST_F(SourcePolicyTest, OwnKeepsTheBoardReadableWithoutAToken) {
+  ASSERT_TRUE(SubmitAs(kToken, "Mine").ok());
+
+  const proto::ListCandidatesResponse listing = ListAs("");
+  ASSERT_EQ(listing.candidates_size(), 1);
+  EXPECT_EQ(listing.candidates(0).candidate().author(), "agent-1");
+  EXPECT_TRUE(listing.candidates(0).candidate().patch().empty());
+}
+
+TEST_F(SourcePolicyTest, NoneServesNobodyTheirOwnIncluded) {
+  visibility_ = proto::ProblemInfo::SOURCE_NONE;
+  SetUp();  // rebuild the service with the new policy
+  ASSERT_TRUE(SubmitAs(kToken, "Mine").ok());
+  const std::string mine = last_response_.candidate_id();
+
+  EXPECT_EQ(GetSourceAs(kToken, mine, "solutions/" + mine + "/strategy.h")
+                .error_code(),
+            grpc::StatusCode::PERMISSION_DENIED);
+  const proto::ListCandidatesResponse listing = ListAs(kToken);
+  ASSERT_EQ(listing.candidates_size(), 1);
+  EXPECT_TRUE(listing.candidates(0).candidate().patch().empty());
 }
 
 }  // namespace

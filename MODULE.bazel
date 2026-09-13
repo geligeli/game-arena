@@ -19,10 +19,21 @@ bazel_dep(name = "abseil-cpp", version = "20250814.1")
 bazel_dep(name = "protobuf", version = "32.1")
 bazel_dep(name = "grpc", version = "1.74.1")
 
-# Already in the graph through grpc; declared directly so the arena's client
-# registry can hash tokens with SHA-256 rather than carry its own copy of one.
-# Version matched to what grpc resolves, so this adds no new fetch.
-bazel_dep(name = "boringssl", version = "0.20241024.0")
+# Already in the graph through grpc and boost.asio; declared directly so the
+# arena's client registry can hash tokens with SHA-256 rather than carry its own
+# copy of one. Version matched to the highest any of them asks for -- boost.asio
+# is currently that one -- so this adds no new fetch and no version warning.
+bazel_dep(name = "boringssl", version = "0.20251002.0")
+
+# The leaderboard's embedded HTTP server (//game_arena/standings:http_leaderboard).
+# Beast is header-only and brings Asio with it; between them they own the socket,
+# the request parser and the response framing, which is the whole of what that
+# server used to hand-roll over POSIX sockets. Boost.JSON does the same for the
+# /api responses: building them by concatenation is what made a hand-written
+# escaper necessary in the first place.
+bazel_dep(name = "boost.asio", version = "1.90.0.bcr.1")
+bazel_dep(name = "boost.beast", version = "1.90.0.bcr.1")
+bazel_dep(name = "boost.json", version = "1.90.0.bcr.1")
 
 # Workaround for https://github.com/protocolbuffers/protobuf/issues/22386:
 # @protobuf//python/dist loads @protobuf_pip_deps//:requirements.bzl, but that
@@ -53,16 +64,29 @@ pip.parse(
 use_repo(pip, "arena_mcp_pip_deps")
 
 
-bazel_dep(name = "cpp_formatting", version = "0.1.0")
+# C++ formatting (//tools/cpp_format.sh). Dev-only, and deliberately so: it is
+# not in the BCR, so it can only be resolved through the archive_override below,
+# and an override only has effect in the root module. A repo that depends on
+# game_arena (examples/connect4, a participant's kit) would otherwise fail to
+# resolve the module graph at all. dev_dependency drops the bazel_dep and the
+# extension for every module that isn't the root, which is exactly the set of
+# builds that never run the formatter. No BUILD file here references
+# @cpp_format_bin, so nothing in the build graph misses it.
+bazel_dep(name = "cpp_formatting", version = "0.1.0", dev_dependency = True)
 
-CPP_FORMAT_VERSION="20260913-a8e45a1"
+CPP_FORMAT_VERSION = "20260913-a0a8896"
+
 archive_override(
     module_name = "cpp_formatting",
-    urls = ["https://github.com/geligeli/cpp_formatting/archive/refs/tags/"+CPP_FORMAT_VERSION+".tar.gz"],
-    strip_prefix = "cpp_formatting-"+CPP_FORMAT_VERSION,
+    urls = ["https://github.com/geligeli/cpp_formatting/archive/refs/tags/" + CPP_FORMAT_VERSION + ".tar.gz"],
+    strip_prefix = "cpp_formatting-" + CPP_FORMAT_VERSION,
 )
 
-cpp_format = use_extension("@cpp_formatting//bazel/integration:extensions.bzl", "cpp_format")
+cpp_format = use_extension(
+    "@cpp_formatting//bazel/integration:extensions.bzl",
+    "cpp_format",
+    dev_dependency = True,
+)
 cpp_format.release(
     version = CPP_FORMAT_VERSION,
     # Optional but recommended for reproducible CI — pin per-asset hashes:

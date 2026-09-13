@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package tournament_arena.proto;
+
+// The kit's own config: what arena_cli does when you do not tell it.
+//
+// Written into a kit by `arena_tournament kit` as arena.textproto, read by
+// arena_cli from $ARENA_KIT or from the nearest enclosing directory that has
+// one. It steers this binary and nothing else, so it is yours to edit --
+// point it at another coordinator, widen what `submit` sends, move where
+// pulled sources land.
+//
+// Editing it does not widen what the tournament accepts. The coordinator
+// enforces the problem's own policy on everything that arrives: a file
+// outside what the problem allows is refused there, whatever this file says.
+// That is the whole reason it is safe to hand a participant a config they can
+// change.
+//
+// Deliberately free-standing: no import, nothing about orders, sandboxes or
+// scheduling. It is the one schema a participant is expected to read.
+message KitConfig {
+  // The problem this kit is for, for the messages arena_cli prints.
+  string problem_id = 1;
+
+  // The Arena service, host:port. $ARENA_SERVER wins over this, --server over
+  // both -- so the same kit runs against another coordinator with one
+  // environment variable.
+  string server = 2;
+  // The leaderboard's address, for the URL arena_cli prints after a submit.
+  string http = 3;
+  // Who the kit's token says you are. Display only: the coordinator derives
+  // the author of a submission from the token, never from what is sent.
+  string client_id = 4;
+
+  // What `submit` sends when no --file is given: paths relative to the kit, a
+  // directory taken whole (recursively, source files only). The problem
+  // describes a solution's shape and this is that shape, spelled out for the
+  // tool.
+  repeated string submit_files = 5;
+  // The header defining the entry point, when submit_files holds more than
+  // one header and the sole-header rule cannot pick.
+  string entry_header = 6;
+  // Extra bazel deps every submission from this kit names. The problem's
+  // allowed_dep_prefixes still bound them, at the coordinator.
+  repeated string extra_deps = 7;
+
+  // Where `source <candidate_id>` puts what it pulls: one directory per
+  // candidate under this one, so rivals never land among your own files.
+  // Relative to the kit. Empty disables writing, leaving `source` a reader.
+  string source_dir = 8;
+}

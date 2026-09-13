@@ -43,7 +43,6 @@ From a problem repository that calls `arena_problem()` (see
 ```sh
 bazel run //:play                            # the tournament, a kit for you, a shell in it
 bazel run //:tournament                      # a coordinator and a local worker
-bazel run //:tournament -- --no_container    # the same on a host without docker
 bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
 bazel run //:kit -- --mint=bob --image=TAG   # the same, as a docker image
 bazel run //:sandbox_image                   # the image sandbox.image names
@@ -52,17 +51,30 @@ bazel run //:tournament -- --image=TAG       # the tournament, as a docker image
 
 `play` is the dev loop: `tournament` in the background with its log in
 `~/.arena/<problem_id>/logs/tournament.log`, a kit minted for `$USER` (the
-token is reused on the next run), and a shell in that kit with
-`ARENA_SERVER` and `ARENA_TOKEN` set; leaving the shell stops everything.
+token is reused on the next run), and a shell in that kit with `ARENA_SERVER`,
+`ARENA_TOKEN` and the kit's `arena_cli` on `PATH`; leaving the shell stops
+everything.
+
+`kit` writes what a participant gets, and only that: the files `kit_files`
+names, the arena's kit surface vendored as `./arena` (`//:kit_surface` --
+the game side of the arena, not the coordinator or the fleet), `arena_cli` as
+a program in `.arena/bin`, `arena.textproto` telling that CLI what a solution
+is made of and where `source` puts what it pulls, `arena.env`, `mcp.json` and
+a README generated from the config. It builds the kit once as it writes it,
+keeping a bazel disk cache inside it (`--prime_cache=false` to skip), so the
+participant's first build is warm and a missing `kit_files` entry is found
+here rather than by them.
 
 `tournament` writes the effective config and all state under
 `~/.arena/<problem_id>` (`$ARENA_STATE_DIR` to move it), starts
 `problem_server` on it with a client registry (created empty: writes always
 need a token, and `kit --mint` adds one and has the coordinator reload),
 waits for the port, starts `--workers` local `sandbox_worker`s, and forwards
-Ctrl-C to all of them. `--no_container` clears `sandbox.image` in that
-derived config and says so loudly: the committed config stays what a real
-run uses.
+Ctrl-C to all of them. It needs docker and the problem's `sandbox.image`, and
+builds that image when the daemon does not have it -- which is the slow part
+of a first run. There is no flag that runs a tournament without a sandbox:
+`sandbox.image` is required by the config, and a worker links no engine that
+could run an order outside a container.
 
 `--image=TAG` builds the same thing as a docker image instead of running it:
 the arena's binaries built from the problem's workspace, the problem repo for
@@ -176,10 +188,12 @@ being the un-hardened counterexample -- it passed `--cap-add SYS_ADMIN` with
 no network restriction while the fleet dropped every capability. Isolation is
 one function that every container goes through.
 
-The `local` backend gives **resource limits and timeouts, not a security
-boundary**: candidate code is compiled and run as the worker's own user. It
-refuses an order whose problem sets `sandbox.require_container`, which any
-problem allowing patches to touch BUILD files should.
+The process backend gives **resource limits and timeouts, not a security
+boundary**: whatever it runs is compiled and run as the user running it. No
+worker has one. `sandbox_worker` links the container engine alone, so an
+order it cannot isolate is an order it hands back -- and `exec:process_engine`
+is visible only to the tests that need an engine which is not a boundary, to
+have something for `capabilities().isolates` to be false about.
 
 The `docker` backend is where the real claim lives, and moving the referee into
 the sandbox is what made it possible:
@@ -301,7 +315,7 @@ it are load-bearing for an agent loop that has to stay cheap:
 | `arena_job(job_id)` | build/match status; compiler errors on failure |
 | `arena_leaderboard(...)` | current standings |
 | `arena_candidates(...)` | everyone, including pending and broken, with lineage |
-| `arena_source(id[, path])` | any rival's manifest or file — all source is readable |
+| `arena_source(id[, path])` | a candidate's manifest or file, as far as the problem's `SourcePolicy` allows |
 | `arena_evaluate(...)` | more games vs a builtin, a candidate, `top` or `ladder`; or more measurement runs |
 
 Regenerate the Python stubs after changing `proto/arena.proto`:
@@ -316,6 +330,14 @@ Writes are gated on an `x-arena-token` metadata header; reads are not. The
 leaderboard is meant to be public and readable source is the point of the
 arena, so `GetSource`, `ListCandidates`, `GetJob`, `Leaderboard` and
 `GetProblem` stay open. Only `Submit` and `Evaluate` spend the fleet.
+
+A problem can narrow the reading (`source { visibility: ... }` in its config):
+`ALL` is the default above, `OWN` serves each participant only their own
+submissions -- which makes reads token-gated too -- and `NONE` serves nobody's.
+It is enforced in `ArenaService` on `GetSource` *and* on the `patch` bytes of
+every manifest `GetCandidate`, `ListCandidates` and `Leaderboard` return,
+because a stored patch is source. A kit's `arena.textproto` and `ARENA.md`
+describe the rule; only the coordinator applies it.
 
 Tokens are **admin-provisioned** — there is no registration RPC, which is what
 makes a quota mean anything. Mint one:

@@ -26,8 +26,8 @@
 #include "game_arena/referee/game_run.h"
 #include "game_arena/referee/game_session.h"
 #include "game_arena/referee/worker_pool.h"
-#include "game_arena/server/elo_store.h"
-#include "game_arena/server/game_history.h"
+#include "game_arena/standings/elo_store.h"
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_broker {
 
