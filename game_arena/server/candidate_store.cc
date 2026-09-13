@@ -362,7 +362,8 @@ std::optional<std::string> CandidateStore::PatchForLocked(
   return MakeAddOnlyPatch(files);
 }
 
-std::string CandidateStore::AllocateIdLocked(const std::string &display_name) const {
+std::string CandidateStore::AllocateIdLocked(
+    const std::string &display_name) const {
   const std::string slug = Slugify(display_name);
   static thread_local std::mt19937 gen(std::random_device{}());
   std::uniform_int_distribution<int> hex(0, 0xFFFFFF);
@@ -379,7 +380,8 @@ std::string CandidateStore::AllocateIdLocked(const std::string &display_name) co
   return slug + "-" + std::to_string(NowUnixMs());
 }
 
-std::filesystem::path CandidateStore::CandidateDir(const std::string &candidate_id) const {
+std::filesystem::path CandidateStore::CandidateDir(
+    const std::string &candidate_id) const {
   return dir_ / candidate_id;
 }
 
@@ -425,8 +427,9 @@ void CandidateStore::AppendIndexLocked(
         << "}\n";
 }
 
-std::optional<proto::Candidate> CandidateStore::Create(const proto::SubmitRequest &request,
-                            const std::string &base_commit, std::string *error) {
+std::optional<proto::Candidate> CandidateStore::Create(
+    const proto::SubmitRequest &request, const std::string &base_commit,
+    std::string *error) {
   std::lock_guard lock(mutex_);
   if (!Validate(request, error)) {
     return std::nullopt;
@@ -525,8 +528,8 @@ std::optional<proto::Candidate> CandidateStore::Create(const proto::SubmitReques
   return candidate;
 }
 
-std::optional<std::string> CandidateStore::ReadPatch(const std::string &candidate_id,
-                               std::string *error) const {
+std::optional<std::string> CandidateStore::ReadPatch(
+    const std::string &candidate_id, std::string *error) const {
   std::lock_guard lock(mutex_);
   const auto it = candidates_.find(candidate_id);
   if (it == candidates_.end()) {
@@ -546,7 +549,8 @@ std::optional<std::string> CandidateStore::ReadPatch(const std::string &candidat
                      std::istreambuf_iterator<char>());
 }
 
-std::optional<proto::Candidate> CandidateStore::Get(const std::string &candidate_id) const {
+std::optional<proto::Candidate> CandidateStore::Get(
+    const std::string &candidate_id) const {
   std::lock_guard lock(mutex_);
   const auto it = candidates_.find(candidate_id);
   if (it == candidates_.end()) {

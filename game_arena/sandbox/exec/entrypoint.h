@@ -27,7 +27,7 @@ namespace sandbox_exec {
 //   [export KEY='value'] ...
 //   exec <argv>
 std::string EntrypointScript(const proto::Workspace &workspace,
-                      const proto::Step &step);
+                             const proto::Step &step);
 
 // |argv| rendered for a shell: verbatim tokens as they are, everything else
 // single-quoted.

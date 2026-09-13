@@ -64,7 +64,7 @@ class GameSession {
                                      std::string *error) = 0;
   virtual std::optional<GameOutcome> Outcome() const = 0;
 
-  const std::vector<RecordedStep> & Steps() const { return steps_; }
+  const std::vector<RecordedStep> &Steps() const { return steps_; }
   int MoveCount() const { return static_cast<int>(steps_.size()); }
 
  protected:

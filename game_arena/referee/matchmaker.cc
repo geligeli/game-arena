@@ -21,7 +21,7 @@ constexpr std::string_view kPlayerPrefix = "player:";
 // Order-independent key for a pair of players in one game, so both sides of a
 // "player:<name>" rendezvous compute the same string.
 std::string RendezvousKey(const std::string &game, const std::string &a,
-                   const std::string &b) {
+                          const std::string &b) {
   const std::string &lo = a < b ? a : b;
   const std::string &hi = a < b ? b : a;
   return game + "\t" + lo + "\t" + hi;
@@ -130,8 +130,7 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
 
 bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
                                 const std::string &game,
-                                const std::string &wanted,
-                                std::string *error) {
+                                const std::string &wanted, std::string *error) {
   const std::string key = RendezvousKey(game, client->name(), wanted);
   std::shared_ptr<ClientHandle> partner;
   uint64_t pair_games = 0;

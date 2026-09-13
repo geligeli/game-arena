@@ -90,9 +90,7 @@ class ArenaIntegrationTest : public ::testing::Test {
 
   // Supplies the client registry the service is built with. Default: none, so
   // writes are ungated.
-  virtual std::unique_ptr<ClientRegistry> MakeClients() {
-    return nullptr;
-  }
+  virtual std::unique_ptr<ClientRegistry> MakeClients() { return nullptr; }
 
   // The problem as submitters see it. Default: empty, which means the arena's
   // default source policy -- everything readable.
@@ -105,7 +103,8 @@ class ArenaIntegrationTest : public ::testing::Test {
     std::filesystem::remove_all(dir_);
   }
 
-  proto::SubmitResponse Submit(const std::string &name, const std::string &content = "// bot\n") {
+  proto::SubmitResponse Submit(const std::string &name,
+                               const std::string &content = "// bot\n") {
     proto::SubmitRequest request;
     request.set_display_name(name);
     request.set_author("agent-1");
@@ -126,7 +125,7 @@ class ArenaIntegrationTest : public ::testing::Test {
   // Attaches a worker and returns its stream. The caller drives it, so a test
   // can decide exactly when an order is answered.
   std::unique_ptr<Stream> AttachWorker(const std::string &id, int slots,
-                    grpc::ClientContext *context) {
+                                       grpc::ClientContext *context) {
     auto stream = fleet_stub_->Attach(context);
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id(id);
@@ -149,8 +148,7 @@ class ArenaIntegrationTest : public ::testing::Test {
     EXPECT_TRUE(stream->Write(msg));
   }
 
-  proto::Job WaitForJob(const std::string &job_id,
-                  proto::Job::State state) {
+  proto::Job WaitForJob(const std::string &job_id, proto::Job::State state) {
     proto::Job job;
     for (int i = 0; i < 400; ++i) {
       grpc::ClientContext context;
@@ -461,7 +459,7 @@ class AuthenticatedArenaTest : public ArenaIntegrationTest {
   }
 
   grpc::Status SubmitAs(const std::string &token, const std::string &name,
-                bool cancel_running = false) {
+                        bool cancel_running = false) {
     proto::SubmitRequest request;
     request.set_display_name(name);
     request.set_author("i-am-someone-else");
@@ -606,8 +604,9 @@ class SourcePolicyTest : public AuthenticatedArenaTest {
     return info;
   }
 
-  grpc::Status GetSourceAs(const std::string &token, const std::string &candidate_id,
-                   const std::string &path) {
+  grpc::Status GetSourceAs(const std::string &token,
+                           const std::string &candidate_id,
+                           const std::string &path) {
     proto::GetSourceRequest request;
     request.set_candidate_id(candidate_id);
     request.set_path(path);

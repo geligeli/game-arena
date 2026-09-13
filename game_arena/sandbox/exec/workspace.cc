@@ -31,8 +31,7 @@ std::string TarOf(const proto::Workspace &ws) {
   return ws.tar().empty() ? "tar" : ws.tar();
 }
 
-bool WriteStagedFiles(const proto::Workspace &ws,
-                      proto::Status *status) {
+bool WriteStagedFiles(const proto::Workspace &ws, proto::Status *status) {
   if (ws.staging_dir().empty()) {
     return true;
   }
@@ -141,8 +140,7 @@ bool PrepareWorkspace(const proto::Workspace &ws,
 
 bool ExportTree(const proto::Workspace &ws,
                 const std::filesystem::path &archive,
-                const std::filesystem::path &log_dir,
-                proto::Status *status) {
+                const std::filesystem::path &log_dir, proto::Status *status) {
   std::error_code ec;
   std::filesystem::create_directories(archive.parent_path(), ec);
   // Without .git: the sandbox builds a tree, it does not need the history,

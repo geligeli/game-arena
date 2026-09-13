@@ -75,25 +75,26 @@ class CandidateStore : public CandidateView {
 
   // Validates |request| without storing anything. Returns false with *error
   // set describing the first problem, in terms the submitting agent can act on.
-  bool Validate(const proto::SubmitRequest &request,
-                std::string *error) const;
+  bool Validate(const proto::SubmitRequest &request, std::string *error) const;
 
   // Validates, allocates an id, and writes the candidate to disk. Returns
   // nullopt with *error set on a rejected or unwritable submission.
   std::optional<proto::Candidate> Create(const proto::SubmitRequest &request,
-              const std::string &base_commit,
-              std::string *error);
+                                         const std::string &base_commit,
+                                         std::string *error);
 
-  std::optional<proto::Candidate> Get(const std::string &candidate_id) const override;
+  std::optional<proto::Candidate> Get(
+      const std::string &candidate_id) const override;
 
   // Reads one submitted file. |path| is matched against the manifest's
   // file_paths, so it cannot escape the candidate's directory.
-  std::optional<std::string> ReadSource(const std::string &candidate_id, const std::string &path,
-                  std::string *error) const;
+  std::optional<std::string> ReadSource(const std::string &candidate_id,
+                                        const std::string &path,
+                                        std::string *error) const;
 
   // The stored patch, verbatim. This is what the scheduler puts on the wire.
   std::optional<std::string> ReadPatch(const std::string &candidate_id,
-                 std::string *error) const;
+                                       std::string *error) const;
 
   // All candidates, newest first.
   std::vector<proto::Candidate> List() const override;
@@ -116,8 +117,8 @@ class CandidateStore : public CandidateView {
   // sent one, otherwise a synthesized add-only patch under the problem's
   // files_submit_dir, generated BUILD included.
   std::optional<std::string> PatchForLocked(const proto::SubmitRequest &request,
-                      const std::string &candidate_id,
-                      std::string *error) const;
+                                            const std::string &candidate_id,
+                                            std::string *error) const;
 
   const std::filesystem::path dir_;
   const CandidateLimits limits_;

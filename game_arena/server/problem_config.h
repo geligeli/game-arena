@@ -24,7 +24,8 @@ namespace tournament_arena {
 
 // Parses text format. Returns nullopt with *error set to the protobuf parse
 // diagnostics, one "line N: ..." per problem found.
-std::optional<proto::ProblemConfig> ParseProblemConfigText(std::string_view text, std::string *error);
+std::optional<proto::ProblemConfig> ParseProblemConfigText(
+    std::string_view text, std::string *error);
 
 // Fills in every unset field that has a sensible default, so no consumer has to
 // know what zero means. Idempotent.
@@ -49,18 +50,19 @@ void ResolveRelativeRepoUrl(proto::ProblemConfig *config,
 
 // Read + parse + default + validate, with repo.url resolved against the
 // config's directory. The one entry point main() should use.
-std::optional<proto::ProblemConfig> LoadProblemConfig(const std::filesystem::path &path, std::string *error);
+std::optional<proto::ProblemConfig> LoadProblemConfig(
+    const std::filesystem::path &path, std::string *error);
 
 // The metric the leaderboard orders by: ranking.metric_name if set, otherwise
 // the grade metric marked primary. Null for a non-METRIC ranking. Points into
 // |config|.
-const proto::MetricSpec * PrimaryMetric(const proto::ProblemConfig &config);
+const proto::MetricSpec *PrimaryMetric(const proto::ProblemConfig &config);
 
 // Substitutes "{submission_id}" in |text|. Applied to build.targets,
 // grade.argv and match.referee_target before they reach a worker, so a problem
 // whose solutions each live in their own directory can name their targets.
 std::string ExpandSubmissionId(std::string_view text,
-                        std::string_view submission_id);
+                               std::string_view submission_id);
 
 // True when |problem_id| is safe as a standings key and a path component:
 // 1-64 chars, starting with [a-z0-9], continuing with [a-z0-9_-].

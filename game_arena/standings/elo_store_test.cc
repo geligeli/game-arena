@@ -11,8 +11,8 @@ class EloStoreTest : public ::testing::Test {
  protected:
   void SetUp() override {
     dir_ = std::filesystem::temp_directory_path() /
-           ("elo_store_test_" + std::to_string(
-                ::testing::UnitTest::GetInstance()->random_seed()));
+           ("elo_store_test_" +
+            std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
     std::filesystem::remove_all(dir_);
     std::filesystem::create_directories(dir_);
   }

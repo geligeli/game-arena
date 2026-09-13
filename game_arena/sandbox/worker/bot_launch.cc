@@ -21,9 +21,10 @@ std::string BinaryPathForTarget(std::string_view target) {
                                     : label + "/" + label.substr(slash + 1);
 }
 
-std::vector<std::string> BotArgs(const std::string &name, const std::string &target,
-             const std::string &opponent, int games,
-             const std::string &params) {
+std::vector<std::string> BotArgs(const std::string &name,
+                                 const std::string &target,
+                                 const std::string &opponent, int games,
+                                 const std::string &params) {
   std::vector<std::string> args = {
       "--name=" + name,
       "--server=" + target,
@@ -36,7 +37,8 @@ std::vector<std::string> BotArgs(const std::string &name, const std::string &tar
   return args;
 }
 
-std::string FormatParams(const google::protobuf::Map<std::string, std::string> &params) {
+std::string FormatParams(
+    const google::protobuf::Map<std::string, std::string> &params) {
   // proto3 map iteration order is unspecified; sorting keeps a rebuild of the
   // same candidate byte-identical.
   const std::map<std::string, std::string> sorted(params.begin(), params.end());

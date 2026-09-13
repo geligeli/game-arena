@@ -80,7 +80,8 @@ std::optional<tournament_broker::GameOutcome> NimSession::Outcome() const {
                                         .winning_player = winner_};
 }
 
-std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec, std::string *error) {
+std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec,
+                                                        std::string *error) {
   if (spec == "random") {
     return [](std::string_view state_bytes, std::mt19937 &gen) -> std::string {
       int remaining = 0;

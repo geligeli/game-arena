@@ -95,7 +95,8 @@ std::string OrderRunner::engines() const {
   return process_engine_ != nullptr ? process_engine_->name() : "none";
 }
 
-sandbox_exec::Engine * OrderRunner::EngineFor(const proto::WorkOrder &order) const {
+sandbox_exec::Engine *OrderRunner::EngineFor(
+    const proto::WorkOrder &order) const {
   // The problem decides, by naming an image or not -- and the coordinator
   // requires one (server/problem_config.cc), so in a tournament this is
   // always the container engine. A worker binary is built with no other
@@ -125,7 +126,7 @@ std::string OrderRunner::Refusal(const proto::WorkOrder &order) const {
 }
 
 OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
-                           const ProgressSink &progress) {
+                                   const ProgressSink &progress) {
   OrderOutcome outcome;
   if (const std::string refusal = Refusal(order); !refusal.empty()) {
     outcome.error = refusal;

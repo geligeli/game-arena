@@ -33,8 +33,7 @@ bool PrepareWorkspace(const proto::Workspace &ws,
 // *status filled in.
 bool ExportTree(const proto::Workspace &ws,
                 const std::filesystem::path &archive,
-                const std::filesystem::path &log_dir,
-                proto::Status *status);
+                const std::filesystem::path &log_dir, proto::Status *status);
 
 }  // namespace sandbox_exec
 

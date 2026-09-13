@@ -39,7 +39,7 @@ struct PatchFile {
 
   // The path this entry is about, for policy checks and display: the new path
   // when there is one, else the old.
-  const std::string & path() const {
+  const std::string &path() const {
     return new_path.empty() ? old_path : new_path;
   }
 };
@@ -52,8 +52,7 @@ struct Patch {
 // Parses a unified diff. Returns false with *error set when a header is
 // malformed or a path is unusable; an empty diff is an error, since a
 // submission that changes nothing cannot be evaluated.
-bool ParseUnifiedDiff(std::string_view diff, Patch *out,
-                      std::string *error);
+bool ParseUnifiedDiff(std::string_view diff, Patch *out, std::string *error);
 
 // Every path |diff| touches, in order, deduplicated. Convenience over
 // ParseUnifiedDiff for callers that only need the paths.

@@ -26,7 +26,7 @@ using sandbox_common::TailOf;
 constexpr int kDefaultDrainTimeoutS = 60;
 
 proto::Isolation Merge(const proto::Isolation &base,
-           const proto::Isolation &override_with) {
+                       const proto::Isolation &override_with) {
   // A step's isolation replaces the phase's outright rather than merging
   // field by field. Half-overridden isolation is the kind of thing that reads
   // as tight and is not.
@@ -74,8 +74,7 @@ std::vector<std::string> WorkspaceMounts(const proto::Job &job) {
 }
 
 // True when a step needs the staged files at /patches.
-bool AppliesStagedFiles(const proto::Job &job,
-                        const proto::Step &step) {
+bool AppliesStagedFiles(const proto::Job &job, const proto::Step &step) {
   return step.applies_patches() &&
          job.workspace().patch() != proto::Workspace::PATCH_NONE &&
          job.workspace().patch() != proto::Workspace::PATCH_HOST;
@@ -107,7 +106,7 @@ bool ContainerEngine::Prepare(const proto::Workspace &prototype, int lanes,
 }
 
 proto::JobResult ContainerEngine::Run(const proto::Job &job,
-                          Observer *observer) {
+                                      Observer *observer) {
   proto::JobResult result;
   proto::Status *status = result.mutable_status();
 

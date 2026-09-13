@@ -34,7 +34,7 @@ constexpr char kGradeConfig[] = R"pb(
 )pb";
 
 std::optional<proto::ProblemConfig> Load(const std::string &text,
-          std::string *error) {
+                                         std::string *error) {
   std::optional<proto::ProblemConfig> config =
       ParseProblemConfigText(text, error);
   if (!config) {

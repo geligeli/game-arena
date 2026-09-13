@@ -105,8 +105,7 @@ bool ReadFile(const std::filesystem::path &path, std::string *content) {
 
 // --patch_dir: send the whole tree, keyed by path relative to the dir, which
 // is exactly the layout the runner copies onto the workspace.
-bool AddPatchDir(const std::filesystem::path &dir,
-                 proto::RunRequest *request) {
+bool AddPatchDir(const std::filesystem::path &dir, proto::RunRequest *request) {
   std::error_code ec;
   if (!std::filesystem::is_directory(dir, ec)) {
     LOG(ERROR) << "--patch_dir " << dir << " is not a directory";
@@ -169,8 +168,7 @@ void WriteAll(std::FILE *stream, const std::string &data) {
   std::fflush(stream);
 }
 
-int DoKill(proto::SandboxService::Stub *stub,
-            const std::string &identifier) {
+int DoKill(proto::SandboxService::Stub *stub, const std::string &identifier) {
   grpc::ClientContext context;
   ApplyDeadline(&context);
   proto::KillRequest request;

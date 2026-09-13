@@ -40,13 +40,13 @@ std::string SanitizeContainerName(const std::string &value);
 // `-v` creates |source| as an empty directory when it does not exist, which
 // turns a mistyped host path into an empty repository or a run that silently
 // drops every patch. --mount fails the run instead.
-std::string BindMount(const std::filesystem::path &source, const std::string &target,
-               bool readonly);
+std::string BindMount(const std::filesystem::path &source,
+                      const std::string &target, bool readonly);
 
 // A named volume in the same syntax. Volumes belong to the daemon, so the
 // engine never needs the daemon to see its own filesystem.
 std::string VolumeMount(const std::string &volume, const std::string &target,
-                 bool readonly);
+                        bool readonly);
 
 // The one line every entrypoint starts with after `set -eu`: a writable HOME,
 // because bazel insists on one and the root filesystem is read-only. The
@@ -57,48 +57,49 @@ std::string ScratchPrelude();
 // `docker volume create <name>` and `docker volume rm -f <name>`. Removing one
 // that is already gone is a no-op.
 StepResult CreateVolume(const std::string &docker, const std::string &name,
-                  const std::filesystem::path &log_dir,
-                  const std::string &tag);
+                        const std::filesystem::path &log_dir,
+                        const std::string &tag);
 process::RunResult RemoveVolume(const std::string &docker,
-                  const std::string &name);
+                                const std::string &name);
 
 // Stops a container by name, with a bounded wait on the daemon. Killing one
 // that already exited is a no-op, which is exactly the race a cancel or a
 // timeout cleanup wants.
 process::RunResult KillContainer(const std::string &docker,
-                   const std::string &name);
+                                 const std::string &name);
 
 // Force-removes a container by name. Used to clear what a worker killed
 // mid-order left behind, so a redelivered order starts fresh.
 process::RunResult RemoveContainer(const std::string &docker,
-                     const std::string &name);
+                                   const std::string &name);
 
 // `docker wait <name>`: block on the daemon until the container exits, rather
 // than polling it. |timeout| bounds the wait itself, so a container that never
 // exits cannot hold the caller.
 StepResult WaitForContainer(const std::string &docker, const std::string &name,
-                      std::chrono::seconds timeout,
-                      const std::filesystem::path &log_dir,
-                      const std::string &tag);
+                            std::chrono::seconds timeout,
+                            const std::filesystem::path &log_dir,
+                            const std::string &tag);
 
 // `docker logs <name>`: what a container printed, read back after it exited.
 // This is how a detached container's verdict gets home -- it is started with
 // nobody attached to its stdout, so the output has to be asked for.
 StepResult ContainerLogs(const std::string &docker, const std::string &name,
-                   const std::filesystem::path &log_dir,
-                   const std::string &tag);
+                         const std::filesystem::path &log_dir,
+                         const std::string &tag);
 
 // `docker network create --internal <name>`: a bridge with no egress. The
 // containers on it reach each other and nothing else, which is what a match
 // needs and the most a match may have.
-StepResult CreateInternalNetwork(const std::string &docker, const std::string &name,
-                           const std::filesystem::path &log_dir,
-                           const std::string &tag);
+StepResult CreateInternalNetwork(const std::string &docker,
+                                 const std::string &name,
+                                 const std::filesystem::path &log_dir,
+                                 const std::string &tag);
 
 // `docker network rm <name>`. Removing one that is already gone is a no-op,
 // the same race KillContainer is written for.
 process::RunResult RemoveNetwork(const std::string &docker,
-                   const std::string &name);
+                                 const std::string &name);
 
 // One `docker run` (or `docker create`) invocation. The flag order is fixed
 // here -- call sites express only what differs between a build, a graded run

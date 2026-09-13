@@ -85,8 +85,7 @@ bool IsUsablePath(const std::string &path, std::string *error) {
 
 }  // namespace
 
-bool ParseUnifiedDiff(std::string_view diff, Patch *out,
-                      std::string *error) {
+bool ParseUnifiedDiff(std::string_view diff, Patch *out, std::string *error) {
   *out = Patch{};
   const std::vector<std::string_view> lines = SplitLines(diff);
 

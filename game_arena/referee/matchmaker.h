@@ -59,7 +59,7 @@ class Matchmaker {
   ~Matchmaker();
 
   Matchmaker(const Matchmaker &) = delete;
-  Matchmaker & operator=(const Matchmaker &) = delete;
+  Matchmaker &operator=(const Matchmaker &) = delete;
 
   // Queues the client ("any"), parks it for a named partner
   // ("player:<name>"), or starts a game against a built-in ("builtin:<spec>")

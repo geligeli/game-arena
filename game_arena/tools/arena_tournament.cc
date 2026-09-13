@@ -193,8 +193,7 @@ std::optional<std::string> ReadFile(const std::filesystem::path &path) {
                      std::istreambuf_iterator<char>());
 }
 
-bool WriteFile(const std::filesystem::path &path,
-               std::string_view text) {
+bool WriteFile(const std::filesystem::path &path, std::string_view text) {
   std::error_code ec;
   std::filesystem::create_directories(path.parent_path(), ec);
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -205,8 +204,8 @@ bool WriteFile(const std::filesystem::path &path,
 // Runs |executable| with the caller's stdout/stderr and waits. -1 when it
 // could not be started.
 int RunInherit(const std::string &executable,
-                const std::vector<std::string> &arguments,
-                const std::filesystem::path &cwd) {
+               const std::vector<std::string> &arguments,
+               const std::filesystem::path &cwd) {
   process::ChildOptions options;
   options.cwd = cwd;
   auto child = process::Child::Start(executable, arguments, options);
@@ -225,8 +224,8 @@ int RunInherit(const std::string &executable,
 // Runs a command and returns its stdout, or nullopt on failure to start or a
 // non-zero exit.
 std::optional<std::string> Capture(const std::string &executable,
-             const std::vector<std::string> &arguments,
-             const std::filesystem::path &cwd) {
+                                   const std::vector<std::string> &arguments,
+                                   const std::filesystem::path &cwd) {
   const std::filesystem::path out =
       std::filesystem::temp_directory_path() /
       absl::StrCat("arena_tournament_", ::getpid(), "_",
@@ -268,7 +267,8 @@ bool WaitForPort(int port, std::chrono::seconds timeout) {
 }
 
 // A local path for repo.url, or nullopt when it is a URL.
-std::optional<std::filesystem::path> LocalRepoDir(const proto::ProblemConfig &config) {
+std::optional<std::filesystem::path> LocalRepoDir(
+    const proto::ProblemConfig &config) {
   const std::string &url = config.repo().url();
   if (url.find("://") != std::string::npos) {
     return std::nullopt;
@@ -281,7 +281,8 @@ std::optional<std::filesystem::path> LocalRepoDir(const proto::ProblemConfig &co
   return std::filesystem::path(url);
 }
 
-std::optional<proto::ProblemConfig> LoadConfig(std::filesystem::path *config_path) {
+std::optional<proto::ProblemConfig> LoadConfig(
+    std::filesystem::path *config_path) {
   const std::string flag = absl::GetFlag(FLAGS_problem_config).empty()
                                ? EnvOr("ARENA_PROBLEM_CONFIG", "")
                                : absl::GetFlag(FLAGS_problem_config);
@@ -383,8 +384,7 @@ class ArenaRunfiles {
 // check
 // ---------------------------------------------------------------------------
 
-bool CheckConfig(const proto::ProblemConfig &config,
-                 std::string *error) {
+bool CheckConfig(const proto::ProblemConfig &config, std::string *error) {
   const std::string &submit_dir = config.submission().files_submit_dir();
   if (!submit_dir.empty()) {
     bool names_submission = false;
@@ -451,7 +451,8 @@ int RunCheck() {
 // Where the problem overrides game_arena with a local checkout, if it does:
 // --override_module in .bazelrc.local (which, as a flag, beats the file), or
 // MODULE.bazel's local_path_override.
-std::optional<std::filesystem::path> LocalArenaOverride(const std::filesystem::path &root) {
+std::optional<std::filesystem::path> LocalArenaOverride(
+    const std::filesystem::path &root) {
   for (const char *rc : {".bazelrc.local", ".bazelrc"}) {
     if (const auto text = ReadFile(root / rc)) {
       static const std::regex kFlag(R"(--override_module=game_arena=(\S+))");
@@ -571,7 +572,7 @@ std::string Hostname() {
 // Runs a command with its output discarded; the exit code, -1 if it could not
 // start.
 int RunQuiet(const std::string &executable,
-              const std::vector<std::string> &arguments) {
+             const std::vector<std::string> &arguments) {
   process::ChildOptions options;
   options.stdout_path = "/dev/null";
   options.stderr_path = "/dev/null";
@@ -584,9 +585,9 @@ int RunQuiet(const std::string &executable,
 // mounted docker socket. Built from the problem's workspace root, as the
 // sandbox image is.
 int BuildTournamentImage(const ArenaRunfiles &runfiles,
-                          const proto::ProblemConfig &config,
-                          const std::filesystem::path &config_path,
-                          const std::string &tag) {
+                         const proto::ProblemConfig &config,
+                         const std::filesystem::path &config_path,
+                         const std::string &tag) {
   const std::filesystem::path dockerfile =
       runfiles.Locate("game_arena/image/Dockerfile");
   if (dockerfile.empty()) {
@@ -896,7 +897,7 @@ std::string WithoutArenaOverride(std::string text) {
 }
 
 std::string RerootedModuleFile(std::string text,
-                        const std::filesystem::path &root) {
+                               const std::filesystem::path &root) {
   static const std::regex kOverride(
       R"re(local_path_override\(([^)]*?)path\s*=\s*"([^"]+)")re");
   std::string out;
@@ -974,10 +975,10 @@ std::string KitBuildFile(const std::string &registry) {
   return text;
 }
 
-std::string KitReadme(const proto::ProblemConfig &config, const std::string &server,
-               const std::string &http, const std::string &client_id,
-               bool has_token,
-               const std::vector<std::string> &files) {
+std::string KitReadme(const proto::ProblemConfig &config,
+                      const std::string &server, const std::string &http,
+                      const std::string &client_id, bool has_token,
+                      const std::vector<std::string> &files) {
   std::ostringstream md;
   const std::string title = config.display_name().empty()
                                 ? config.problem_id()
@@ -1253,8 +1254,8 @@ bool InstallBuiltins(const ArenaRunfiles &runfiles,
 // they do not say. Everything in it is theirs to change -- the coordinator
 // enforces the problem's policy on what actually arrives.
 std::string KitConfigText(const proto::ProblemConfig &config,
-                   const std::string &server, const std::string &http,
-                   const std::string &client_id) {
+                          const std::string &server, const std::string &http,
+                          const std::string &client_id) {
   proto::KitConfig kit;
   kit.set_problem_id(config.problem_id());
   kit.set_server(server);
@@ -1686,7 +1687,7 @@ int RunImage(const ArenaRunfiles &runfiles) {
 
 // The value of KEY=... in a shell-style env file (`export KEY=value` lines).
 std::string EnvFileValue(const std::filesystem::path &file,
-                  std::string_view key) {
+                         std::string_view key) {
   const auto text = ReadFile(file);
   if (!text) {
     return "";

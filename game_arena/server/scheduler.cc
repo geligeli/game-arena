@@ -318,9 +318,8 @@ std::optional<std::vector<std::string>> Scheduler::ExpandOpponentsLocked(
 }
 
 std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
-                              const std::vector<std::string> &opponents,
-                              int games,
-                              const std::string &client_id) {
+                                     const std::vector<std::string> &opponents,
+                                     int games, const std::string &client_id) {
   const std::string job_id =
       "j" + std::to_string(NowUnixMs()) + "_" + std::to_string(++job_counter_);
 
@@ -359,7 +358,7 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
 }
 
 std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
-                                 Reservation reservation) {
+                                        Reservation reservation) {
   std::lock_guard lock(mutex_);
   // Consumed: the slot it held becomes the job below, so the destructor must
   // not hand it back.
@@ -409,8 +408,9 @@ std::optional<std::string> Scheduler::EnqueueChallenge(
   return EnqueueLocked(*candidate, *opponents, wanted, client_id);
 }
 
-std::optional<std::string> Scheduler::EnqueueRegrade(const std::string &candidate_id, int repeats,
-                               Reservation reservation, std::string *error) {
+std::optional<std::string> Scheduler::EnqueueRegrade(
+    const std::string &candidate_id, int repeats, Reservation reservation,
+    std::string *error) {
   std::lock_guard lock(mutex_);
   const std::string client_id = reservation.client_id();
   if (reservation.scheduler_ != nullptr) {

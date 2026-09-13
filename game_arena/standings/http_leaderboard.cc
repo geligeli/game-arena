@@ -244,8 +244,8 @@ std::string HttpLeaderboard::RenderCandidatesJson() const {
         {"author", candidate.author()},
         {"game", candidate.game()},
         {"parent_id", candidate.parent_id()},
-        {"status", tournament_arena::proto::Candidate::Status_Name(
-                       candidate.status())},
+        {"status",
+         tournament_arena::proto::Candidate::Status_Name(candidate.status())},
         {"score", row.score},
         {"wins", row.wins},
         {"draws", row.draws},
@@ -271,8 +271,8 @@ std::string HttpLeaderboard::RenderLeaderboardJson() const {
         {"rank", rank++},
         {"player", row.candidate_id},
         {"candidate_id", row.candidate_id},
-        {"display_name", candidate.has_value() ? candidate->display_name()
-                                               : row.candidate_id},
+        {"display_name",
+         candidate.has_value() ? candidate->display_name() : row.candidate_id},
         {"author",
          candidate.has_value() ? candidate->author() : std::string("-")},
         {"score", row.score},

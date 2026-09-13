@@ -25,13 +25,15 @@ inline constexpr std::string_view kPlayerPrefix = "player:";
 std::string BinaryPathForTarget(std::string_view target);
 
 // The argv a built bot is started with.
-std::vector<std::string> BotArgs(const std::string &name, const std::string &target,
-             const std::string &opponent, int games,
-             const std::string &params);
+std::vector<std::string> BotArgs(const std::string &name,
+                                 const std::string &target,
+                                 const std::string &opponent, int games,
+                                 const std::string &params);
 
 // "a=1,b=2" from a params map, sorted so a rebuilt candidate gets a
 // byte-identical command line and a cached build stays reusable.
-std::string FormatParams(const google::protobuf::Map<std::string, std::string> &params);
+std::string FormatParams(
+    const google::protobuf::Map<std::string, std::string> &params);
 
 }  // namespace tournament_arena
 

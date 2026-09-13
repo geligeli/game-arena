@@ -83,8 +83,7 @@ TEST_F(CandidateStoreTest, StoresSourcesAsReadableFiles) {
       << "the submitted header and its generated BUILD";
   const std::filesystem::path source =
       dir_ / candidate->candidate_id() / "src" /
-      ("solutions/" + candidate->candidate_id() +
-       "/strategy.h");
+      ("solutions/" + candidate->candidate_id() + "/strategy.h");
   ASSERT_TRUE(std::filesystem::exists(source));
   std::ifstream in(source);
   const std::string content((std::istreambuf_iterator<char>(in)),
@@ -93,8 +92,7 @@ TEST_F(CandidateStoreTest, StoresSourcesAsReadableFiles) {
 
   const auto read_back = store_->ReadSource(
       candidate->candidate_id(),
-      "solutions/" + candidate->candidate_id() + "/strategy.h",
-      &error);
+      "solutions/" + candidate->candidate_id() + "/strategy.h", &error);
   ASSERT_TRUE(read_back.has_value()) << error;
   EXPECT_EQ(*read_back, content);
 
@@ -152,8 +150,7 @@ TEST_F(CandidateStoreTest, HoldsPatchesToTheProblemsPathPolicy) {
     return request;
   };
 
-  EXPECT_TRUE(
-      store.Validate(patch_touching("problem/lib/core.h"), &error))
+  EXPECT_TRUE(store.Validate(patch_touching("problem/lib/core.h"), &error))
       << error;
 
   // Outside allow_paths.
@@ -273,8 +270,7 @@ TEST_F(CandidateStoreTest, SurvivesRestart) {
 
   const auto source = reopened.ReadSource(
       candidate->candidate_id(),
-      "solutions/" + candidate->candidate_id() + "/strategy.h",
-      &error);
+      "solutions/" + candidate->candidate_id() + "/strategy.h", &error);
   ASSERT_TRUE(source.has_value()) << error;
 }
 
@@ -447,8 +443,8 @@ TEST_F(CandidateStoreTest, RejectsDependenciesOutsideTheAllowlist) {
   EXPECT_TRUE(store_->Validate(request, &error)) << error;
 
   for (const char *dep :
-       {"//game_arena/server:matchmaker",
-        "@some_external//:tool", "//:everything", "//scripts:fix_guards"}) {
+       {"//game_arena/server:matchmaker", "@some_external//:tool",
+        "//:everything", "//scripts:fix_guards"}) {
     proto::SubmitRequest bad = MakeRequest();
     bad.add_extra_deps(dep);
     EXPECT_FALSE(store_->Validate(bad, &error)) << "accepted " << dep;

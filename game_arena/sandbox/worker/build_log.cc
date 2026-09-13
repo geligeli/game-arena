@@ -39,8 +39,7 @@ using sandbox_common::TailOf;
 
 }  // namespace
 
-std::string CompactBuildLog(const std::string &log,
-                     BuildLogLimits limits) {
+std::string CompactBuildLog(const std::string &log, BuildLogLimits limits) {
   std::vector<std::string> kept;
   std::istringstream lines(log);
   std::string line;

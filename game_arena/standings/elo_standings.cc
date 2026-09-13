@@ -60,7 +60,7 @@ Standing EloStandings::Get(const std::string &candidate_id) const {
 }
 
 Standing EloStandings::GetIn(const std::string &problem_id,
-                         const std::string &candidate_id) const {
+                             const std::string &candidate_id) const {
   const auto rating = elo_store_->Get(problem_id, candidate_id);
   Standing standing;
   standing.candidate_id = candidate_id;

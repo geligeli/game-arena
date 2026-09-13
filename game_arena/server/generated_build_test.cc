@@ -15,7 +15,8 @@ constexpr char kDir[] = "solutions";
 constexpr char kApiDep[] = "//problem/harness:api";
 constexpr char kMainSrc[] = "//problem/harness:main.cc";
 
-proto::CandidateHarness Harness(const std::string &game_define = "PROBLEM_GAME_ALPHA") {
+proto::CandidateHarness Harness(
+    const std::string &game_define = "PROBLEM_GAME_ALPHA") {
   proto::CandidateHarness harness;
   harness.set_api_dep(kApiDep);
   harness.set_main_src(kMainSrc);
@@ -25,9 +26,9 @@ proto::CandidateHarness Harness(const std::string &game_define = "PROBLEM_GAME_A
 }
 
 std::string Build(const std::vector<std::string> &files,
-           const std::string &entry = "strategy.h",
-           const std::vector<std::string> &deps = {},
-           const proto::CandidateHarness &harness = Harness()) {
+                  const std::string &entry = "strategy.h",
+                  const std::vector<std::string> &deps = {},
+                  const proto::CandidateHarness &harness = Harness()) {
   return GenerateCandidateBuild(kDir, "c-1", harness, files, entry, deps);
 }
 

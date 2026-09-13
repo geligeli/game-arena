@@ -12,8 +12,7 @@ using sandbox_common::TailOf;
 
 bool EnsureClone(const std::string &git, const std::string &source,
                  const std::filesystem::path &dest,
-                 const std::filesystem::path &log_dir,
-                 std::string *error) {
+                 const std::filesystem::path &log_dir, std::string *error) {
   std::error_code ec;
   std::filesystem::create_directories(log_dir, ec);
   if (std::filesystem::exists(dest / ".git")) {
@@ -38,8 +37,7 @@ bool EnsureClone(const std::string &git, const std::string &source,
 
 bool SyncToCommit(const std::string &git, const std::filesystem::path &repo,
                   const std::string &commit,
-                  const std::filesystem::path &log_dir,
-                  std::string *error) {
+                  const std::filesystem::path &log_dir, std::string *error) {
   if (commit.empty()) {
     return true;
   }

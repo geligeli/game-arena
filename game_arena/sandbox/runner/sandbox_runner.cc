@@ -51,8 +51,8 @@ SandboxRunnerService::SandboxRunnerService(SandboxRunnerConfig config,
     : config_(std::move(config)), engine_(engine) {}
 
 grpc::Status SandboxRunnerService::Run(grpc::ServerContext *context,
-                               const proto::RunRequest *request,
-                               proto::RunResponse *response) {
+                                       const proto::RunRequest *request,
+                                       proto::RunResponse *response) {
   (void)context;
   if (request->id().empty()) {
     return {grpc::StatusCode::INVALID_ARGUMENT, "id is required"};
@@ -153,8 +153,8 @@ grpc::Status SandboxRunnerService::Run(grpc::ServerContext *context,
 }
 
 grpc::Status SandboxRunnerService::Kill(grpc::ServerContext *context,
-                                const proto::KillRequest *request,
-                                proto::KillResponse *response) {
+                                        const proto::KillRequest *request,
+                                        proto::KillResponse *response) {
   (void)context;
   (void)response;
   std::string job_id;

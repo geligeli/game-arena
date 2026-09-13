@@ -41,9 +41,10 @@ proto::OrderResult Tally(int wins, int draws, int losses) {
   return result;
 }
 
-proto::OrderResult Metrics(std::initializer_list<std::pair<std::string, double>> values,
-             const std::string &worker = "w1",
-             const std::string &machine = "bench-c7i") {
+proto::OrderResult Metrics(
+    std::initializer_list<std::pair<std::string, double>> values,
+    const std::string &worker = "w1",
+    const std::string &machine = "bench-c7i") {
   proto::OrderResult result;
   result.set_build_ok(true);
   for (const auto &[name, value] : values) {
@@ -70,11 +71,10 @@ class FakeCandidates : public CandidateView {
     return candidate.candidate_id();
   }
 
-  std::vector<proto::Candidate> List() const override {
-    return candidates_;
-  }
+  std::vector<proto::Candidate> List() const override { return candidates_; }
 
-  std::optional<proto::Candidate> Get(const std::string &candidate_id) const override {
+  std::optional<proto::Candidate> Get(
+      const std::string &candidate_id) const override {
     for (const proto::Candidate &candidate : candidates_) {
       if (candidate.candidate_id() == candidate_id) {
         return candidate;

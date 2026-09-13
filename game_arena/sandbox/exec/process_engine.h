@@ -42,8 +42,7 @@ class ProcessEngine final : public Engine {
                         /*stable_peer_names=*/false};
   }
 
-  proto::JobResult Run(const proto::Job &job,
-           Observer *observer) override;
+  proto::JobResult Run(const proto::Job &job, Observer *observer) override;
   void Cancel(const std::string &job_id) override;
 
  private:

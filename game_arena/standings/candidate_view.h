@@ -27,7 +27,8 @@ class CandidateView {
   // Newest first.
   virtual std::vector<proto::Candidate> List() const = 0;
 
-  virtual std::optional<proto::Candidate> Get(const std::string &candidate_id) const = 0;
+  virtual std::optional<proto::Candidate> Get(
+      const std::string &candidate_id) const = 0;
 };
 
 }  // namespace tournament_arena

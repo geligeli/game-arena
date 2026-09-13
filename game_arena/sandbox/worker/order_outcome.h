@@ -50,7 +50,7 @@ struct OrderOutcome {
 
 // Interprets |result| as the outcome of |order|.
 OrderOutcome OutcomeFor(const proto::WorkOrder &order,
-                const sandbox_exec::proto::JobResult &result);
+                        const sandbox_exec::proto::JobResult &result);
 
 }  // namespace tournament_arena
 

@@ -88,9 +88,10 @@ void ArenaService::RedactSource(proto::Candidate *candidate) const {
   candidate->clear_patch();
 }
 
-grpc::Status ArenaService::GetProblem(grpc::ServerContext * /*context*/,
-                              const proto::GetProblemRequest * /*request*/,
-                              proto::ProblemInfo *response) {
+grpc::Status ArenaService::GetProblem(
+    grpc::ServerContext * /*context*/,
+    const proto::GetProblemRequest * /*request*/,
+    proto::ProblemInfo *response) {
   *response = problem_info_;
   // Filled here rather than at startup: the score label belongs to the
   // standings, and asking them keeps one source of truth for it.
@@ -100,7 +101,8 @@ grpc::Status ArenaService::GetProblem(grpc::ServerContext * /*context*/,
   return grpc::Status::OK;
 }
 
-proto::CandidateStanding ArenaService::StandingFor(const proto::Candidate &candidate) const {
+proto::CandidateStanding ArenaService::StandingFor(
+    const proto::Candidate &candidate) const {
   proto::CandidateStanding standing;
   *standing.mutable_candidate() = candidate;
   // Whatever this problem scores by. For a match problem that is ELO and W/D/L;
@@ -120,8 +122,8 @@ proto::CandidateStanding ArenaService::StandingFor(const proto::Candidate &candi
 }
 
 grpc::Status ArenaService::Submit(grpc::ServerContext *context,
-                          const proto::SubmitRequest *request,
-                          proto::SubmitResponse *response) {
+                                  const proto::SubmitRequest *request,
+                                  proto::SubmitResponse *response) {
   ClientIdentity identity;
   grpc::Status status;
   if (!Authenticate(context, &identity, &status)) {
@@ -165,9 +167,9 @@ grpc::Status ArenaService::Submit(grpc::ServerContext *context,
   return grpc::Status::OK;
 }
 
-grpc::Status ArenaService::GetCandidate(grpc::ServerContext *context,
-                                const proto::GetCandidateRequest *request,
-                                proto::Candidate *response) {
+grpc::Status ArenaService::GetCandidate(
+    grpc::ServerContext *context, const proto::GetCandidateRequest *request,
+    proto::Candidate *response) {
   std::string reader;
   grpc::Status status;
   if (!ResolveReader(context, /*strict=*/false, &reader, &status)) {
@@ -188,8 +190,8 @@ grpc::Status ArenaService::GetCandidate(grpc::ServerContext *context,
 }
 
 grpc::Status ArenaService::GetSource(grpc::ServerContext *context,
-                             const proto::GetSourceRequest *request,
-                             proto::SourceFile *response) {
+                                     const proto::GetSourceRequest *request,
+                                     proto::SourceFile *response) {
   std::string reader;
   grpc::Status status;
   if (!ResolveReader(context, /*strict=*/true, &reader, &status)) {
@@ -273,8 +275,8 @@ grpc::Status ArenaService::ListCandidates(
 }
 
 grpc::Status ArenaService::Evaluate(grpc::ServerContext *context,
-                            const proto::EvaluateRequest *request,
-                            proto::EvaluateResponse *response) {
+                                    const proto::EvaluateRequest *request,
+                                    proto::EvaluateResponse *response) {
   ClientIdentity identity;
   grpc::Status status;
   if (!Authenticate(context, &identity, &status)) {
@@ -319,8 +321,8 @@ grpc::Status ArenaService::Evaluate(grpc::ServerContext *context,
 }
 
 grpc::Status ArenaService::GetJob(grpc::ServerContext * /*context*/,
-                          const proto::GetJobRequest *request,
-                          proto::Job *response) {
+                                  const proto::GetJobRequest *request,
+                                  proto::Job *response) {
   const auto job = scheduler_->GetJob(request->job_id());
   if (!job.has_value()) {
     return {grpc::StatusCode::NOT_FOUND,
@@ -330,9 +332,9 @@ grpc::Status ArenaService::GetJob(grpc::ServerContext * /*context*/,
   return grpc::Status::OK;
 }
 
-grpc::Status ArenaService::Leaderboard(
-    grpc::ServerContext *context, const proto::LeaderboardRequest *request,
-    proto::LeaderboardResponse *response) {
+grpc::Status ArenaService::Leaderboard(grpc::ServerContext *context,
+                                       const proto::LeaderboardRequest *request,
+                                       proto::LeaderboardResponse *response) {
   std::string reader;
   grpc::Status status;
   if (!ResolveReader(context, /*strict=*/false, &reader, &status)) {

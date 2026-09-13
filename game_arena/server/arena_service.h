@@ -45,35 +45,37 @@ class ArenaService final : public proto::Arena::Service {
                const ClientRegistry *clients = nullptr,
                int default_list_limit = 50);
 
-  grpc::Status Submit(grpc::ServerContext *context, const proto::SubmitRequest *request,
-              proto::SubmitResponse *response) override;
+  grpc::Status Submit(grpc::ServerContext *context,
+                      const proto::SubmitRequest *request,
+                      proto::SubmitResponse *response) override;
 
   grpc::Status GetCandidate(grpc::ServerContext *context,
-                    const proto::GetCandidateRequest *request,
-                    proto::Candidate *response) override;
+                            const proto::GetCandidateRequest *request,
+                            proto::Candidate *response) override;
 
   grpc::Status GetSource(grpc::ServerContext *context,
-                 const proto::GetSourceRequest *request,
-                 proto::SourceFile *response) override;
+                         const proto::GetSourceRequest *request,
+                         proto::SourceFile *response) override;
 
-  grpc::Status ListCandidates(
-      grpc::ServerContext *context, const proto::ListCandidatesRequest *request,
-      proto::ListCandidatesResponse *response) override;
+  grpc::Status ListCandidates(grpc::ServerContext *context,
+                              const proto::ListCandidatesRequest *request,
+                              proto::ListCandidatesResponse *response) override;
 
   grpc::Status Evaluate(grpc::ServerContext *context,
-                const proto::EvaluateRequest *request,
-                proto::EvaluateResponse *response) override;
+                        const proto::EvaluateRequest *request,
+                        proto::EvaluateResponse *response) override;
 
-  grpc::Status GetJob(grpc::ServerContext *context, const proto::GetJobRequest *request,
-              proto::Job *response) override;
+  grpc::Status GetJob(grpc::ServerContext *context,
+                      const proto::GetJobRequest *request,
+                      proto::Job *response) override;
 
-  grpc::Status Leaderboard(
-      grpc::ServerContext *context, const proto::LeaderboardRequest *request,
-      proto::LeaderboardResponse *response) override;
+  grpc::Status Leaderboard(grpc::ServerContext *context,
+                           const proto::LeaderboardRequest *request,
+                           proto::LeaderboardResponse *response) override;
 
   grpc::Status GetProblem(grpc::ServerContext *context,
-                  const proto::GetProblemRequest *request,
-                  proto::ProblemInfo *response) override;
+                          const proto::GetProblemRequest *request,
+                          proto::ProblemInfo *response) override;
 
  private:
   proto::CandidateStanding StandingFor(const proto::Candidate &candidate) const;
@@ -94,8 +96,7 @@ class ArenaService final : public proto::Arena::Service {
   // a standing is not source, and a leaderboard should stay legible to
   // someone who has not been given a token at all. They redact instead.
   bool ResolveReader(grpc::ServerContext *context, bool strict,
-                     std::string *client_id,
-                     grpc::Status *status) const;
+                     std::string *client_id, grpc::Status *status) const;
 
   // Whether |candidate|'s files may be served to |client_id|.
   bool MayReadSource(const proto::Candidate &candidate,

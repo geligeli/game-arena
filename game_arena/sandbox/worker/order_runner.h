@@ -44,7 +44,7 @@ class OrderRunner {
   bool Warmup(int slots, std::string *error);
 
   OrderOutcome RunOrder(int slot, const proto::WorkOrder &order,
-                const ProgressSink &progress);
+                        const ProgressSink &progress);
 
   // Aborts |order_id| if this runner is running it. Called from the stream
   // thread while a slot thread is inside RunOrder.
@@ -59,7 +59,7 @@ class OrderRunner {
   // number that looks like a result.
   std::string Refusal(const proto::WorkOrder &order) const;
   // The engine this order runs on, or null when this worker has none for it.
-  sandbox_exec::Engine * EngineFor(const proto::WorkOrder &order) const;
+  sandbox_exec::Engine *EngineFor(const proto::WorkOrder &order) const;
 
   // What a Cancel needs: which job, and which engine took it.
   struct InFlight {

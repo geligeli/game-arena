@@ -25,8 +25,8 @@ class BrokerService final : public proto::TournamentBroker::CallbackService {
                              std::chrono::milliseconds(30000))
       : matchmaker_(matchmaker), hello_timeout_(hello_timeout) {}
 
-  grpc::ServerBidiReactor<proto::ClientMessage, proto::ServerMessage>
-          * Play(grpc::CallbackServerContext *context) override;
+  grpc::ServerBidiReactor<proto::ClientMessage, proto::ServerMessage> *Play(
+      grpc::CallbackServerContext *context) override;
 
  private:
   Matchmaker *matchmaker_;  // not owned

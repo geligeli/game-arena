@@ -57,11 +57,10 @@ struct Seat {
 
 class GameRun : public std::enable_shared_from_this<GameRun> {
  public:
-  static std::shared_ptr<GameRun> Create(const GameDescriptor &descriptor, GameRunConfig config,
-                     std::array<Seat, 2> seats, uint64_t game_counter,
-                     EloStore *elo_store, GameHistory *history,
-                     WorkerPool *pool, Timer *timer,
-                     Task on_finished);
+  static std::shared_ptr<GameRun> Create(
+      const GameDescriptor &descriptor, GameRunConfig config,
+      std::array<Seat, 2> seats, uint64_t game_counter, EloStore *elo_store,
+      GameHistory *history, WorkerPool *pool, Timer *timer, Task on_finished);
 
   // Posts the opening work. Call exactly once, after Create().
   void Start();
@@ -69,7 +68,7 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   // Ends the game early (server shutdown). Safe from any thread.
   void Abort(std::string reason);
 
-  const std::string & game_id() const { return game_id_; }
+  const std::string &game_id() const { return game_id_; }
 
  private:
   GameRun(const GameDescriptor &descriptor, GameRunConfig config,

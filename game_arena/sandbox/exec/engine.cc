@@ -11,7 +11,7 @@ namespace sandbox_exec {
 namespace {
 
 std::string Replaced(std::string text, const std::string &from,
-              const std::string &to) {
+                     const std::string &to) {
   if (from.empty()) {
     return text;
   }
@@ -24,8 +24,9 @@ std::string Replaced(std::string text, const std::string &from,
 
 }  // namespace
 
-proto::Step Substituted(const proto::Step &step,
-                 const std::map<std::string, std::string> &replacements) {
+proto::Step Substituted(
+    const proto::Step &step,
+    const std::map<std::string, std::string> &replacements) {
   proto::Step out = step;
   for (proto::Token &token : *out.mutable_argv()) {
     std::string text = token.text();
@@ -43,7 +44,7 @@ proto::Step Substituted(const proto::Step &step,
 }
 
 std::string SandboxName(const std::string &job_id,
-                 const std::string &step_name) {
+                        const std::string &step_name) {
   // A one-step job names its sandbox exactly after itself, which is what the
   // standalone runner has always done. A multi-step one suffixes, which is
   // what lets Cancel find every sandbox of a job it holds without keeping a

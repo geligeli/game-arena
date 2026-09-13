@@ -32,8 +32,8 @@
 #include "game_arena/proto/arena.pb.h"
 #include "game_arena/proto/clients.pb.h"
 #include "game_arena/server/candidate_store.h"
-#include "game_arena/standings/elo_store.h"
 #include "game_arena/server/fleet_worker.h"
+#include "game_arena/standings/elo_store.h"
 #include "game_arena/standings/standings.h"
 
 namespace tournament_arena {
@@ -107,15 +107,13 @@ class Scheduler {
     Reservation() = default;
     ~Reservation();
     Reservation(Reservation &&other) noexcept;
-    Reservation & operator=(Reservation &&other) noexcept;
+    Reservation &operator=(Reservation &&other) noexcept;
     Reservation(const Reservation &) = delete;
-    Reservation & operator=(const Reservation &) = delete;
+    Reservation &operator=(const Reservation &) = delete;
 
-    const std::string & client_id() const { return client_id_; }
+    const std::string &client_id() const { return client_id_; }
     // Job ids aborted to make room, when the caller asked to replace.
-    const std::vector<std::string> & superseded() const {
-      return superseded_;
-    }
+    const std::vector<std::string> &superseded() const { return superseded_; }
 
    private:
     friend class Scheduler;
@@ -132,28 +130,31 @@ class Scheduler {
   //
   // An empty |client_id| means the server is running without a client
   // registry: nothing to meter, and the reservation is granted.
-  std::optional<Reservation> TryReserve(const std::string &client_id, const proto::ClientQuota &quota,
-                  bool cancel_running,
-                  std::string *error);
+  std::optional<Reservation> TryReserve(const std::string &client_id,
+                                        const proto::ClientQuota &quota,
+                                        bool cancel_running,
+                                        std::string *error);
 
   // Queues the placement series for a newly created candidate, consuming
   // |reservation|.
   std::string EnqueuePlacement(const proto::Candidate &candidate,
-                        Reservation reservation);
+                               Reservation reservation);
 
   // Queues |games| games against |opponent|: "builtin:<spec>" |
   // "<candidate_id>" | "top" | "ladder". Returns nullopt with *error set on an
   // unusable request.
   std::optional<std::string> EnqueueChallenge(const std::string &candidate_id,
-                        const std::string &opponent, int games,
-                        Reservation reservation,
-                        std::string *error);
+                                              const std::string &opponent,
+                                              int games,
+                                              Reservation reservation,
+                                              std::string *error);
 
   // Queues another measurement of |candidate_id| for a graded problem.
   // |repeats| <= 0 uses the problem's default. Returns nullopt with *error set.
-  std::optional<std::string> EnqueueRegrade(const std::string &candidate_id, int repeats,
-                      Reservation reservation,
-                      std::string *error);
+  std::optional<std::string> EnqueueRegrade(const std::string &candidate_id,
+                                            int repeats,
+                                            Reservation reservation,
+                                            std::string *error);
 
   std::optional<proto::Job> GetJob(const std::string &job_id) const;
 
@@ -191,8 +192,9 @@ class Scheduler {
   };
 
   // Caller holds mutex_.
-  std::optional<std::vector<std::string>> ExpandOpponentsLocked(const proto::Candidate &candidate,
-                             const std::string &spec, std::string *error) const;
+  std::optional<std::vector<std::string>> ExpandOpponentsLocked(
+      const proto::Candidate &candidate, const std::string &spec,
+      std::string *error) const;
   // Builds the whole order, opponent sources included. Returns nullopt when the
   // named rival cannot play (unknown, not ready, wrong game). Not const: each
   // call consumes an order id.
@@ -205,8 +207,8 @@ class Scheduler {
   bool FillSideLocked(const proto::Candidate &candidate,
                       proto::Side *side) const;
   std::string EnqueueLocked(const proto::Candidate &candidate,
-                     const std::vector<std::string> &opponents, int games,
-                     const std::string &client_id);
+                            const std::vector<std::string> &opponents,
+                            int games, const std::string &client_id);
   // Aborts |job|, cancelling whatever it has in flight. Caller holds mutex_.
   void AbortJobLocked(Job *job, const std::string &reason);
   // Drops a reservation that was never consumed. Called by ~Reservation.

@@ -224,7 +224,7 @@ int RpcError(const grpc::Status &status, const std::string &server) {
   }
 }
 
-const char * StatusName(proto::Candidate::Status status) {
+const char *StatusName(proto::Candidate::Status status) {
   switch (status) {
     case proto::Candidate::PENDING:
       return "pending";
@@ -241,7 +241,7 @@ const char * StatusName(proto::Candidate::Status status) {
   }
 }
 
-const char * JobStateName(proto::Job::State state) {
+const char *JobStateName(proto::Job::State state) {
   switch (state) {
     case proto::Job::QUEUED:
       return "queued";
@@ -260,7 +260,7 @@ const char * JobStateName(proto::Job::State state) {
 
 // How far a running job has got. Worth showing because a build can take half
 // an hour: "running" on its own does not tell you whether to keep waiting.
-const char * PhaseName(proto::OrderProgress::Phase phase) {
+const char *PhaseName(proto::OrderProgress::Phase phase) {
   switch (phase) {
     case proto::OrderProgress::CLONING:
       return "cloning";
@@ -336,7 +336,7 @@ void PrintJob(const proto::Job &job) {
 // Polls until the job reaches a terminal state, printing state transitions.
 // Returns the exit code: 0 on DONE, 1 on FAILED/CANCELLED or an RPC error.
 int WaitForJob(const Client &client, const std::string &server,
-                const std::string &job_id) {
+               const std::string &job_id) {
   proto::Job::State last = proto::Job::QUEUED;
   // Tracked alongside the state so a long build reports cloning, then
   // building, then running, instead of one "running" line for half an hour.
@@ -471,8 +471,7 @@ bool ReadFile(const std::string &path, std::string *content) {
 // carry are collected from a directory -- a kit's own BUILD file is for
 // building locally, and the coordinator generates the one that compiles a
 // submission.
-bool KitSubmitFiles(const Client &client,
-                    std::vector<std::string> *files) {
+bool KitSubmitFiles(const Client &client, std::vector<std::string> *files) {
   static constexpr std::array<std::string_view, 5> kSources = {
       ".h", ".hpp", ".cc", ".cpp", ".inl"};
   bool ok = true;
@@ -644,7 +643,7 @@ int CmdSubmit(const Client &client, const std::string &server) {
 }
 
 int CmdJob(const Client &client, const std::string &server,
-            const std::vector<char *> &args) {
+           const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "job: a job id is required\n");
     return kExitUsage;
@@ -740,8 +739,8 @@ int CmdLeaderboard(const Client &client, const std::string &server) {
 // out of the directory anyway is a coordinator to stop trusting, so it is
 // refused here rather than written.
 int PullSourceFile(const Client &client, const std::string &server,
-                    const std::string &candidate_id, const std::string &path,
-                    const std::filesystem::path &into) {
+                   const std::string &candidate_id, const std::string &path,
+                   const std::filesystem::path &into) {
   proto::GetSourceRequest request;
   request.set_candidate_id(candidate_id);
   request.set_path(path);
@@ -786,7 +785,7 @@ int PullSourceFile(const Client &client, const std::string &server,
 }
 
 int CmdSource(const Client &client, const std::string &server,
-               const std::vector<char *> &args) {
+              const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "source: a candidate id is required\n");
     return kExitUsage;
@@ -894,7 +893,7 @@ int CmdSource(const Client &client, const std::string &server,
 }
 
 int CmdEvaluate(const Client &client, const std::string &server,
-                 const std::vector<char *> &args) {
+                const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "evaluate: a candidate id is required\n");
     return kExitUsage;

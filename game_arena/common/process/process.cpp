@@ -51,8 +51,7 @@ class FdOutputBuffer : public std::streambuf {
     return ch;
   }
 
-  std::streamsize xsputn(const char* s,
-              std::streamsize count) override {
+  std::streamsize xsputn(const char* s, std::streamsize count) override {
     if (fd_ < 0) {
       throw std::runtime_error("stdin pipe already closed");
     }
@@ -90,8 +89,8 @@ struct ExecVectors {
 };
 
 ExecVectors BuildExecVectors(const std::string& executable,
-                      const std::vector<std::string>& arguments,
-                      const std::vector<std::string>& env) {
+                             const std::vector<std::string>& arguments,
+                             const std::vector<std::string>& env) {
   ExecVectors vectors;
   vectors.argv_storage.reserve(arguments.size() + 1);
   vectors.argv_storage.push_back(executable);
@@ -170,7 +169,8 @@ InputStreamProcess::InputStreamProcess(std::unique_ptr<Impl> impl)
 InputStreamProcess::InputStreamProcess(InputStreamProcess&& other) noexcept =
     default;
 
-InputStreamProcess& InputStreamProcess::operator=(InputStreamProcess&& other) noexcept = default;
+InputStreamProcess& InputStreamProcess::operator=(
+    InputStreamProcess&& other) noexcept = default;
 
 InputStreamProcess::~InputStreamProcess() {
   if (!impl_) {
@@ -263,8 +263,8 @@ std::string ResolveExecutable(const std::string& name) {
 }
 
 RunResult RunCommand(const std::string& executable,
-                const std::vector<std::string>& arguments,
-                const RunOptions& options) {
+                     const std::vector<std::string>& arguments,
+                     const RunOptions& options) {
   RunResult result;
   // A relative path with a '/' in it is relative to where the command runs,
   // not to where the caller happens to be: "bazel-bin/grader/grade" means the
@@ -385,7 +385,8 @@ int ExitCodeOf(int status) {
 }
 
 // The caller's environment with |extra| laid over it, "K=V" by key.
-std::vector<std::string> MergedEnvironment(const std::vector<std::string>& extra) {
+std::vector<std::string> MergedEnvironment(
+    const std::vector<std::string>& extra) {
   std::vector<std::string> merged;
   for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
     merged.emplace_back(*entry);
@@ -401,8 +402,8 @@ std::vector<std::string> MergedEnvironment(const std::vector<std::string>& extra
 }
 
 std::optional<Child> Child::Start(const std::string& executable,
-                  const std::vector<std::string>& arguments,
-                  const ChildOptions& options) {
+                                  const std::vector<std::string>& arguments,
+                                  const ChildOptions& options) {
   const std::string resolved = ResolveExecutable(executable);
   if (resolved.empty()) {
     return std::nullopt;

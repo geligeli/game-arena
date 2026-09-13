@@ -87,8 +87,8 @@ grpc::Status FleetService::Attach(
     return {grpc::StatusCode::INVALID_ARGUMENT, "worker_id is required"};
   }
 
-  auto worker = std::make_shared<StreamFleetWorker>(
-      hello.worker_id(), hello.slots(), stream);
+  auto worker = std::make_shared<StreamFleetWorker>(hello.worker_id(),
+                                                    hello.slots(), stream);
   worker->Start();
   scheduler_->AddWorker(worker);
 

@@ -43,10 +43,10 @@ class EloStandings final : public Standings {
   // Rank() with an empty problem_id_ needs it: there the problem comes from
   // each rating store key rather than from this object.
   Standing GetIn(const std::string &problem_id,
-             const std::string &candidate_id) const;
+                 const std::string &candidate_id) const;
 
   tournament_broker::EloStore *elo_store_;  // not owned
-  const CandidateView *candidates_;        // not owned
+  const CandidateView *candidates_;         // not owned
   const std::string problem_id_;
 };
 

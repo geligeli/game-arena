@@ -53,8 +53,7 @@ class ContainerEngine final : public Engine {
 
   bool Prepare(const proto::Workspace &prototype, int lanes,
                std::string *error) override;
-  proto::JobResult Run(const proto::Job &job,
-           Observer *observer) override;
+  proto::JobResult Run(const proto::Job &job, Observer *observer) override;
   void Cancel(const std::string &job_id) override;
 
  private:

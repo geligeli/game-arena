@@ -41,9 +41,9 @@ class FakeTransport final : public Transport {
 
   void ClearOutstanding() { write_outstanding_ = false; }
 
-  const std::vector<uint64_t> & sent() const { return sent_; }
+  const std::vector<uint64_t> &sent() const { return sent_; }
   int finishes() const { return finishes_; }
-  const grpc::Status & finish_status() const { return finish_status_; }
+  const grpc::Status &finish_status() const { return finish_status_; }
 
  private:
   std::vector<uint64_t> sent_;

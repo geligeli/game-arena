@@ -58,11 +58,13 @@ class SandboxRunnerService final : public proto::SandboxService::Service {
   SandboxRunnerService(SandboxRunnerConfig config,
                        sandbox_exec::Engine *engine);
 
-  grpc::Status Run(grpc::ServerContext *context, const proto::RunRequest *request,
-           proto::RunResponse *response) override;
+  grpc::Status Run(grpc::ServerContext *context,
+                   const proto::RunRequest *request,
+                   proto::RunResponse *response) override;
 
-  grpc::Status Kill(grpc::ServerContext *context, const proto::KillRequest *request,
-            proto::KillResponse *response) override;
+  grpc::Status Kill(grpc::ServerContext *context,
+                    const proto::KillRequest *request,
+                    proto::KillResponse *response) override;
 
  private:
   const SandboxRunnerConfig config_;

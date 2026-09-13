@@ -184,7 +184,7 @@ class OrderRunnerContainerTest : public ::testing::Test {
   // lines and is already asserted byte for byte in
   // //game_arena/sandbox/exec:entrypoint_test.
   static std::string RunArgvFor(const std::string &log,
-                         const std::string &container) {
+                                const std::string &container) {
     const std::string name_flag = "--name " + container + " ";
     const std::size_t at = log.find(name_flag);
     if (at == std::string::npos) {
@@ -199,7 +199,7 @@ class OrderRunnerContainerTest : public ::testing::Test {
   }
 
   static proto::WorkOrder MakeOrder(const std::string &id,
-                        const std::string &candidate) {
+                                    const std::string &candidate) {
     proto::WorkOrder order;
     order.set_order_id(id);
     order.set_game("nim");

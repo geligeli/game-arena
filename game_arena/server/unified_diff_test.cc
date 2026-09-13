@@ -218,12 +218,10 @@ TEST(UnifiedDiffTest, SynthesizedPatchIsAcceptedByGitApply) {
 
 TEST(UnifiedDiffTest, GlobMatchesWithinAndAcrossSegments) {
   // '**' crosses separators.
-  EXPECT_TRUE(
-      PathMatchesGlob("problem/lib/core.h", "problem/lib/**"));
+  EXPECT_TRUE(PathMatchesGlob("problem/lib/core.h", "problem/lib/**"));
   EXPECT_TRUE(PathMatchesGlob("a/b/c/d.h", "a/**/d.h"));
   EXPECT_TRUE(PathMatchesGlob("a/d.h", "a/**/d.h")) << "** also matches none";
-  EXPECT_FALSE(
-      PathMatchesGlob("problem/tools/bench.cc", "problem/lib/**"));
+  EXPECT_FALSE(PathMatchesGlob("problem/tools/bench.cc", "problem/lib/**"));
 
   // A single '*' stops at a separator.
   EXPECT_TRUE(PathMatchesGlob("core/a.h", "core/*.h"));

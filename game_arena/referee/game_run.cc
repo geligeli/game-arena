@@ -33,11 +33,10 @@ GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
       session_(descriptor.new_session()),
       gen_(std::random_device{}() ^ static_cast<uint32_t>(game_counter)) {}
 
-std::shared_ptr<GameRun> GameRun::Create(const GameDescriptor &descriptor, GameRunConfig config,
-                     std::array<Seat, 2> seats, uint64_t game_counter,
-                     EloStore *elo_store, GameHistory *history,
-                     WorkerPool *pool, Timer *timer,
-                     Task on_finished) {
+std::shared_ptr<GameRun> GameRun::Create(
+    const GameDescriptor &descriptor, GameRunConfig config,
+    std::array<Seat, 2> seats, uint64_t game_counter, EloStore *elo_store,
+    GameHistory *history, WorkerPool *pool, Timer *timer, Task on_finished) {
   return std::shared_ptr<GameRun>(
       new GameRun(descriptor, config, std::move(seats), game_counter, elo_store,
                   history, pool, timer, std::move(on_finished)));
@@ -103,8 +102,7 @@ void GameRun::Begin() {
   Step();
 }
 
-bool GameRun::SendYourTurn(int seat,
-                           std::chrono::milliseconds allowed) {
+bool GameRun::SendYourTurn(int seat, std::chrono::milliseconds allowed) {
   proto::ServerMessage msg;
   auto *turn = msg.mutable_your_turn();
   turn->set_state(session_->SerializeState());

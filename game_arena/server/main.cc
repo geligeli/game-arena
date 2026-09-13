@@ -159,7 +159,8 @@ std::string ResolveRemoteHead(const std::string &url) {
 // Turns the problem's evaluation spec into the scheduler's knobs. The scheduler
 // stays problem-agnostic: it knows about orders and timeouts, not about games
 // or benchmarks.
-tournament_arena::SchedulerConfig SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem) {
+tournament_arena::SchedulerConfig SchedulerConfigFor(
+    const tournament_arena::proto::ProblemConfig &problem) {
   tournament_arena::SchedulerConfig config;
   config.build_timeout_s = static_cast<int>(problem.build().timeout_s());
   config.build_targets.assign(problem.build().targets().begin(),

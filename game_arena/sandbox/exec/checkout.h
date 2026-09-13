@@ -20,8 +20,7 @@ namespace sandbox_exec {
 // set.
 bool EnsureClone(const std::string &git, const std::string &source,
                  const std::filesystem::path &dest,
-                 const std::filesystem::path &log_dir,
-                 std::string *error);
+                 const std::filesystem::path &log_dir, std::string *error);
 
 // A best-effort fetch, then a forced checkout of |commit| and a clean, so the
 // tree is exactly that commit -- a previous job's patched-in files included.
@@ -31,8 +30,7 @@ bool EnsureClone(const std::string &git, const std::string &source,
 // leaves the tree where it is. Returns false with *error set.
 bool SyncToCommit(const std::string &git, const std::filesystem::path &repo,
                   const std::string &commit,
-                  const std::filesystem::path &log_dir,
-                  std::string *error);
+                  const std::filesystem::path &log_dir, std::string *error);
 
 }  // namespace sandbox_exec
 

@@ -12,7 +12,7 @@ namespace {
 using sandbox_common::ShellQuote;
 
 std::string WorkDirOf(const proto::Workspace &workspace,
-               const proto::Step &step) {
+                      const proto::Step &step) {
   if (!step.cwd().empty()) {
     return step.cwd();
   }
@@ -36,7 +36,7 @@ std::string RenderArgv(const proto::Step &step) {
 }
 
 std::string EntrypointScript(const proto::Workspace &workspace,
-                      const proto::Step &step) {
+                             const proto::Step &step) {
   std::string script = "set -eu\n";
   // The tree and the scratch dir are mounted; the one thing left to arrange
   // is a HOME bazel can write to.

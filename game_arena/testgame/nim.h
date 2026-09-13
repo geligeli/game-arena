@@ -54,7 +54,8 @@ bool ParseState(std::string_view bytes, int *remaining, int *player);
 // Builtins for Nim. "random" plays uniformly among the legal takes; "optimal"
 // plays the winning strategy (leave a multiple of four behind) and is there so
 // a test can assert that a stronger opponent actually wins.
-std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec, std::string *error);
+std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec,
+                                                        std::string *error);
 
 tournament_broker::GameDescriptor Descriptor();
 

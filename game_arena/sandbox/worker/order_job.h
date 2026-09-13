@@ -71,8 +71,7 @@ bool JobForOrder(int slot, const proto::WorkOrder &order,
                  sandbox_exec::proto::Job *job, std::string *error);
 
 // Where |slot|'s logs go, which is also where the engine writes them.
-std::filesystem::path SlotLogDir(const OrderJobConfig &config,
-                int slot);
+std::filesystem::path SlotLogDir(const OrderJobConfig &config, int slot);
 
 }  // namespace tournament_arena
 

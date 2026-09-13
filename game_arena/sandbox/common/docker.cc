@@ -30,8 +30,8 @@ std::string SanitizeContainerName(const std::string &value) {
   return name;
 }
 
-std::string BindMount(const std::filesystem::path &source, const std::string &target,
-               bool readonly) {
+std::string BindMount(const std::filesystem::path &source,
+                      const std::string &target, bool readonly) {
   std::string mount =
       "type=bind,source=" + source.string() + ",target=" + target;
   if (readonly) {
@@ -41,7 +41,7 @@ std::string BindMount(const std::filesystem::path &source, const std::string &ta
 }
 
 std::string VolumeMount(const std::string &volume, const std::string &target,
-                 bool readonly) {
+                        bool readonly) {
   std::string mount = "type=volume,source=" + volume + ",target=" + target;
   if (readonly) {
     mount += ",readonly";
@@ -54,21 +54,21 @@ std::string ScratchPrelude() {
 }
 
 StepResult CreateVolume(const std::string &docker, const std::string &name,
-                  const std::filesystem::path &log_dir,
-                  const std::string &tag) {
+                        const std::filesystem::path &log_dir,
+                        const std::string &tag) {
   return RunStep(docker, {"volume", "create", name}, /*cwd=*/{}, log_dir, tag,
                  std::chrono::seconds(60));
 }
 
 process::RunResult RemoveVolume(const std::string &docker,
-                  const std::string &name) {
+                                const std::string &name) {
   process::RunOptions options;
   options.timeout = std::chrono::seconds(60);
   return process::RunCommand(docker, {"volume", "rm", "-f", name}, options);
 }
 
 process::RunResult KillContainer(const std::string &docker,
-                   const std::string &name) {
+                                 const std::string &name) {
   // The client-side wait may already have been stopped by a timeout or a
   // cancel; the container itself is the daemon's and would otherwise keep
   // running.
@@ -78,35 +78,36 @@ process::RunResult KillContainer(const std::string &docker,
 }
 
 process::RunResult RemoveContainer(const std::string &docker,
-                     const std::string &name) {
+                                   const std::string &name) {
   process::RunOptions options;
   options.timeout = std::chrono::seconds(60);
   return process::RunCommand(docker, {"rm", "-f", name}, options);
 }
 
 StepResult WaitForContainer(const std::string &docker, const std::string &name,
-                      std::chrono::seconds timeout,
-                      const std::filesystem::path &log_dir,
-                      const std::string &tag) {
+                            std::chrono::seconds timeout,
+                            const std::filesystem::path &log_dir,
+                            const std::string &tag) {
   return RunStep(docker, {"wait", name}, /*cwd=*/{}, log_dir, tag, timeout);
 }
 
 StepResult ContainerLogs(const std::string &docker, const std::string &name,
-                   const std::filesystem::path &log_dir,
-                   const std::string &tag) {
+                         const std::filesystem::path &log_dir,
+                         const std::string &tag) {
   return RunStep(docker, {"logs", name}, /*cwd=*/{}, log_dir, tag,
                  std::chrono::seconds(60));
 }
 
-StepResult CreateInternalNetwork(const std::string &docker, const std::string &name,
-                           const std::filesystem::path &log_dir,
-                           const std::string &tag) {
+StepResult CreateInternalNetwork(const std::string &docker,
+                                 const std::string &name,
+                                 const std::filesystem::path &log_dir,
+                                 const std::string &tag) {
   return RunStep(docker, {"network", "create", "--internal", name},
                  /*cwd=*/{}, log_dir, tag, std::chrono::seconds(60));
 }
 
 process::RunResult RemoveNetwork(const std::string &docker,
-                   const std::string &name) {
+                                 const std::string &name) {
   process::RunOptions options;
   options.timeout = std::chrono::seconds(60);
   return process::RunCommand(docker, {"network", "rm", name}, options);

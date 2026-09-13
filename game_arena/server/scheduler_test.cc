@@ -96,8 +96,9 @@ class SchedulerTest : public ::testing::Test {
     return std::move(*reservation);
   }
 
-  proto::Candidate AddCandidate(const std::string &name,
-                    proto::Candidate::Status status = proto::Candidate::READY) {
+  proto::Candidate AddCandidate(
+      const std::string &name,
+      proto::Candidate::Status status = proto::Candidate::READY) {
     proto::SubmitRequest request;
     request.set_display_name(name);
     request.set_author("agent");
@@ -114,8 +115,8 @@ class SchedulerTest : public ::testing::Test {
     return *updated;
   }
 
-  proto::OrderResult Result(const std::string &order_id, bool build_ok = true, int wins = 1,
-              int losses = 1) {
+  proto::OrderResult Result(const std::string &order_id, bool build_ok = true,
+                            int wins = 1, int losses = 1) {
     proto::OrderResult result;
     result.set_order_id(order_id);
     result.set_build_ok(build_ok);

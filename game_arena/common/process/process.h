@@ -83,8 +83,8 @@ struct RunResult {
 // resolved through PATH when it contains no '/'; a relative path with one is
 // taken relative to |options.cwd| when that is set.
 RunResult RunCommand(const std::string& executable,
-                const std::vector<std::string>& arguments,
-                const RunOptions& options);
+                     const std::vector<std::string>& arguments,
+                     const RunOptions& options);
 
 // ---------------------------------------------------------------------------
 // Long-running children
@@ -110,8 +110,8 @@ class Child {
   // Nullopt when |executable| cannot be launched. Resolved through PATH when
   // it contains no '/'.
   static std::optional<Child> Start(const std::string& executable,
-                    const std::vector<std::string>& arguments,
-                    const ChildOptions& options);
+                                    const std::vector<std::string>& arguments,
+                                    const ChildOptions& options);
 
   Child(Child&& other) noexcept;
   Child& operator=(Child&& other) noexcept;

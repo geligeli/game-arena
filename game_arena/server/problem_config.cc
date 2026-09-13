@@ -33,7 +33,7 @@ class CollectingErrors final : public google::protobuf::io::ErrorCollector {
                     column + 1, ": ", message);
   }
 
-  const std::string & text() const { return text_; }
+  const std::string &text() const { return text_; }
 
  private:
   std::string text_;
@@ -80,7 +80,7 @@ bool IsValidProblemId(std::string_view problem_id) {
 }
 
 std::string ExpandSubmissionId(std::string_view text,
-                        std::string_view submission_id) {
+                               std::string_view submission_id) {
   constexpr std::string_view kPlaceholder = "{submission_id}";
   std::string out;
   out.reserve(text.size());
@@ -97,7 +97,8 @@ std::string ExpandSubmissionId(std::string_view text,
   return out;
 }
 
-std::optional<proto::ProblemConfig> ParseProblemConfigText(std::string_view text, std::string *error) {
+std::optional<proto::ProblemConfig> ParseProblemConfigText(
+    std::string_view text, std::string *error) {
   proto::ProblemConfig config;
   CollectingErrors errors;
   google::protobuf::TextFormat::Parser parser;
@@ -290,7 +291,7 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
   return true;
 }
 
-const proto::MetricSpec * PrimaryMetric(const proto::ProblemConfig &config) {
+const proto::MetricSpec *PrimaryMetric(const proto::ProblemConfig &config) {
   if (config.ranking().kind() != proto::RankingSpec::METRIC ||
       !config.has_grade()) {
     return nullptr;
@@ -330,7 +331,8 @@ void ResolveRelativeRepoUrl(proto::ProblemConfig *config,
   config->mutable_repo()->set_url(url_out);
 }
 
-std::optional<proto::ProblemConfig> LoadProblemConfig(const std::filesystem::path &path, std::string *error) {
+std::optional<proto::ProblemConfig> LoadProblemConfig(
+    const std::filesystem::path &path, std::string *error) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     *error = absl::StrCat("cannot read problem config ", path.string());

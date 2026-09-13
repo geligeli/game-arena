@@ -61,9 +61,9 @@ std::string MintToken() {
   return token;
 }
 
-proto::Client MakeClient(std::string_view client_id, std::string_view display_name,
-                std::string_view token,
-                const proto::ClientQuota &quota) {
+proto::Client MakeClient(std::string_view client_id,
+                         std::string_view display_name, std::string_view token,
+                         const proto::ClientQuota &quota) {
   proto::Client client;
   client.set_client_id(std::string(client_id));
   if (!display_name.empty()) {
@@ -87,8 +87,7 @@ std::string ClientBlockText(const proto::Client &client) {
 }
 
 bool AppendClientToRegistry(const std::filesystem::path &path,
-                            const proto::Client &client,
-                            std::string *error) {
+                            const proto::Client &client, std::string *error) {
   std::string existing;
   if (std::filesystem::exists(path)) {
     std::ifstream in(path, std::ios::binary);
@@ -165,7 +164,8 @@ bool ClientRegistry::Load(std::string *error) {
   return true;
 }
 
-std::optional<ClientIdentity> ClientRegistry::Resolve(std::string_view token) const {
+std::optional<ClientIdentity> ClientRegistry::Resolve(
+    std::string_view token) const {
   if (token.empty()) {
     return std::nullopt;
   }

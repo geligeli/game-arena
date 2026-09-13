@@ -43,7 +43,7 @@ class WorkerPool {
   ~WorkerPool();
 
   WorkerPool(const WorkerPool &) = delete;
-  WorkerPool & operator=(const WorkerPool &) = delete;
+  WorkerPool &operator=(const WorkerPool &) = delete;
 
   // Queues |task|. Silently dropped after Stop().
   void Submit(Task task);
@@ -77,7 +77,7 @@ class Strand : public std::enable_shared_from_this<Strand> {
   }
 
   Strand(const Strand &) = delete;
-  Strand & operator=(const Strand &) = delete;
+  Strand &operator=(const Strand &) = delete;
 
   void Post(Task task);
 
@@ -100,7 +100,7 @@ class Timer {
   ~Timer();
 
   Timer(const Timer &) = delete;
-  Timer & operator=(const Timer &) = delete;
+  Timer &operator=(const Timer &) = delete;
 
   // Runs |fn| on the timer thread after |delay|. |fn| must not block: post the
   // real work elsewhere. Returns an id usable with Cancel().

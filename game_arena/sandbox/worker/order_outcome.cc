@@ -19,8 +19,8 @@ namespace {
 
 using sandbox_common::TailOf;
 
-const sx::StepResult * StepNamed(const sx::PhaseResult &phase,
-               const std::string &name) {
+const sx::StepResult *StepNamed(const sx::PhaseResult &phase,
+                                const std::string &name) {
   for (const sx::StepResult &step : phase.steps()) {
     if (step.name() == name) {
       return &step;
@@ -29,8 +29,8 @@ const sx::StepResult * StepNamed(const sx::PhaseResult &phase,
   return nullptr;
 }
 
-const sx::PhaseResult * PhaseNamed(const sx::JobResult &result,
-                const std::string &name) {
+const sx::PhaseResult *PhaseNamed(const sx::JobResult &result,
+                                  const std::string &name) {
   for (const sx::PhaseResult &phase : result.phases()) {
     if (phase.name() == name) {
       return &phase;
@@ -42,7 +42,7 @@ const sx::PhaseResult * PhaseNamed(const sx::JobResult &result,
 // The order's own candidate is the one being evaluated; the opponent's build
 // breaking is somebody else's problem and must not retire this submission.
 std::string BlameForBuild(const proto::WorkOrder &order,
-                   const std::string &log) {
+                          const std::string &log) {
   if (!order.has_opponent()) {
     return "";
   }
@@ -142,7 +142,7 @@ void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
 }  // namespace
 
 OrderOutcome OutcomeFor(const proto::WorkOrder &order,
-                const sx::JobResult &result) {
+                        const sx::JobResult &result) {
   OrderOutcome outcome;
 
   const sx::PhaseResult *build = PhaseNamed(result, "build");

@@ -31,8 +31,9 @@ void EloStore::Load() {
 }
 
 std::pair<double, double> EloStore::RecordResult(const std::string &game,
-                            const std::string &player_a,
-                            const std::string &player_b, double score_a) {
+                                                 const std::string &player_a,
+                                                 const std::string &player_b,
+                                                 double score_a) {
   std::pair<double, double> new_ratings;
   std::string blob;
   uint64_t version = 0;
@@ -70,7 +71,8 @@ std::pair<double, double> EloStore::RecordResult(const std::string &game,
   return new_ratings;
 }
 
-proto::Rating EloStore::Get(const std::string &game, const std::string &player) const {
+proto::Rating EloStore::Get(const std::string &game,
+                            const std::string &player) const {
   std::lock_guard lock(mutex_);
   const auto it = store_.ratings().find(Key(game, player));
   if (it == store_.ratings().end()) {
@@ -95,8 +97,8 @@ void EloStore::Save(const std::string &blob, uint64_t version) {
   const std::filesystem::path tmp = path_.string() + ".tmp";
   {
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out || !out.write(blob.data(), static_cast<std::streamsize>(
-                                            blob.size()))) {
+    if (!out ||
+        !out.write(blob.data(), static_cast<std::streamsize>(blob.size()))) {
       LOG(ERROR) << "Could not write rating store " << tmp;
       return;
     }

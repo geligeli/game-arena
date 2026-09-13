@@ -41,9 +41,9 @@ std::string MintToken();
 
 // The registry entry for |token|. Hashes it; the raw token is not kept.
 // Zero quota fields fall back to the problem's defaults at resolve time.
-proto::Client MakeClient(std::string_view client_id, std::string_view display_name,
-                std::string_view token,
-                const proto::ClientQuota &quota);
+proto::Client MakeClient(std::string_view client_id,
+                         std::string_view display_name, std::string_view token,
+                         const proto::ClientQuota &quota);
 
 // |client| as the text-format block an operator pastes into the registry.
 std::string ClientBlockText(const proto::Client &client);
@@ -52,8 +52,7 @@ std::string ClientBlockText(const proto::Client &client);
 // does not exist. The existing file is parsed first: a registry that does not
 // load, or already has this client_id, is left untouched and reported.
 bool AppendClientToRegistry(const std::filesystem::path &path,
-                            const proto::Client &client,
-                            std::string *error);
+                            const proto::Client &client, std::string *error);
 
 // A resolved caller.
 struct ClientIdentity {

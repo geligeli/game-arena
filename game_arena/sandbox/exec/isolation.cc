@@ -48,7 +48,7 @@ std::vector<std::string> IsolationArgs(const proto::Isolation &isolation) {
 }
 
 std::string NetworkArg(const proto::Isolation &isolation,
-                const std::string &phase_network) {
+                       const std::string &phase_network) {
   switch (isolation.network()) {
     case proto::Isolation::NETWORK_PHASE_BRIDGE:
       return phase_network;

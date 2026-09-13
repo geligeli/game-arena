@@ -59,7 +59,7 @@ class Observer {
 // one place, because Cancel has to be able to derive these names from a job
 // it was handed rather than from bookkeeping it hopes is up to date.
 std::string SandboxName(const std::string &job_id,
-                 const std::string &step_name);
+                        const std::string &step_name);
 
 // The placeholders a step's argv and environment may carry, which only the
 // engine running it can resolve. The list is closed on purpose: a job that
@@ -76,7 +76,7 @@ inline constexpr char kPortFilePlaceholder[] = "{{port_file}}";
 // report path in the environment and a bot names its peer in argv, and an
 // engine that substituted only one of them would work until it didn't.
 proto::Step Substituted(const proto::Step &step,
-                 const std::map<std::string, std::string> &replacements);
+                        const std::map<std::string, std::string> &replacements);
 
 class Engine {
  public:
@@ -99,8 +99,7 @@ class Engine {
 
   // Runs |job| to completion. Called from the caller's own thread; safe to
   // call concurrently for jobs with different ids.
-  virtual proto::JobResult Run(const proto::Job &job,
-                   Observer *observer) = 0;
+  virtual proto::JobResult Run(const proto::Job &job, Observer *observer) = 0;
 
   // Aborts |job_id| if this engine is running it. Called from another thread
   // while Run is in flight, so it must be safe against the job finishing

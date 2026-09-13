@@ -26,9 +26,9 @@ namespace json = boost::json;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
 
-using tournament_arena::Standing;
 using ::testing::HasSubstr;
 using ::testing::Not;
+using tournament_arena::Standing;
 
 // Two rows whose display name and author carry characters the HTML and JSON
 // escapers each have to handle.
@@ -88,11 +88,11 @@ class FakeCandidates : public tournament_arena::CandidateView {
 // A blocking GET against the loopback listener, so the test drives the server
 // over a real socket rather than calling its renderers directly.
 http::response<http::string_body> Get(int port, const std::string &target,
-         http::verb method = http::verb::get) {
+                                      http::verb method = http::verb::get) {
   net::io_context ioc;
   beast::tcp_stream stream(ioc);
-  stream.connect({net::ip::make_address("127.0.0.1"),
-                  static_cast<unsigned short>(port)});
+  stream.connect(
+      {net::ip::make_address("127.0.0.1"), static_cast<unsigned short>(port)});
   http::request<http::string_body> request(method, target, 11);
   request.set(http::field::host, "127.0.0.1");
   http::write(stream, request);
@@ -115,9 +115,7 @@ class HttpLeaderboardTest : public ::testing::Test {
     history_ = std::make_unique<GameHistory>(dir_);
   }
 
-  void TearDown() override {
-    std::filesystem::remove_all(dir_);
-  }
+  void TearDown() override { std::filesystem::remove_all(dir_); }
 
   std::filesystem::path dir_;
   std::unique_ptr<GameHistory> history_;

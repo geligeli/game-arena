@@ -27,7 +27,7 @@ std::vector<std::string> IsolationArgs(const proto::Isolation &isolation);
 // phase's own bridge. Empty leaves docker's default, which is never what a
 // sandbox wants and so is never returned here.
 std::string NetworkArg(const proto::Isolation &isolation,
-                const std::string &phase_network);
+                       const std::string &phase_network);
 
 // True when |isolation| asks for a bridge the engine has to create first.
 bool NeedsPhaseNetwork(const proto::Isolation &isolation);

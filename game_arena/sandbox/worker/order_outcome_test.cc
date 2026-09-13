@@ -33,8 +33,8 @@ proto::WorkOrder GradedOrder(const std::string &metric = "wall_ms") {
   return order;
 }
 
-sx::StepResult * AddStep(sx::PhaseResult *phase, const std::string &name, int exit_code,
-             const std::string &out = "") {
+sx::StepResult *AddStep(sx::PhaseResult *phase, const std::string &name,
+                        int exit_code, const std::string &out = "") {
   sx::StepResult *step = phase->add_steps();
   step->set_name(name);
   step->set_started(true);
@@ -43,8 +43,8 @@ sx::StepResult * AddStep(sx::PhaseResult *phase, const std::string &name, int ex
   return step;
 }
 
-sx::StepResult * WithBuild(sx::JobResult *result, int exit_code,
-               const std::string &out = "") {
+sx::StepResult *WithBuild(sx::JobResult *result, int exit_code,
+                          const std::string &out = "") {
   sx::PhaseResult *phase = result->add_phases();
   phase->set_name("build");
   return AddStep(phase, "build", exit_code, out);

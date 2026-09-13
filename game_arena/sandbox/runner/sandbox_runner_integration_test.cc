@@ -168,7 +168,7 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
   }
 
   static grpc::Status Run(const proto::RunRequest &request,
-                  proto::RunResponse *response) {
+                          proto::RunResponse *response) {
     grpc::ClientContext context;
     return stub_->Run(&context, request, response);
   }

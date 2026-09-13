@@ -34,16 +34,18 @@ std::string CandidateBinaryName(const proto::CandidateHarness &harness) {
   return harness.binary_name().empty() ? "bot" : harness.binary_name();
 }
 
-std::string CandidateTarget(const std::string &dir, const std::string &candidate_id,
-                     const proto::CandidateHarness &harness) {
+std::string CandidateTarget(const std::string &dir,
+                            const std::string &candidate_id,
+                            const proto::CandidateHarness &harness) {
   return "//" + dir + "/" + candidate_id + ":" + CandidateBinaryName(harness);
 }
 
-std::string GenerateCandidateBuild(
-    const std::string &dir, const std::string &candidate_id,
-    const proto::CandidateHarness &harness,
-    const std::vector<std::string> &file_paths, const std::string &entry_header,
-    const std::vector<std::string> &extra_deps) {
+std::string GenerateCandidateBuild(const std::string &dir,
+                                   const std::string &candidate_id,
+                                   const proto::CandidateHarness &harness,
+                                   const std::vector<std::string> &file_paths,
+                                   const std::string &entry_header,
+                                   const std::vector<std::string> &extra_deps) {
   if (file_paths.empty() || entry_header.empty()) {
     return {};
   }

@@ -69,10 +69,9 @@ class HttpLeaderboard {
   std::string RenderCandidatesJson() const;
 
   const int port_;
-  const GameHistory *history_;  // not owned
-  const tournament_arena::CandidateView
-      *candidates_;                               // not owned, may be null
-  const tournament_arena::Standings *standings_;  // not owned, may be null
+  const GameHistory *history_;                         // not owned
+  const tournament_arena::CandidateView *candidates_;  // not owned, may be null
+  const tournament_arena::Standings *standings_;       // not owned, may be null
   const std::string problem_name_;
   // Single-threaded: every operation on the acceptor and on accepted sockets
   // runs on thread_. Stop() reaches it by posting the close, so nothing touches
