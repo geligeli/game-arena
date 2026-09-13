@@ -21,7 +21,7 @@ namespace {
 
 // Equal-length, data-independent comparison. A byte-at-a-time early return
 // would let a caller with a stopwatch learn a valid hash one byte at a time.
-auto ConstantTimeEquals(std::string_view a, std::string_view b) -> bool {
+bool ConstantTimeEquals(std::string_view a, std::string_view b) {
   if (a.size() != b.size()) {
     return false;
   }
@@ -34,7 +34,7 @@ auto ConstantTimeEquals(std::string_view a, std::string_view b) -> bool {
 
 }  // namespace
 
-auto HashToken(std::string_view token) -> std::string {
+std::string HashToken(std::string_view token) {
   unsigned char digest[SHA256_DIGEST_LENGTH];
   ::SHA256(reinterpret_cast<const unsigned char *>(token.data()), token.size(),
            digest);
@@ -48,7 +48,7 @@ auto HashToken(std::string_view token) -> std::string {
   return hex;
 }
 
-auto MintToken() -> std::string {
+std::string MintToken() {
   // random_device is the right source here and nowhere near a hot path.
   std::random_device entropy;
   std::uniform_int_distribution<unsigned> nibble(0, 15);
@@ -61,9 +61,9 @@ auto MintToken() -> std::string {
   return token;
 }
 
-auto MakeClient(std::string_view client_id, std::string_view display_name,
+proto::Client MakeClient(std::string_view client_id, std::string_view display_name,
                 std::string_view token,
-                const proto::ClientQuota &quota) -> proto::Client {
+                const proto::ClientQuota &quota) {
   proto::Client client;
   client.set_client_id(std::string(client_id));
   if (!display_name.empty()) {
@@ -76,7 +76,7 @@ auto MakeClient(std::string_view client_id, std::string_view display_name,
   return client;
 }
 
-auto ClientBlockText(const proto::Client &client) -> std::string {
+std::string ClientBlockText(const proto::Client &client) {
   // Printed through the registry message, so the block is exactly the shape
   // Load() parses -- one "clients { ... }" entry.
   proto::ClientRegistry one;
@@ -86,9 +86,9 @@ auto ClientBlockText(const proto::Client &client) -> std::string {
   return text;
 }
 
-auto AppendClientToRegistry(const std::filesystem::path &path,
+bool AppendClientToRegistry(const std::filesystem::path &path,
                             const proto::Client &client,
-                            std::string *error) -> bool {
+                            std::string *error) {
   std::string existing;
   if (std::filesystem::exists(path)) {
     std::ifstream in(path, std::ios::binary);
@@ -128,7 +128,7 @@ ClientRegistry::ClientRegistry(std::filesystem::path path,
                                proto::ClientQuota defaults)
     : path_(std::move(path)), defaults_(std::move(defaults)) {}
 
-auto ClientRegistry::Load(std::string *error) -> bool {
+bool ClientRegistry::Load(std::string *error) {
   std::ifstream in(path_, std::ios::binary);
   if (!in) {
     *error = absl::StrCat("cannot read client registry ", path_.string());
@@ -165,8 +165,7 @@ auto ClientRegistry::Load(std::string *error) -> bool {
   return true;
 }
 
-auto ClientRegistry::Resolve(std::string_view token) const
-    -> std::optional<ClientIdentity> {
+std::optional<ClientIdentity> ClientRegistry::Resolve(std::string_view token) const {
   if (token.empty()) {
     return std::nullopt;
   }
@@ -199,7 +198,7 @@ auto ClientRegistry::Resolve(std::string_view token) const
   return std::nullopt;
 }
 
-auto ClientRegistry::size() const -> std::size_t {
+std::size_t ClientRegistry::size() const {
   return static_cast<std::size_t>(registry_.clients_size());
 }
 

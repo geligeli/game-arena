@@ -30,7 +30,7 @@ namespace tournament_broker {
 // problem's orders).
 void SetRegistryOptions(const std::map<std::string, std::string> &options);
 
-auto GameRegistry() -> const std::map<std::string, GameDescriptor> &;
+const std::map<std::string, GameDescriptor> & GameRegistry();
 
 }  // namespace tournament_broker
 

@@ -33,17 +33,17 @@ class EloStandings final : public Standings {
 
   void Record(const std::string &candidate_id, const std::string &opponent,
               const proto::OrderResult &result) override;
-  auto Get(const std::string &candidate_id) const -> Standing override;
-  auto Rank(int limit) const -> std::vector<Standing> override;
-  auto score_label() const -> std::string override { return "elo"; }
-  auto has(const std::string &candidate_id) const -> bool override;
+  Standing Get(const std::string &candidate_id) const override;
+  std::vector<Standing> Rank(int limit) const override;
+  std::string score_label() const override { return "elo"; }
+  bool has(const std::string &candidate_id) const override;
 
  private:
   // Get() for a rating filed under a problem other than problem_id_. Only
   // Rank() with an empty problem_id_ needs it: there the problem comes from
   // each rating store key rather than from this object.
-  auto GetIn(const std::string &problem_id,
-             const std::string &candidate_id) const -> Standing;
+  Standing GetIn(const std::string &problem_id,
+             const std::string &candidate_id) const;
 
   tournament_broker::EloStore *elo_store_;  // not owned
   const CandidateView *candidates_;        // not owned

@@ -13,23 +13,23 @@ namespace {
 
 namespace sx = sandbox_exec::proto;
 
-auto ContainerCapabilities() -> sandbox_exec::Capabilities {
+sandbox_exec::Capabilities ContainerCapabilities() {
   return sandbox_exec::Capabilities{/*isolates=*/true, /*shared_network=*/true,
                                     /*stable_peer_names=*/true};
 }
 
-auto ProcessCapabilities() -> sandbox_exec::Capabilities {
+sandbox_exec::Capabilities ProcessCapabilities() {
   return sandbox_exec::ProcessEngine().capabilities();
 }
 
-auto Config() -> OrderJobConfig {
+OrderJobConfig Config() {
   OrderJobConfig config;
   config.work_dir = "/w";
   config.disk_cache = "/w/disk_cache";
   return config;
 }
 
-auto MatchOrder() -> proto::WorkOrder {
+proto::WorkOrder MatchOrder() {
   proto::WorkOrder order;
   order.set_order_id("ok-1");
   order.set_game("nim");
@@ -51,7 +51,7 @@ auto MatchOrder() -> proto::WorkOrder {
   return order;
 }
 
-auto ArgvOf(const sx::Step &step) -> std::string {
+std::string ArgvOf(const sx::Step &step) {
   std::string joined;
   for (const sx::Token &token : step.argv()) {
     if (!joined.empty()) {

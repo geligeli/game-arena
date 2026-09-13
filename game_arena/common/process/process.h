@@ -20,7 +20,7 @@ struct InputStreamProcess {
   ~InputStreamProcess();
 
   InputStreamProcess(const InputStreamProcess&) = delete;
-  auto operator=(const InputStreamProcess&) -> InputStreamProcess& = delete;
+  InputStreamProcess& operator=(const InputStreamProcess&) = delete;
 
   std::ostream& stdin();
   int Wait();
@@ -82,9 +82,9 @@ struct RunResult {
 // Runs |executable| to completion with its own process group. |executable| is
 // resolved through PATH when it contains no '/'; a relative path with one is
 // taken relative to |options.cwd| when that is set.
-auto RunCommand(const std::string& executable,
+RunResult RunCommand(const std::string& executable,
                 const std::vector<std::string>& arguments,
-                const RunOptions& options) -> RunResult;
+                const RunOptions& options);
 
 // ---------------------------------------------------------------------------
 // Long-running children
@@ -109,32 +109,32 @@ class Child {
  public:
   // Nullopt when |executable| cannot be launched. Resolved through PATH when
   // it contains no '/'.
-  static auto Start(const std::string& executable,
+  static std::optional<Child> Start(const std::string& executable,
                     const std::vector<std::string>& arguments,
-                    const ChildOptions& options) -> std::optional<Child>;
+                    const ChildOptions& options);
 
   Child(Child&& other) noexcept;
-  auto operator=(Child&& other) noexcept -> Child&;
+  Child& operator=(Child&& other) noexcept;
   ~Child();
   Child(const Child&) = delete;
-  auto operator=(const Child&) -> Child& = delete;
+  Child& operator=(const Child&) = delete;
 
-  auto pid() const -> pid_t { return pid_; }
+  pid_t pid() const { return pid_; }
 
   // The exit code once the child has exited (128 + signal when killed by
   // one), nullopt while it runs. Reaps the child; later calls return the same
   // code.
-  auto Poll() -> std::optional<int>;
+  std::optional<int> Poll();
 
   // Sends |signum| to the child's whole process group.
   void Signal(int signum) const;
 
   // Blocks until the child exits and returns its exit code.
-  auto Wait() -> int;
+  int Wait();
 
   // SIGTERM the group, wait up to |grace|, then SIGKILL it. Returns the exit
   // code. A no-op returning the recorded code if it already exited.
-  auto Stop(std::chrono::seconds grace) -> int;
+  int Stop(std::chrono::seconds grace);
 
  private:
   explicit Child(pid_t pid) : pid_(pid) {}
@@ -145,7 +145,7 @@ class Child {
 
 // Finds |name| on PATH, or returns it unchanged when it already contains '/'.
 // Empty when nothing executable matches.
-auto ResolveExecutable(const std::string& name) -> std::string;
+std::string ResolveExecutable(const std::string& name);
 
 }  // namespace process
 

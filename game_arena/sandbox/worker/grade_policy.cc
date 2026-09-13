@@ -8,9 +8,8 @@
 
 namespace tournament_arena {
 
-auto AggregateMetrics(const std::vector<std::map<std::string, double>> &runs,
-                      proto::GradeOrder::Aggregate how)
-    -> std::map<std::string, double> {
+std::map<std::string, double> AggregateMetrics(const std::vector<std::map<std::string, double>> &runs,
+                      proto::GradeOrder::Aggregate how) {
   std::map<std::string, std::vector<double>> gathered;
   for (const auto &run : runs) {
     for (const auto &[name, value] : run) {
@@ -47,9 +46,8 @@ auto AggregateMetrics(const std::vector<std::map<std::string, double>> &runs,
   return out;
 }
 
-auto ScoreGradedRuns(const std::vector<std::map<std::string, double>> &runs,
-                     const proto::GradeOrder &grade)
-    -> std::map<std::string, double> {
+std::map<std::string, double> ScoreGradedRuns(const std::vector<std::map<std::string, double>> &runs,
+                     const proto::GradeOrder &grade) {
   const std::map<std::string, double> aggregated =
       AggregateMetrics(runs, grade.aggregate());
   std::map<std::string, double> scored;

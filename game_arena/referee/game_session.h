@@ -51,21 +51,21 @@ class GameSession {
  public:
   virtual ~GameSession() = default;
 
-  virtual auto SerializeState() const -> std::string = 0;
-  virtual auto CurrentPlayer() const -> int = 0;  // seat index
-  virtual auto IsChanceNode() const -> bool = 0;
+  virtual std::string SerializeState() const = 0;
+  virtual int CurrentPlayer() const = 0;  // seat index
+  virtual bool IsChanceNode() const = 0;
   // Resolves a chance node with the rules-defined distribution and records the
   // step. Precondition: IsChanceNode().
   virtual void ApplyChanceAction(std::mt19937 &gen) = 0;
   // Validates (via the game's is_valid_action referee oracle) and applies a
   // serialized action for the current player. On failure sets *error and
   // returns false without touching the state.
-  virtual auto ApplySerializedAction(std::string_view bytes,
-                                     std::string *error) -> bool = 0;
-  virtual auto Outcome() const -> std::optional<GameOutcome> = 0;
+  virtual bool ApplySerializedAction(std::string_view bytes,
+                                     std::string *error) = 0;
+  virtual std::optional<GameOutcome> Outcome() const = 0;
 
-  auto Steps() const -> const std::vector<RecordedStep> & { return steps_; }
-  auto MoveCount() const -> int { return static_cast<int>(steps_.size()); }
+  const std::vector<RecordedStep> & Steps() const { return steps_; }
+  int MoveCount() const { return static_cast<int>(steps_.size()); }
 
  protected:
   void RecordStep(int player, std::string action_bytes);

@@ -16,7 +16,7 @@ namespace tournament_arena {
 
 namespace {
 
-auto NowUnixMs() -> int64_t {
+int64_t NowUnixMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
@@ -28,7 +28,7 @@ auto NowUnixMs() -> int64_t {
 constexpr std::array<std::string_view, 5> kAllowedExtensions = {
     ".h", ".hpp", ".cc", ".cpp", ".inl"};
 
-auto JsonEscape(const std::string &s) -> std::string {
+std::string JsonEscape(const std::string &s) {
   std::string out;
   out.reserve(s.size());
   for (const char c : s) {
@@ -55,7 +55,7 @@ auto JsonEscape(const std::string &s) -> std::string {
   return out;
 }
 
-auto HasAllowedExtension(const std::string &path) -> bool {
+bool HasAllowedExtension(const std::string &path) {
   const auto dot = path.rfind('.');
   if (dot == std::string::npos) {
     return false;
@@ -67,7 +67,7 @@ auto HasAllowedExtension(const std::string &path) -> bool {
 
 }  // namespace
 
-auto ValidateSourcePath(const std::string &path, std::string *error) -> bool {
+bool ValidateSourcePath(const std::string &path, std::string *error) {
   if (path.empty()) {
     *error = "empty file path";
     return false;
@@ -112,7 +112,7 @@ auto ValidateSourcePath(const std::string &path, std::string *error) -> bool {
   return true;
 }
 
-auto Slugify(const std::string &display_name) -> std::string {
+std::string Slugify(const std::string &display_name) {
   std::string slug;
   slug.reserve(display_name.size());
   for (const char c : display_name) {
@@ -184,8 +184,8 @@ namespace {
 // A path passes when it matches some allow pattern (or there are none) and no
 // deny pattern. Deny wins, so a broad allow can be narrowed without rewriting
 // it.
-auto PathAllowed(const proto::SubmissionPolicy &policy, const std::string &path,
-                 std::string *error) -> bool {
+bool PathAllowed(const proto::SubmissionPolicy &policy, const std::string &path,
+                 std::string *error) {
   for (const std::string &pattern : policy.deny_paths()) {
     if (PathMatchesGlob(path, pattern)) {
       *error = "path '" + path + "' is excluded by this problem (deny_paths '" +
@@ -209,8 +209,8 @@ auto PathAllowed(const proto::SubmissionPolicy &policy, const std::string &path,
 
 }  // namespace
 
-auto CandidateStore::Validate(const proto::SubmitRequest &request,
-                              std::string *error) const -> bool {
+bool CandidateStore::Validate(const proto::SubmitRequest &request,
+                              std::string *error) const {
   if (request.display_name().empty()) {
     *error = "display_name is required";
     return false;
@@ -326,9 +326,9 @@ auto CandidateStore::Validate(const proto::SubmitRequest &request,
   return true;
 }
 
-auto CandidateStore::PatchForLocked(
+std::optional<std::string> CandidateStore::PatchForLocked(
     const proto::SubmitRequest &request, const std::string &candidate_id,
-    std::string *error) const -> std::optional<std::string> {
+    std::string *error) const {
   if (!request.patch().empty()) {
     return std::string(request.patch());
   }
@@ -362,8 +362,7 @@ auto CandidateStore::PatchForLocked(
   return MakeAddOnlyPatch(files);
 }
 
-auto CandidateStore::AllocateIdLocked(const std::string &display_name) const
-    -> std::string {
+std::string CandidateStore::AllocateIdLocked(const std::string &display_name) const {
   const std::string slug = Slugify(display_name);
   static thread_local std::mt19937 gen(std::random_device{}());
   std::uniform_int_distribution<int> hex(0, 0xFFFFFF);
@@ -380,13 +379,12 @@ auto CandidateStore::AllocateIdLocked(const std::string &display_name) const
   return slug + "-" + std::to_string(NowUnixMs());
 }
 
-auto CandidateStore::CandidateDir(const std::string &candidate_id) const
-    -> std::filesystem::path {
+std::filesystem::path CandidateStore::CandidateDir(const std::string &candidate_id) const {
   return dir_ / candidate_id;
 }
 
-auto CandidateStore::WriteManifestLocked(
-    const proto::Candidate &candidate) const -> bool {
+bool CandidateStore::WriteManifestLocked(
+    const proto::Candidate &candidate) const {
   proto::CandidateManifest manifest;
   *manifest.mutable_candidate() = candidate;
   const std::filesystem::path path =
@@ -427,9 +425,8 @@ void CandidateStore::AppendIndexLocked(
         << "}\n";
 }
 
-auto CandidateStore::Create(const proto::SubmitRequest &request,
-                            const std::string &base_commit, std::string *error)
-    -> std::optional<proto::Candidate> {
+std::optional<proto::Candidate> CandidateStore::Create(const proto::SubmitRequest &request,
+                            const std::string &base_commit, std::string *error) {
   std::lock_guard lock(mutex_);
   if (!Validate(request, error)) {
     return std::nullopt;
@@ -528,9 +525,8 @@ auto CandidateStore::Create(const proto::SubmitRequest &request,
   return candidate;
 }
 
-auto CandidateStore::ReadPatch(const std::string &candidate_id,
-                               std::string *error) const
-    -> std::optional<std::string> {
+std::optional<std::string> CandidateStore::ReadPatch(const std::string &candidate_id,
+                               std::string *error) const {
   std::lock_guard lock(mutex_);
   const auto it = candidates_.find(candidate_id);
   if (it == candidates_.end()) {
@@ -550,8 +546,7 @@ auto CandidateStore::ReadPatch(const std::string &candidate_id,
                      std::istreambuf_iterator<char>());
 }
 
-auto CandidateStore::Get(const std::string &candidate_id) const
-    -> std::optional<proto::Candidate> {
+std::optional<proto::Candidate> CandidateStore::Get(const std::string &candidate_id) const {
   std::lock_guard lock(mutex_);
   const auto it = candidates_.find(candidate_id);
   if (it == candidates_.end()) {
@@ -560,9 +555,9 @@ auto CandidateStore::Get(const std::string &candidate_id) const
   return it->second;
 }
 
-auto CandidateStore::ReadSource(
+std::optional<std::string> CandidateStore::ReadSource(
     const std::string &candidate_id, const std::string &path,
-    std::string *error) const -> std::optional<std::string> {
+    std::string *error) const {
   proto::Candidate candidate;
   {
     std::lock_guard lock(mutex_);
@@ -590,7 +585,7 @@ auto CandidateStore::ReadSource(
                      std::istreambuf_iterator<char>());
 }
 
-auto CandidateStore::List() const -> std::vector<proto::Candidate> {
+std::vector<proto::Candidate> CandidateStore::List() const {
   std::lock_guard lock(mutex_);
   std::vector<proto::Candidate> out;
   out.reserve(candidates_.size());
@@ -604,9 +599,9 @@ auto CandidateStore::List() const -> std::vector<proto::Candidate> {
   return out;
 }
 
-auto CandidateStore::SetStatus(const std::string &candidate_id,
+bool CandidateStore::SetStatus(const std::string &candidate_id,
                                proto::Candidate::Status status,
-                               const std::string &build_error) -> bool {
+                               const std::string &build_error) {
   std::lock_guard lock(mutex_);
   const auto it = candidates_.find(candidate_id);
   if (it == candidates_.end()) {
@@ -621,7 +616,7 @@ auto CandidateStore::SetStatus(const std::string &candidate_id,
   return WriteManifestLocked(it->second);
 }
 
-auto CandidateStore::size() const -> std::size_t {
+std::size_t CandidateStore::size() const {
   std::lock_guard lock(mutex_);
   return candidates_.size();
 }

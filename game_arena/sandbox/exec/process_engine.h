@@ -33,8 +33,8 @@ class ProcessEngine final : public Engine {
  public:
   explicit ProcessEngine(ProcessEngineConfig config = {});
 
-  auto name() const -> std::string override { return "process"; }
-  auto capabilities() const -> Capabilities override {
+  std::string name() const override { return "process"; }
+  Capabilities capabilities() const override {
     // Steps share the host's network, so they can reach each other -- but
     // only by a port discovered at runtime, because parallel jobs on one host
     // would collide on a fixed one.
@@ -42,14 +42,14 @@ class ProcessEngine final : public Engine {
                         /*stable_peer_names=*/false};
   }
 
-  auto Run(const proto::Job &job,
-           Observer *observer) -> proto::JobResult override;
+  proto::JobResult Run(const proto::Job &job,
+           Observer *observer) override;
   void Cancel(const std::string &job_id) override;
 
  private:
-  auto RunPhase(const proto::Job &job, const proto::Phase &phase,
+  bool RunPhase(const proto::Job &job, const proto::Phase &phase,
                 Observer *observer, proto::PhaseResult *result,
-                proto::Status *status) -> bool;
+                proto::Status *status);
 
   // Publishes a step's process group against |job_id| while it runs, so a
   // Cancel from another thread can reach the whole tree. Every step, not just

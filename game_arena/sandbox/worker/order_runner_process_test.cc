@@ -25,8 +25,8 @@ namespace {
 
 constexpr char kFakeCommit[] = "c0ffee";
 
-auto WriteScript(const std::filesystem::path &path,
-                 const std::string &body) -> void {
+void WriteScript(const std::filesystem::path &path,
+                 const std::string &body) {
   std::ofstream out(path);
   out << body;
   out.close();
@@ -69,8 +69,8 @@ class OrderRunnerProcessTest : public ::testing::Test {
   void TearDown() override { std::filesystem::remove_all(root_); }
 
   // A graded order whose command is |script|, run |repeats| times.
-  auto MakeOrder(const std::string &script, int repeats,
-                 proto::GradeOrder::Aggregate how) -> proto::WorkOrder {
+  proto::WorkOrder MakeOrder(const std::string &script, int repeats,
+                 proto::GradeOrder::Aggregate how) {
     const auto path = root_ / "measure";
     WriteScript(path, script);
 

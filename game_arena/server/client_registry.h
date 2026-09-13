@@ -30,30 +30,30 @@ namespace tournament_arena {
 
 // Lowercase hex SHA-256 of |token|. Exposed so the admin tool and the registry
 // agree on the encoding by construction.
-auto HashToken(std::string_view token) -> std::string;
+std::string HashToken(std::string_view token);
 
 // Minting a client. Shared by arena_admin and arena_tournament so the two
 // agree on what a token looks like and what a registry entry looks like.
 
 // 256 bits from the system CSPRNG, lowercase hex. Shown to an operator once
 // and never stored: what the registry holds is HashToken() of it.
-auto MintToken() -> std::string;
+std::string MintToken();
 
 // The registry entry for |token|. Hashes it; the raw token is not kept.
 // Zero quota fields fall back to the problem's defaults at resolve time.
-auto MakeClient(std::string_view client_id, std::string_view display_name,
+proto::Client MakeClient(std::string_view client_id, std::string_view display_name,
                 std::string_view token,
-                const proto::ClientQuota &quota) -> proto::Client;
+                const proto::ClientQuota &quota);
 
 // |client| as the text-format block an operator pastes into the registry.
-auto ClientBlockText(const proto::Client &client) -> std::string;
+std::string ClientBlockText(const proto::Client &client);
 
 // Appends |client| to the registry file at |path|, creating the file if it
 // does not exist. The existing file is parsed first: a registry that does not
 // load, or already has this client_id, is left untouched and reported.
-auto AppendClientToRegistry(const std::filesystem::path &path,
+bool AppendClientToRegistry(const std::filesystem::path &path,
                             const proto::Client &client,
-                            std::string *error) -> bool;
+                            std::string *error);
 
 // A resolved caller.
 struct ClientIdentity {
@@ -69,14 +69,14 @@ class ClientRegistry {
 
   // Reads the file. Returns false with *error set; on failure the previously
   // loaded set is kept, so a typo during a reload does not lock everyone out.
-  auto Load(std::string *error) -> bool;
+  bool Load(std::string *error);
 
   // The client |token| belongs to, or nullopt when it matches nothing or the
   // client is disabled. Constant-time comparison, so a caller cannot learn a
   // valid hash a byte at a time.
-  auto Resolve(std::string_view token) const -> std::optional<ClientIdentity>;
+  std::optional<ClientIdentity> Resolve(std::string_view token) const;
 
-  auto size() const -> std::size_t;
+  std::size_t size() const;
 
  private:
   const std::filesystem::path path_;

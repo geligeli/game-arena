@@ -41,9 +41,9 @@ class FakeTransport final : public Transport {
 
   void ClearOutstanding() { write_outstanding_ = false; }
 
-  auto sent() const -> const std::vector<uint64_t> & { return sent_; }
-  auto finishes() const -> int { return finishes_; }
-  auto finish_status() const -> const grpc::Status & { return finish_status_; }
+  const std::vector<uint64_t> & sent() const { return sent_; }
+  int finishes() const { return finishes_; }
+  const grpc::Status & finish_status() const { return finish_status_; }
 
  private:
   std::vector<uint64_t> sent_;
@@ -52,7 +52,7 @@ class FakeTransport final : public Transport {
   grpc::Status finish_status_ = grpc::Status::OK;
 };
 
-auto Turn(uint64_t move_number) -> proto::ServerMessage {
+proto::ServerMessage Turn(uint64_t move_number) {
   proto::ServerMessage msg;
   msg.mutable_your_turn()->set_move_number(move_number);
   return msg;

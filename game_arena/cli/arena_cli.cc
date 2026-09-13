@@ -109,7 +109,7 @@ constexpr int kPollIntervalS = 2;
 constexpr int kExitError = 1;
 constexpr int kExitUsage = 2;
 
-auto EnvOr(const char *name, std::string fallback) -> std::string {
+std::string EnvOr(const char *name, std::string fallback) {
   if (const char *value = std::getenv(name); value != nullptr) {
     return value;
   }
@@ -129,7 +129,7 @@ struct Client {
 
 // The kit this command belongs to: --kit, $ARENA_KIT, or the nearest
 // enclosing directory holding an arena.textproto. Empty when there is none.
-auto FindKit() -> std::filesystem::path {
+std::filesystem::path FindKit() {
   if (const std::string flag = absl::GetFlag(FLAGS_kit); !flag.empty()) {
     return flag;
   }
@@ -154,7 +154,7 @@ auto FindKit() -> std::filesystem::path {
 
 // The kit's config, or an empty one. A kit whose config does not parse is
 // worth saying out loud: the participant edited it, and the fix is theirs.
-auto LoadKitConfig(const std::filesystem::path &kit) -> proto::KitConfig {
+proto::KitConfig LoadKitConfig(const std::filesystem::path &kit) {
   proto::KitConfig config;
   if (kit.empty()) {
     return config;
@@ -187,7 +187,7 @@ void ConfigureContext(const Client &client, bool write,
 
 // Prints a mapped error to stderr and returns the process exit code. Mirrors
 // _rpc_error in the MCP server.
-auto RpcError(const grpc::Status &status, const std::string &server) -> int {
+int RpcError(const grpc::Status &status, const std::string &server) {
   switch (status.error_code()) {
     case grpc::StatusCode::UNAUTHENTICATED:
       std::fprintf(stderr,
@@ -224,7 +224,7 @@ auto RpcError(const grpc::Status &status, const std::string &server) -> int {
   }
 }
 
-auto StatusName(proto::Candidate::Status status) -> const char * {
+const char * StatusName(proto::Candidate::Status status) {
   switch (status) {
     case proto::Candidate::PENDING:
       return "pending";
@@ -241,7 +241,7 @@ auto StatusName(proto::Candidate::Status status) -> const char * {
   }
 }
 
-auto JobStateName(proto::Job::State state) -> const char * {
+const char * JobStateName(proto::Job::State state) {
   switch (state) {
     case proto::Job::QUEUED:
       return "queued";
@@ -260,7 +260,7 @@ auto JobStateName(proto::Job::State state) -> const char * {
 
 // How far a running job has got. Worth showing because a build can take half
 // an hour: "running" on its own does not tell you whether to keep waiting.
-auto PhaseName(proto::OrderProgress::Phase phase) -> const char * {
+const char * PhaseName(proto::OrderProgress::Phase phase) {
   switch (phase) {
     case proto::OrderProgress::CLONING:
       return "cloning";
@@ -273,7 +273,7 @@ auto PhaseName(proto::OrderProgress::Phase phase) -> const char * {
   }
 }
 
-auto IsTerminal(proto::Job::State state) -> bool {
+bool IsTerminal(proto::Job::State state) {
   return state == proto::Job::DONE || state == proto::Job::FAILED ||
          state == proto::Job::CANCELLED;
 }
@@ -335,8 +335,8 @@ void PrintJob(const proto::Job &job) {
 
 // Polls until the job reaches a terminal state, printing state transitions.
 // Returns the exit code: 0 on DONE, 1 on FAILED/CANCELLED or an RPC error.
-auto WaitForJob(const Client &client, const std::string &server,
-                const std::string &job_id) -> int {
+int WaitForJob(const Client &client, const std::string &server,
+                const std::string &job_id) {
   proto::Job::State last = proto::Job::QUEUED;
   // Tracked alongside the state so a long build reports cloning, then
   // building, then running, instead of one "running" line for half an hour.
@@ -363,7 +363,7 @@ auto WaitForJob(const Client &client, const std::string &server,
   }
 }
 
-auto CmdRules(const Client &client, const std::string &server) -> int {
+int CmdRules(const Client &client, const std::string &server) {
   grpc::ClientContext context;
   ConfigureContext(client, /*write=*/false, &context);
   proto::ProblemInfo problem;
@@ -455,7 +455,7 @@ auto FromWorkspace(const std::string &path) -> std::filesystem::path {
   return p;
 }
 
-auto ReadFile(const std::string &path, std::string *content) -> bool {
+bool ReadFile(const std::string &path, std::string *content) {
   std::ifstream stream(FromWorkspace(path), std::ios::binary);
   if (!stream) {
     return false;
@@ -471,8 +471,8 @@ auto ReadFile(const std::string &path, std::string *content) -> bool {
 // carry are collected from a directory -- a kit's own BUILD file is for
 // building locally, and the coordinator generates the one that compiles a
 // submission.
-auto KitSubmitFiles(const Client &client,
-                    std::vector<std::string> *files) -> bool {
+bool KitSubmitFiles(const Client &client,
+                    std::vector<std::string> *files) {
   static constexpr std::array<std::string_view, 5> kSources = {
       ".h", ".hpp", ".cc", ".cpp", ".inl"};
   bool ok = true;
@@ -510,7 +510,7 @@ auto KitSubmitFiles(const Client &client,
   return ok;
 }
 
-auto CmdSubmit(const Client &client, const std::string &server) -> int {
+int CmdSubmit(const Client &client, const std::string &server) {
   std::vector<std::string> files = absl::GetFlag(FLAGS_file);
   const std::string patch_path = absl::GetFlag(FLAGS_patch);
   const std::string name = absl::GetFlag(FLAGS_name);
@@ -643,8 +643,8 @@ auto CmdSubmit(const Client &client, const std::string &server) -> int {
   return WaitForJob(client, server, response.job_id());
 }
 
-auto CmdJob(const Client &client, const std::string &server,
-            const std::vector<char *> &args) -> int {
+int CmdJob(const Client &client, const std::string &server,
+            const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "job: a job id is required\n");
     return kExitUsage;
@@ -666,7 +666,7 @@ auto CmdJob(const Client &client, const std::string &server,
                                                                     : 0;
 }
 
-auto CmdCandidates(const Client &client, const std::string &server) -> int {
+int CmdCandidates(const Client &client, const std::string &server) {
   proto::ListCandidatesRequest request;
   request.set_game(absl::GetFlag(FLAGS_game));
   request.set_author(absl::GetFlag(FLAGS_author));
@@ -708,7 +708,7 @@ auto CmdCandidates(const Client &client, const std::string &server) -> int {
   return 0;
 }
 
-auto CmdLeaderboard(const Client &client, const std::string &server) -> int {
+int CmdLeaderboard(const Client &client, const std::string &server) {
   proto::LeaderboardRequest request;
   request.set_game(absl::GetFlag(FLAGS_game));
   request.set_limit(absl::GetFlag(FLAGS_limit));
@@ -739,9 +739,9 @@ auto CmdLeaderboard(const Client &client, const std::string &server) -> int {
 // coordinator, which stores them flattened to a basename; a path that climbs
 // out of the directory anyway is a coordinator to stop trusting, so it is
 // refused here rather than written.
-auto PullSourceFile(const Client &client, const std::string &server,
+int PullSourceFile(const Client &client, const std::string &server,
                     const std::string &candidate_id, const std::string &path,
-                    const std::filesystem::path &into) -> int {
+                    const std::filesystem::path &into) {
   proto::GetSourceRequest request;
   request.set_candidate_id(candidate_id);
   request.set_path(path);
@@ -785,8 +785,8 @@ auto PullSourceFile(const Client &client, const std::string &server,
   return 0;
 }
 
-auto CmdSource(const Client &client, const std::string &server,
-               const std::vector<char *> &args) -> int {
+int CmdSource(const Client &client, const std::string &server,
+               const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "source: a candidate id is required\n");
     return kExitUsage;
@@ -893,8 +893,8 @@ auto CmdSource(const Client &client, const std::string &server,
   return 0;
 }
 
-auto CmdEvaluate(const Client &client, const std::string &server,
-                 const std::vector<char *> &args) -> int {
+int CmdEvaluate(const Client &client, const std::string &server,
+                 const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "evaluate: a candidate id is required\n");
     return kExitUsage;
@@ -960,7 +960,7 @@ void PrintUsage() {
 
 }  // namespace
 
-auto main(int argc, char **argv) -> int {
+int main(int argc, char **argv) {
   const std::vector<char *> positional = absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kWarning);

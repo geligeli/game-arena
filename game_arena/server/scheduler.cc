@@ -12,7 +12,7 @@ namespace tournament_arena {
 
 namespace {
 
-auto NowUnixMs() -> int64_t {
+int64_t NowUnixMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
@@ -21,7 +21,7 @@ auto NowUnixMs() -> int64_t {
 constexpr std::string_view kBuiltinPrefix = "builtin:";
 constexpr std::string_view kPlayerPrefix = "player:";
 
-auto IsBuiltin(const std::string &opponent) -> bool {
+bool IsBuiltin(const std::string &opponent) {
   return opponent.rfind(kBuiltinPrefix, 0) == 0;
 }
 
@@ -162,8 +162,8 @@ auto Scheduler::TryReserve(const std::string &client_id,
   return reservation;
 }
 
-auto Scheduler::FillSideLocked(const proto::Candidate &candidate,
-                               proto::Side *side) const -> bool {
+bool Scheduler::FillSideLocked(const proto::Candidate &candidate,
+                               proto::Side *side) const {
   side->set_candidate_id(candidate.candidate_id());
   *side->mutable_params() = candidate.params();
 
@@ -190,9 +190,9 @@ auto Scheduler::FillSideLocked(const proto::Candidate &candidate,
   return true;
 }
 
-auto Scheduler::MakeOrderLocked(
+std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
     const proto::Candidate &candidate, const std::string &opponent, int games,
-    const std::string &job_id) -> std::optional<proto::WorkOrder> {
+    const std::string &job_id) {
   proto::WorkOrder order;
   order.set_order_id("o" + std::to_string(NowUnixMs()) + "_" +
                      std::to_string(++order_counter_));
@@ -252,9 +252,9 @@ auto Scheduler::MakeOrderLocked(
   return order;
 }
 
-auto Scheduler::ExpandOpponentsLocked(
+std::optional<std::vector<std::string>> Scheduler::ExpandOpponentsLocked(
     const proto::Candidate &candidate, const std::string &spec,
-    std::string *error) const -> std::optional<std::vector<std::string>> {
+    std::string *error) const {
   if (spec.empty()) {
     *error = "opponent is required";
     return std::nullopt;
@@ -317,10 +317,10 @@ auto Scheduler::ExpandOpponentsLocked(
   return opponents;
 }
 
-auto Scheduler::EnqueueLocked(const proto::Candidate &candidate,
+std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
                               const std::vector<std::string> &opponents,
                               int games,
-                              const std::string &client_id) -> std::string {
+                              const std::string &client_id) {
   const std::string job_id =
       "j" + std::to_string(NowUnixMs()) + "_" + std::to_string(++job_counter_);
 
@@ -358,8 +358,8 @@ auto Scheduler::EnqueueLocked(const proto::Candidate &candidate,
   return job_id;
 }
 
-auto Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
-                                 Reservation reservation) -> std::string {
+std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
+                                 Reservation reservation) {
   std::lock_guard lock(mutex_);
   // Consumed: the slot it held becomes the job below, so the destructor must
   // not hand it back.
@@ -377,9 +377,9 @@ auto Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
                        config_.placement_games, client_id);
 }
 
-auto Scheduler::EnqueueChallenge(
+std::optional<std::string> Scheduler::EnqueueChallenge(
     const std::string &candidate_id, const std::string &opponent, int games,
-    Reservation reservation, std::string *error) -> std::optional<std::string> {
+    Reservation reservation, std::string *error) {
   std::lock_guard lock(mutex_);
   const std::string client_id = reservation.client_id();
   if (reservation.scheduler_ != nullptr) {
@@ -409,9 +409,8 @@ auto Scheduler::EnqueueChallenge(
   return EnqueueLocked(*candidate, *opponents, wanted, client_id);
 }
 
-auto Scheduler::EnqueueRegrade(const std::string &candidate_id, int repeats,
-                               Reservation reservation, std::string *error)
-    -> std::optional<std::string> {
+std::optional<std::string> Scheduler::EnqueueRegrade(const std::string &candidate_id, int repeats,
+                               Reservation reservation, std::string *error) {
   std::lock_guard lock(mutex_);
   const std::string client_id = reservation.client_id();
   if (reservation.scheduler_ != nullptr) {
@@ -441,7 +440,7 @@ auto Scheduler::EnqueueRegrade(const std::string &candidate_id, int repeats,
   return EnqueueLocked(*candidate, {""}, runs, client_id);
 }
 
-auto Scheduler::FreeSlotsLocked() const -> int {
+int Scheduler::FreeSlotsLocked() const {
   int free = 0;
   for (const auto &[id, state] : workers_) {
     free += state.worker->slots() - static_cast<int>(state.in_flight.size());
@@ -662,8 +661,7 @@ void Scheduler::ConcludeJobLocked(Job *job) {
   job->status.set_finished_unix_ms(NowUnixMs());
 }
 
-auto Scheduler::GetJob(const std::string &job_id) const
-    -> std::optional<proto::Job> {
+std::optional<proto::Job> Scheduler::GetJob(const std::string &job_id) const {
   std::lock_guard lock(mutex_);
   const auto it = jobs_.find(job_id);
   if (it == jobs_.end()) {
@@ -672,12 +670,12 @@ auto Scheduler::GetJob(const std::string &job_id) const
   return it->second.status;
 }
 
-auto Scheduler::worker_count() const -> int {
+int Scheduler::worker_count() const {
   std::lock_guard lock(mutex_);
   return static_cast<int>(workers_.size());
 }
 
-auto Scheduler::queued_orders() const -> int {
+int Scheduler::queued_orders() const {
   std::lock_guard lock(mutex_);
   int total = 0;
   for (const auto &[id, job] : jobs_) {
@@ -686,7 +684,7 @@ auto Scheduler::queued_orders() const -> int {
   return total;
 }
 
-auto Scheduler::in_flight_orders() const -> int {
+int Scheduler::in_flight_orders() const {
   std::lock_guard lock(mutex_);
   return static_cast<int>(order_owner_.size());
 }

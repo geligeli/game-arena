@@ -27,10 +27,10 @@ class FakeWorker : public FleetWorker {
  public:
   FakeWorker(std::string id, int slots) : id_(std::move(id)), slots_(slots) {}
 
-  auto worker_id() const -> std::string override { return id_; }
-  auto slots() const -> int override { return slots_; }
+  std::string worker_id() const override { return id_; }
+  int slots() const override { return slots_; }
 
-  auto Send(const proto::FleetMessage &msg) -> bool override {
+  bool Send(const proto::FleetMessage &msg) override {
     if (!alive_) {
       return false;
     }
@@ -89,16 +89,15 @@ class SchedulerTest : public ::testing::Test {
 
   // Tests run without a client registry, so metering is off and every
   // reservation is inert. The quota path has its own tests below.
-  auto Reserve() -> Scheduler::Reservation {
+  Scheduler::Reservation Reserve() {
     std::string error;
     auto reservation = scheduler_->TryReserve("", {}, false, &error);
     EXPECT_TRUE(reservation.has_value()) << error;
     return std::move(*reservation);
   }
 
-  auto AddCandidate(const std::string &name,
-                    proto::Candidate::Status status = proto::Candidate::READY)
-      -> proto::Candidate {
+  proto::Candidate AddCandidate(const std::string &name,
+                    proto::Candidate::Status status = proto::Candidate::READY) {
     proto::SubmitRequest request;
     request.set_display_name(name);
     request.set_author("agent");
@@ -115,8 +114,8 @@ class SchedulerTest : public ::testing::Test {
     return *updated;
   }
 
-  auto Result(const std::string &order_id, bool build_ok = true, int wins = 1,
-              int losses = 1) -> proto::OrderResult {
+  proto::OrderResult Result(const std::string &order_id, bool build_ok = true, int wins = 1,
+              int losses = 1) {
     proto::OrderResult result;
     result.set_order_id(order_id);
     result.set_build_ok(build_ok);
@@ -489,7 +488,7 @@ TEST_F(SchedulerTest, UnknownJobAndOrphanResultAreHandled) {
 
 class QuotaTest : public SchedulerTest {
  protected:
-  auto Quota(int active, int queued) -> proto::ClientQuota {
+  proto::ClientQuota Quota(int active, int queued) {
     proto::ClientQuota quota;
     quota.set_max_active_evaluations(active);
     quota.set_max_queued_jobs(queued);

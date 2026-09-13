@@ -69,7 +69,7 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
     std::filesystem::remove_all(root_, ec);
   }
 
-  static auto FakeDockerScript() -> std::string {
+  static std::string FakeDockerScript() {
     return "#!/usr/bin/env bash\n"
            "echo \"docker $*\" >> \"" +
            (root_ / "docker.log").string() +
@@ -121,7 +121,7 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
            "exit 1\n";
   }
 
-  static auto DockerLog() -> std::string {
+  static std::string DockerLog() {
     std::ifstream in(root_ / "docker.log");
     return {std::istreambuf_iterator<char>(in),
             std::istreambuf_iterator<char>()};
@@ -167,13 +167,13 @@ class SandboxRunnerIntegrationTest : public ::testing::Test {
     }
   }
 
-  static auto Run(const proto::RunRequest &request,
-                  proto::RunResponse *response) -> grpc::Status {
+  static grpc::Status Run(const proto::RunRequest &request,
+                  proto::RunResponse *response) {
     grpc::ClientContext context;
     return stub_->Run(&context, request, response);
   }
 
-  static auto Kill(const std::string &identifier) -> grpc::Status {
+  static grpc::Status Kill(const std::string &identifier) {
     grpc::ClientContext context;
     proto::KillRequest request;
     request.set_id(identifier);

@@ -12,13 +12,13 @@ namespace {
 
 // Enough digits to round-trip a double, without the exponent noise that a
 // default ostream would produce for large scores.
-auto FormatNumber(double value) -> std::string {
+std::string FormatNumber(double value) {
   char buffer[64];
   std::snprintf(buffer, sizeof(buffer), "%.17g", value);
   return buffer;
 }
 
-auto JsonEscape(const std::string &text) -> std::string {
+std::string JsonEscape(const std::string &text) {
   std::string out;
   out.reserve(text.size());
   for (const char c : text) {
@@ -44,7 +44,7 @@ auto JsonEscape(const std::string &text) -> std::string {
 
 }  // namespace
 
-auto RenderReport(const std::map<std::string, double> &metrics) -> std::string {
+std::string RenderReport(const std::map<std::string, double> &metrics) {
   std::ostringstream out;
   out << "{\"metrics\": {";
   bool first = true;
@@ -59,9 +59,9 @@ auto RenderReport(const std::map<std::string, double> &metrics) -> std::string {
   return out.str();
 }
 
-auto WriteReport(const std::string &path,
+bool WriteReport(const std::string &path,
                  const std::map<std::string, double> &metrics,
-                 std::string *error) -> bool {
+                 std::string *error) {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   if (!out) {
     *error = "cannot open the report path '" + path + "' for writing";
@@ -76,8 +76,8 @@ auto WriteReport(const std::string &path,
   return true;
 }
 
-auto WriteReportToArenaPath(const std::map<std::string, double> &metrics,
-                            std::string *error) -> bool {
+bool WriteReportToArenaPath(const std::map<std::string, double> &metrics,
+                            std::string *error) {
   const char *path = std::getenv("ARENA_REPORT");
   if (path == nullptr || *path == '\0') {
     *error =

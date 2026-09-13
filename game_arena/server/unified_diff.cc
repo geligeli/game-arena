@@ -12,14 +12,14 @@ namespace tournament_arena {
 
 namespace {
 
-auto StartsWith(std::string_view text, std::string_view prefix) -> bool {
+bool StartsWith(std::string_view text, std::string_view prefix) {
   return text.size() >= prefix.size() &&
          text.substr(0, prefix.size()) == prefix;
 }
 
 // Splits on '\n', keeping empty lines. A trailing newline does not produce a
 // final empty line, so a diff ending in "\n" has no phantom entry.
-auto SplitLines(std::string_view text) -> std::vector<std::string_view> {
+std::vector<std::string_view> SplitLines(std::string_view text) {
   std::vector<std::string_view> lines;
   std::size_t at = 0;
   while (at <= text.size()) {
@@ -38,7 +38,7 @@ auto SplitLines(std::string_view text) -> std::vector<std::string_view> {
 
 // Strips the "a/" or "b/" git prepends, and trims the trailing tab-timestamp a
 // plain `diff -u` leaves behind.
-auto CleanPath(std::string_view raw) -> std::string {
+std::string CleanPath(std::string_view raw) {
   const std::size_t tab = raw.find('\t');
   if (tab != std::string_view::npos) {
     raw = raw.substr(0, tab);
@@ -55,7 +55,7 @@ auto CleanPath(std::string_view raw) -> std::string {
 // The same rules the store applies to any path it writes under: relative, no
 // '..', no absolute escape. Checked here because a patch header is the one
 // place a path arrives as free text.
-auto IsUsablePath(const std::string &path, std::string *error) -> bool {
+bool IsUsablePath(const std::string &path, std::string *error) {
   if (path.empty()) {
     *error = "a patch entry has an empty path";
     return false;
@@ -85,8 +85,8 @@ auto IsUsablePath(const std::string &path, std::string *error) -> bool {
 
 }  // namespace
 
-auto ParseUnifiedDiff(std::string_view diff, Patch *out,
-                      std::string *error) -> bool {
+bool ParseUnifiedDiff(std::string_view diff, Patch *out,
+                      std::string *error) {
   *out = Patch{};
   const std::vector<std::string_view> lines = SplitLines(diff);
 
@@ -183,7 +183,7 @@ auto ParseUnifiedDiff(std::string_view diff, Patch *out,
   return true;
 }
 
-auto TouchedPaths(const Patch &patch) -> std::vector<std::string> {
+std::vector<std::string> TouchedPaths(const Patch &patch) {
   std::vector<std::string> paths;
   for (const PatchFile &file : patch.files) {
     for (const std::string &path : {file.old_path, file.new_path}) {
@@ -196,7 +196,7 @@ auto TouchedPaths(const Patch &patch) -> std::vector<std::string> {
   return paths;
 }
 
-auto MakeAddOnlyPatch(const std::vector<NewFile> &files) -> std::string {
+std::string MakeAddOnlyPatch(const std::vector<NewFile> &files) {
   std::string diff;
   for (const NewFile &file : files) {
     const std::vector<std::string_view> lines = SplitLines(file.content);
@@ -220,7 +220,7 @@ auto MakeAddOnlyPatch(const std::vector<NewFile> &files) -> std::string {
   return diff;
 }
 
-auto PathMatchesGlob(std::string_view path, std::string_view pattern) -> bool {
+bool PathMatchesGlob(std::string_view path, std::string_view pattern) {
   // Recursive descent over the two strings. Patterns are short and come from a
   // config file, so the simple form is the right one.
   if (pattern.empty()) {

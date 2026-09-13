@@ -47,22 +47,22 @@ struct SandboxRunnerConfig {
 // True when |path| is safe to stage: relative, and free of any ".." or "."
 // component. The engine checks this too; here it is the difference between a
 // clear error and a confusing one, because this server's callers are people.
-auto IsSafePatchPath(const std::string &path) -> bool;
+bool IsSafePatchPath(const std::string &path);
 
 // The sandbox a run of |id| gets. Its own function because the CLI's Kill
 // needs to be able to name it.
-auto ContainerName(const std::string &id) -> std::string;
+std::string ContainerName(const std::string &id);
 
 class SandboxRunnerService final : public proto::SandboxService::Service {
  public:
   SandboxRunnerService(SandboxRunnerConfig config,
                        sandbox_exec::Engine *engine);
 
-  auto Run(grpc::ServerContext *context, const proto::RunRequest *request,
-           proto::RunResponse *response) -> grpc::Status override;
+  grpc::Status Run(grpc::ServerContext *context, const proto::RunRequest *request,
+           proto::RunResponse *response) override;
 
-  auto Kill(grpc::ServerContext *context, const proto::KillRequest *request,
-            proto::KillResponse *response) -> grpc::Status override;
+  grpc::Status Kill(grpc::ServerContext *context, const proto::KillRequest *request,
+            proto::KillResponse *response) override;
 
  private:
   const SandboxRunnerConfig config_;

@@ -20,21 +20,21 @@ namespace sandbox_exec {
 // True when |path| is safe to write under a staging directory: relative, and
 // free of any "." or ".." component. The engine checks every staged path,
 // even for callers that validated earlier -- it is the one writing the bytes.
-auto IsSafeStagedPath(const std::string &path) -> bool;
+bool IsSafeStagedPath(const std::string &path);
 
 // Clones or updates |ws.tree_dir|, creates the scratch dir, writes the staged
 // files, and applies PATCH_HOST patches. Returns false with *status filled in.
-auto PrepareWorkspace(const proto::Workspace &ws,
+bool PrepareWorkspace(const proto::Workspace &ws,
                       const std::filesystem::path &log_dir,
-                      proto::Status *status) -> bool;
+                      proto::Status *status);
 
 // Writes |ws.tree_dir| as a tar archive at |archive|, without its .git: what
 // a container engine loads into the sandbox's workspace. Returns false with
 // *status filled in.
-auto ExportTree(const proto::Workspace &ws,
+bool ExportTree(const proto::Workspace &ws,
                 const std::filesystem::path &archive,
                 const std::filesystem::path &log_dir,
-                proto::Status *status) -> bool;
+                proto::Status *status);
 
 }  // namespace sandbox_exec
 

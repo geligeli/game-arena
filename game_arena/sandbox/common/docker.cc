@@ -5,7 +5,7 @@
 
 namespace sandbox_common {
 
-auto ShellQuote(const std::string &value) -> std::string {
+std::string ShellQuote(const std::string &value) {
   std::string quoted = "'";
   for (const char c : value) {
     if (c == '\'') {
@@ -18,7 +18,7 @@ auto ShellQuote(const std::string &value) -> std::string {
   return quoted;
 }
 
-auto SanitizeContainerName(const std::string &value) -> std::string {
+std::string SanitizeContainerName(const std::string &value) {
   std::string name;
   for (const unsigned char c : value) {
     if (std::isalnum(c) != 0 || c == '_' || c == '.' || c == '-') {
@@ -30,8 +30,8 @@ auto SanitizeContainerName(const std::string &value) -> std::string {
   return name;
 }
 
-auto BindMount(const std::filesystem::path &source, const std::string &target,
-               bool readonly) -> std::string {
+std::string BindMount(const std::filesystem::path &source, const std::string &target,
+               bool readonly) {
   std::string mount =
       "type=bind,source=" + source.string() + ",target=" + target;
   if (readonly) {
@@ -40,8 +40,8 @@ auto BindMount(const std::filesystem::path &source, const std::string &target,
   return mount;
 }
 
-auto VolumeMount(const std::string &volume, const std::string &target,
-                 bool readonly) -> std::string {
+std::string VolumeMount(const std::string &volume, const std::string &target,
+                 bool readonly) {
   std::string mount = "type=volume,source=" + volume + ",target=" + target;
   if (readonly) {
     mount += ",readonly";
@@ -49,26 +49,26 @@ auto VolumeMount(const std::string &volume, const std::string &target,
   return mount;
 }
 
-auto ScratchPrelude() -> std::string {
+std::string ScratchPrelude() {
   return "export HOME=" + std::string(kScratch) + "\n";
 }
 
-auto CreateVolume(const std::string &docker, const std::string &name,
+StepResult CreateVolume(const std::string &docker, const std::string &name,
                   const std::filesystem::path &log_dir,
-                  const std::string &tag) -> StepResult {
+                  const std::string &tag) {
   return RunStep(docker, {"volume", "create", name}, /*cwd=*/{}, log_dir, tag,
                  std::chrono::seconds(60));
 }
 
-auto RemoveVolume(const std::string &docker,
-                  const std::string &name) -> process::RunResult {
+process::RunResult RemoveVolume(const std::string &docker,
+                  const std::string &name) {
   process::RunOptions options;
   options.timeout = std::chrono::seconds(60);
   return process::RunCommand(docker, {"volume", "rm", "-f", name}, options);
 }
 
-auto KillContainer(const std::string &docker,
-                   const std::string &name) -> process::RunResult {
+process::RunResult KillContainer(const std::string &docker,
+                   const std::string &name) {
   // The client-side wait may already have been stopped by a timeout or a
   // cancel; the container itself is the daemon's and would otherwise keep
   // running.
@@ -77,42 +77,42 @@ auto KillContainer(const std::string &docker,
   return process::RunCommand(docker, {"kill", name}, options);
 }
 
-auto RemoveContainer(const std::string &docker,
-                     const std::string &name) -> process::RunResult {
+process::RunResult RemoveContainer(const std::string &docker,
+                     const std::string &name) {
   process::RunOptions options;
   options.timeout = std::chrono::seconds(60);
   return process::RunCommand(docker, {"rm", "-f", name}, options);
 }
 
-auto WaitForContainer(const std::string &docker, const std::string &name,
+StepResult WaitForContainer(const std::string &docker, const std::string &name,
                       std::chrono::seconds timeout,
                       const std::filesystem::path &log_dir,
-                      const std::string &tag) -> StepResult {
+                      const std::string &tag) {
   return RunStep(docker, {"wait", name}, /*cwd=*/{}, log_dir, tag, timeout);
 }
 
-auto ContainerLogs(const std::string &docker, const std::string &name,
+StepResult ContainerLogs(const std::string &docker, const std::string &name,
                    const std::filesystem::path &log_dir,
-                   const std::string &tag) -> StepResult {
+                   const std::string &tag) {
   return RunStep(docker, {"logs", name}, /*cwd=*/{}, log_dir, tag,
                  std::chrono::seconds(60));
 }
 
-auto CreateInternalNetwork(const std::string &docker, const std::string &name,
+StepResult CreateInternalNetwork(const std::string &docker, const std::string &name,
                            const std::filesystem::path &log_dir,
-                           const std::string &tag) -> StepResult {
+                           const std::string &tag) {
   return RunStep(docker, {"network", "create", "--internal", name},
                  /*cwd=*/{}, log_dir, tag, std::chrono::seconds(60));
 }
 
-auto RemoveNetwork(const std::string &docker,
-                   const std::string &name) -> process::RunResult {
+process::RunResult RemoveNetwork(const std::string &docker,
+                   const std::string &name) {
   process::RunOptions options;
   options.timeout = std::chrono::seconds(60);
   return process::RunCommand(docker, {"network", "rm", name}, options);
 }
 
-auto DockerRunArgs(const DockerRunSpec &spec) -> std::vector<std::string> {
+std::vector<std::string> DockerRunArgs(const DockerRunSpec &spec) {
   std::vector<std::string> args = {spec.create ? "create" : "run"};
   if (spec.rm && !spec.create) {
     args.push_back("--rm");

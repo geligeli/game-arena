@@ -20,17 +20,17 @@ class ClientHandle {
  public:
   virtual ~ClientHandle() = default;
 
-  virtual auto name() const -> std::string = 0;
+  virtual std::string name() const = 0;
 
   // Queues a message for delivery. A true return means "accepted", not "on the
   // wire": writes complete asynchronously, and a delivery failure surfaces
   // later via disconnected(). Returns false when the connection is already
   // dead or closing.
-  virtual auto Send(const proto::ServerMessage &msg) -> bool = 0;
+  virtual bool Send(const proto::ServerMessage &msg) = 0;
 
   // Pops the next queued action, or nullopt when none is waiting. Never
   // blocks: the game learns that something arrived through the observer.
-  virtual auto TryPopAction() -> std::optional<std::string> = 0;
+  virtual std::optional<std::string> TryPopAction() = 0;
 
   // Invoked from an arbitrary thread whenever something may have changed -- an
   // action arrived, or the connection dropped. Deliberately carries no
@@ -40,7 +40,7 @@ class ClientHandle {
 
   // Wakes the observer and fails future sends.
   virtual void MarkDisconnected() = 0;
-  virtual auto disconnected() const -> bool = 0;
+  virtual bool disconnected() const = 0;
 
   // Flushes whatever is still queued and then ends the RPC. Idempotent.
   //

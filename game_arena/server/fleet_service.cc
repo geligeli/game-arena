@@ -32,7 +32,7 @@ void StreamFleetWorker::Stop() {
   }
 }
 
-auto StreamFleetWorker::Send(const proto::FleetMessage &msg) -> bool {
+bool StreamFleetWorker::Send(const proto::FleetMessage &msg) {
   {
     std::lock_guard lock(mutex_);
     if (stopping_) {
@@ -73,10 +73,10 @@ void StreamFleetWorker::WriterLoop() {
 
 FleetService::FleetService(Scheduler *scheduler) : scheduler_(scheduler) {}
 
-auto FleetService::Attach(
+grpc::Status FleetService::Attach(
     grpc::ServerContext * /*context*/,
     grpc::ServerReaderWriter<proto::FleetMessage, proto::WorkerMessage>
-        *stream) -> grpc::Status {
+        *stream) {
   proto::WorkerMessage first;
   if (!stream->Read(&first) || !first.has_hello()) {
     return {grpc::StatusCode::INVALID_ARGUMENT,

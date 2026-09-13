@@ -67,7 +67,7 @@ class OrderRunnerContainerTest : public ::testing::Test {
     std::filesystem::remove_all(root_, ec);
   }
 
-  static auto FakeDockerScript() -> std::string {
+  static std::string FakeDockerScript() {
     return "#!/usr/bin/env bash\n"
            "echo \"docker $*\" >> \"" +
            (root_ / "docker.log").string() +
@@ -131,7 +131,7 @@ class OrderRunnerContainerTest : public ::testing::Test {
            "exit 1\n";
   }
 
-  static auto FakeGitScript() -> std::string {
+  static std::string FakeGitScript() {
     return "#!/usr/bin/env bash\n"
            "echo \"git $*\" >> \"" +
            (root_ / "git.log").string() +
@@ -160,7 +160,7 @@ class OrderRunnerContainerTest : public ::testing::Test {
            "exit 1\n";
   }
 
-  static auto ReadFile(const std::filesystem::path &path) -> std::string {
+  static std::string ReadFile(const std::filesystem::path &path) {
     std::ifstream in(path);
     if (!in) {
       return {};
@@ -183,8 +183,8 @@ class OrderRunnerContainerTest : public ::testing::Test {
   // list. This can. The script after `-c` is deliberately excluded: it spans
   // lines and is already asserted byte for byte in
   // //game_arena/sandbox/exec:entrypoint_test.
-  static auto RunArgvFor(const std::string &log,
-                         const std::string &container) -> std::string {
+  static std::string RunArgvFor(const std::string &log,
+                         const std::string &container) {
     const std::string name_flag = "--name " + container + " ";
     const std::size_t at = log.find(name_flag);
     if (at == std::string::npos) {
@@ -198,8 +198,8 @@ class OrderRunnerContainerTest : public ::testing::Test {
     return log.substr(start, end - start);
   }
 
-  static auto MakeOrder(const std::string &id,
-                        const std::string &candidate) -> proto::WorkOrder {
+  static proto::WorkOrder MakeOrder(const std::string &id,
+                        const std::string &candidate) {
     proto::WorkOrder order;
     order.set_order_id(id);
     order.set_game("nim");

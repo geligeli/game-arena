@@ -23,25 +23,25 @@ constexpr int kDefaultTimeoutS = 1800;
 // there to collide with.
 constexpr int kMatchPort = 50051;
 
-auto Verbatim(const std::string &text) -> sx::Token {
+sx::Token Verbatim(const std::string &text) {
   sx::Token token;
   token.set_text(text);
   token.set_verbatim(true);
   return token;
 }
 
-auto Quoted(const std::string &text) -> sx::Token {
+sx::Token Quoted(const std::string &text) {
   sx::Token token;
   token.set_text(text);
   return token;
 }
 
-auto SlotDir(const OrderJobConfig &config, int slot) -> std::filesystem::path {
+std::filesystem::path SlotDir(const OrderJobConfig &config, int slot) {
   return config.work_dir / ("slot" + std::to_string(slot));
 }
 
-auto Isolation(const proto::SandboxOrder &sandbox,
-               bool container) -> sx::Isolation {
+sx::Isolation Isolation(const proto::SandboxOrder &sandbox,
+               bool container) {
   sx::Isolation isolation;
   if (!container) {
     // No image and no cgroups. The one limit this engine can apply is an
@@ -68,8 +68,8 @@ auto Isolation(const proto::SandboxOrder &sandbox,
 // The isolation for a step that runs the submission itself: the problem's
 // memory limit, as an address-space cap the process engine can enforce. Not
 // applied to the build, for the reason in Isolation() above.
-auto SolutionIsolation(const proto::SandboxOrder &sandbox, bool container,
-                       const sx::Isolation &base) -> sx::Isolation {
+sx::Isolation SolutionIsolation(const proto::SandboxOrder &sandbox, bool container,
+                       const sx::Isolation &base) {
   sx::Isolation isolation = base;
   if (!container && sandbox.memory_limit_mb() > 0) {
     isolation.set_address_space_limit_bytes(
@@ -86,8 +86,8 @@ struct BuildPaths {
   std::string bazel_bin;
 };
 
-auto PathsFor(const OrderJobConfig &config, int slot,
-              bool container) -> BuildPaths {
+BuildPaths PathsFor(const OrderJobConfig &config, int slot,
+              bool container) {
   BuildPaths paths;
   if (container) {
     paths.output_base = sandbox_common::kOutputBaseMount;
@@ -104,9 +104,9 @@ auto PathsFor(const OrderJobConfig &config, int slot,
 
 // A persistent directory for a container: a docker volume unless this host
 // opted into a bind mount for it.
-auto PersistentMount(const std::filesystem::path &bind_dir,
+sx::Mount PersistentMount(const std::filesystem::path &bind_dir,
                      const std::string &volume,
-                     const std::string &target) -> sx::Mount {
+                     const std::string &target) {
   sx::Mount mount;
   if (bind_dir.empty()) {
     mount.set_kind(sx::Mount::VOLUME);
@@ -119,8 +119,7 @@ auto PersistentMount(const std::filesystem::path &bind_dir,
   return mount;
 }
 
-auto SidesOf(const proto::WorkOrder &order)
-    -> std::vector<const proto::Side *> {
+std::vector<const proto::Side *> SidesOf(const proto::WorkOrder &order) {
   std::vector<const proto::Side *> sides = {&order.candidate()};
   if (order.has_opponent()) {
     sides.push_back(&order.opponent());
@@ -128,9 +127,9 @@ auto SidesOf(const proto::WorkOrder &order)
   return sides;
 }
 
-auto WorkspaceFor(const proto::WorkOrder &order, const OrderJobConfig &config,
+std::optional<sx::Workspace> WorkspaceFor(const proto::WorkOrder &order, const OrderJobConfig &config,
                   int slot, bool container,
-                  std::string *error) -> std::optional<sx::Workspace> {
+                  std::string *error) {
   const std::filesystem::path slot_dir = SlotDir(config, slot);
   sx::Workspace ws;
   ws.set_source_repo(order.repo_url());
@@ -396,15 +395,15 @@ void AddGradePhases(const proto::WorkOrder &order, bool container,
 
 }  // namespace
 
-auto SlotLogDir(const OrderJobConfig &config,
-                int slot) -> std::filesystem::path {
+std::filesystem::path SlotLogDir(const OrderJobConfig &config,
+                int slot) {
   return SlotDir(config, slot) / "logs";
 }
 
-auto JobForOrder(int slot, const proto::WorkOrder &order,
+bool JobForOrder(int slot, const proto::WorkOrder &order,
                  const OrderJobConfig &config,
                  const sandbox_exec::Capabilities &capabilities, sx::Job *job,
-                 std::string *error) -> bool {
+                 std::string *error) {
   const bool container = capabilities.isolates;
 
   job->set_id(sandbox_exec::SandboxName(

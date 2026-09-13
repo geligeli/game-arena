@@ -19,14 +19,14 @@ class FleetWorker {
 
   // Stable across reconnects, so a returning worker is recognised rather than
   // counted twice.
-  virtual auto worker_id() const -> std::string = 0;
+  virtual std::string worker_id() const = 0;
 
   // How many orders this worker will run at once.
-  virtual auto slots() const -> int = 0;
+  virtual int slots() const = 0;
 
   // Queues a message. False means the worker is gone and its in-flight orders
   // should be requeued.
-  virtual auto Send(const proto::FleetMessage &msg) -> bool = 0;
+  virtual bool Send(const proto::FleetMessage &msg) = 0;
 };
 
 }  // namespace tournament_arena

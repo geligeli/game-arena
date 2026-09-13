@@ -22,17 +22,16 @@ inline constexpr std::string_view kPlayerPrefix = "player:";
 
 // "//a/b:c" -> "a/b/c": where bazel writes a target's binary under bazel-bin.
 // "//a/b" is read as "//a/b:b", the same shorthand bazel uses.
-auto BinaryPathForTarget(std::string_view target) -> std::string;
+std::string BinaryPathForTarget(std::string_view target);
 
 // The argv a built bot is started with.
-auto BotArgs(const std::string &name, const std::string &target,
+std::vector<std::string> BotArgs(const std::string &name, const std::string &target,
              const std::string &opponent, int games,
-             const std::string &params) -> std::vector<std::string>;
+             const std::string &params);
 
 // "a=1,b=2" from a params map, sorted so a rebuilt candidate gets a
 // byte-identical command line and a cached build stays reusable.
-auto FormatParams(const google::protobuf::Map<std::string, std::string> &params)
-    -> std::string;
+std::string FormatParams(const google::protobuf::Map<std::string, std::string> &params);
 
 }  // namespace tournament_arena
 

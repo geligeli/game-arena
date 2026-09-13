@@ -26,12 +26,12 @@ namespace sandbox_exec {
 //   [git apply '/patches/<name>'] ...
 //   [export KEY='value'] ...
 //   exec <argv>
-auto EntrypointScript(const proto::Workspace &workspace,
-                      const proto::Step &step) -> std::string;
+std::string EntrypointScript(const proto::Workspace &workspace,
+                      const proto::Step &step);
 
 // |argv| rendered for a shell: verbatim tokens as they are, everything else
 // single-quoted.
-auto RenderArgv(const proto::Step &step) -> std::string;
+std::string RenderArgv(const proto::Step &step);
 
 }  // namespace sandbox_exec
 

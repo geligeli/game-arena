@@ -49,8 +49,8 @@ struct OrderOutcome {
 };
 
 // Interprets |result| as the outcome of |order|.
-auto OutcomeFor(const proto::WorkOrder &order,
-                const sandbox_exec::proto::JobResult &result) -> OrderOutcome;
+OrderOutcome OutcomeFor(const proto::WorkOrder &order,
+                const sandbox_exec::proto::JobResult &result);
 
 }  // namespace tournament_arena
 

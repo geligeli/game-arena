@@ -35,10 +35,10 @@ class MetricStandings final : public Standings {
 
   void Record(const std::string &candidate_id, const std::string &opponent,
               const proto::OrderResult &result) override;
-  auto Get(const std::string &candidate_id) const -> Standing override;
-  auto Rank(int limit) const -> std::vector<Standing> override;
-  auto score_label() const -> std::string override { return metric_name_; }
-  auto has(const std::string &candidate_id) const -> bool override;
+  Standing Get(const std::string &candidate_id) const override;
+  std::vector<Standing> Rank(int limit) const override;
+  std::string score_label() const override { return metric_name_; }
+  bool has(const std::string &candidate_id) const override;
 
  private:
   // Atomic rewrite of an already-serialized store. Called without mutex_ held;

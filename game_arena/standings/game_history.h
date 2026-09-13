@@ -27,12 +27,12 @@ class GameHistory {
 
   // Writes the record and appends to the index. Returns the record file path,
   // or an empty path on failure (logged).
-  auto Store(const proto::GameRecord &record) -> std::filesystem::path;
+  std::filesystem::path Store(const proto::GameRecord &record);
 
   // Last |limit| index lines, oldest first.
-  auto RecentGames(int limit) const -> std::vector<std::string>;
+  std::vector<std::string> RecentGames(int limit) const;
 
-  auto dir() const -> const std::filesystem::path & { return dir_; }
+  const std::filesystem::path & dir() const { return dir_; }
 
  private:
   const std::filesystem::path dir_;  // <data_dir>/games

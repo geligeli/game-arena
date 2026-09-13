@@ -78,14 +78,14 @@ extern "C" void OnInterrupt(int signum) {
   g_interrupted.store(true);
 }
 
-auto DefaultIdentifier() -> std::string {
+std::string DefaultIdentifier() {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
   return "cli-" + std::to_string(::getpid()) + "-" +
          std::to_string(
              std::chrono::duration_cast<std::chrono::seconds>(now).count());
 }
 
-auto ApplyDeadline(grpc::ClientContext *context) -> void {
+void ApplyDeadline(grpc::ClientContext *context) {
   const int deadline_s = absl::GetFlag(FLAGS_deadline_s);
   if (deadline_s > 0) {
     context->set_deadline(std::chrono::system_clock::now() +
@@ -93,7 +93,7 @@ auto ApplyDeadline(grpc::ClientContext *context) -> void {
   }
 }
 
-auto ReadFile(const std::filesystem::path &path, std::string *content) -> bool {
+bool ReadFile(const std::filesystem::path &path, std::string *content) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     return false;
@@ -105,8 +105,8 @@ auto ReadFile(const std::filesystem::path &path, std::string *content) -> bool {
 
 // --patch_dir: send the whole tree, keyed by path relative to the dir, which
 // is exactly the layout the runner copies onto the workspace.
-auto AddPatchDir(const std::filesystem::path &dir,
-                 proto::RunRequest *request) -> bool {
+bool AddPatchDir(const std::filesystem::path &dir,
+                 proto::RunRequest *request) {
   std::error_code ec;
   if (!std::filesystem::is_directory(dir, ec)) {
     LOG(ERROR) << "--patch_dir " << dir << " is not a directory";
@@ -137,7 +137,7 @@ auto AddPatchDir(const std::filesystem::path &dir,
 
 // --patch: comma-separated <repo/path>=<host file>, or bare <repo/path> when
 // the host file sits at the same relative path under the current directory.
-auto AddPatchFlag(const std::string &spec, proto::RunRequest *request) -> bool {
+bool AddPatchFlag(const std::string &spec, proto::RunRequest *request) {
   for (std::string::size_type pos = 0; pos < spec.size();) {
     const std::string::size_type comma = spec.find(',', pos);
     const std::string entry = spec.substr(pos, comma - pos);
@@ -162,15 +162,15 @@ auto AddPatchFlag(const std::string &spec, proto::RunRequest *request) -> bool {
   return true;
 }
 
-auto WriteAll(std::FILE *stream, const std::string &data) -> void {
+void WriteAll(std::FILE *stream, const std::string &data) {
   if (!data.empty()) {
     std::fwrite(data.data(), 1, data.size(), stream);
   }
   std::fflush(stream);
 }
 
-auto DoKill(proto::SandboxService::Stub *stub,
-            const std::string &identifier) -> int {
+int DoKill(proto::SandboxService::Stub *stub,
+            const std::string &identifier) {
   grpc::ClientContext context;
   ApplyDeadline(&context);
   proto::KillRequest request;
@@ -188,7 +188,7 @@ auto DoKill(proto::SandboxService::Stub *stub,
 
 }  // namespace
 
-auto main(int argc, char **argv) -> int {
+int main(int argc, char **argv) {
   const std::vector<char *> positional = absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);

@@ -7,7 +7,7 @@
 
 namespace tournament_arena {
 
-auto ParseResultLine(const std::string &output, RunTally *tally) -> bool {
+bool ParseResultLine(const std::string &output, RunTally *tally) {
   static const RE2 kResult(
       R"(RESULT games=(\d+) wins=(\d+) draws=(\d+) losses=(\d+) elo=([-\d.]+))");
   std::istringstream lines(output);

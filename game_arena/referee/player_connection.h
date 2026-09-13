@@ -59,12 +59,12 @@ class PlayerConnection final : public ClientHandle {
   PlayerConnection(std::string player_name, Transport *transport);
 
   // --- ClientHandle ---
-  auto name() const -> std::string override;
-  auto Send(const proto::ServerMessage &msg) -> bool override;
-  auto TryPopAction() -> std::optional<std::string> override;
+  std::string name() const override;
+  bool Send(const proto::ServerMessage &msg) override;
+  std::optional<std::string> TryPopAction() override;
   void SetObserver(std::function<void()> on_event) override;
   void MarkDisconnected() override;
-  auto disconnected() const -> bool override;
+  bool disconnected() const override;
   void CloseAfterFlush() override;
 
   // --- reactor side ---

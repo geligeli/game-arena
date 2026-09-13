@@ -14,7 +14,7 @@
 namespace sandbox_exec {
 namespace {
 
-auto Word(const std::string &text, bool verbatim) -> proto::Token {
+proto::Token Word(const std::string &text, bool verbatim) {
   proto::Token token;
   token.set_text(text);
   token.set_verbatim(verbatim);
@@ -22,7 +22,7 @@ auto Word(const std::string &text, bool verbatim) -> proto::Token {
 }
 
 // A workspace whose patches git applies inside the sandbox.
-auto PatchedInSandbox() -> proto::Workspace {
+proto::Workspace PatchedInSandbox() {
   proto::Workspace ws;
   ws.set_patch(proto::Workspace::PATCH_IN_ENTRYPOINT);
   return ws;

@@ -8,7 +8,7 @@ namespace tournament_broker {
 
 namespace {
 
-auto NowUnixMs() -> int64_t {
+int64_t NowUnixMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
@@ -33,11 +33,11 @@ GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
       session_(descriptor.new_session()),
       gen_(std::random_device{}() ^ static_cast<uint32_t>(game_counter)) {}
 
-auto GameRun::Create(const GameDescriptor &descriptor, GameRunConfig config,
+std::shared_ptr<GameRun> GameRun::Create(const GameDescriptor &descriptor, GameRunConfig config,
                      std::array<Seat, 2> seats, uint64_t game_counter,
                      EloStore *elo_store, GameHistory *history,
                      WorkerPool *pool, Timer *timer,
-                     Task on_finished) -> std::shared_ptr<GameRun> {
+                     Task on_finished) {
   return std::shared_ptr<GameRun>(
       new GameRun(descriptor, config, std::move(seats), game_counter, elo_store,
                   history, pool, timer, std::move(on_finished)));
@@ -103,8 +103,8 @@ void GameRun::Begin() {
   Step();
 }
 
-auto GameRun::SendYourTurn(int seat,
-                           std::chrono::milliseconds allowed) -> bool {
+bool GameRun::SendYourTurn(int seat,
+                           std::chrono::milliseconds allowed) {
   proto::ServerMessage msg;
   auto *turn = msg.mutable_your_turn();
   turn->set_state(session_->SerializeState());

@@ -16,23 +16,23 @@ namespace {
 
 using sandbox_common::TailOf;
 
-auto Fail(proto::Status *status, proto::Status::Code code,
-          const std::string &message) -> bool {
+bool Fail(proto::Status *status, proto::Status::Code code,
+          const std::string &message) {
   status->set_code(code);
   status->set_message(message);
   return false;
 }
 
-auto GitOf(const proto::Workspace &ws) -> std::string {
+std::string GitOf(const proto::Workspace &ws) {
   return ws.git().empty() ? "git" : ws.git();
 }
 
-auto TarOf(const proto::Workspace &ws) -> std::string {
+std::string TarOf(const proto::Workspace &ws) {
   return ws.tar().empty() ? "tar" : ws.tar();
 }
 
-auto WriteStagedFiles(const proto::Workspace &ws,
-                      proto::Status *status) -> bool {
+bool WriteStagedFiles(const proto::Workspace &ws,
+                      proto::Status *status) {
   if (ws.staging_dir().empty()) {
     return true;
   }
@@ -58,9 +58,9 @@ auto WriteStagedFiles(const proto::Workspace &ws,
   return true;
 }
 
-auto ApplyHostPatches(const proto::Workspace &ws,
+bool ApplyHostPatches(const proto::Workspace &ws,
                       const std::filesystem::path &log_dir,
-                      proto::Status *status) -> bool {
+                      proto::Status *status) {
   const std::filesystem::path tree(ws.tree_dir());
   for (const std::string &name : ws.patch_files()) {
     const std::filesystem::path diff =
@@ -92,7 +92,7 @@ auto ApplyHostPatches(const proto::Workspace &ws,
 
 }  // namespace
 
-auto IsSafeStagedPath(const std::string &path) -> bool {
+bool IsSafeStagedPath(const std::string &path) {
   if (path.empty() || path.front() == '/') {
     return false;
   }
@@ -104,9 +104,9 @@ auto IsSafeStagedPath(const std::string &path) -> bool {
   return true;
 }
 
-auto PrepareWorkspace(const proto::Workspace &ws,
+bool PrepareWorkspace(const proto::Workspace &ws,
                       const std::filesystem::path &log_dir,
-                      proto::Status *status) -> bool {
+                      proto::Status *status) {
   std::error_code ec;
   std::filesystem::create_directories(log_dir, ec);
 
@@ -139,10 +139,10 @@ auto PrepareWorkspace(const proto::Workspace &ws,
   return true;
 }
 
-auto ExportTree(const proto::Workspace &ws,
+bool ExportTree(const proto::Workspace &ws,
                 const std::filesystem::path &archive,
                 const std::filesystem::path &log_dir,
-                proto::Status *status) -> bool {
+                proto::Status *status) {
   std::error_code ec;
   std::filesystem::create_directories(archive.parent_path(), ec);
   // Without .git: the sandbox builds a tree, it does not need the history,

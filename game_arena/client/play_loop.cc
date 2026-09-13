@@ -9,10 +9,10 @@
 
 namespace tournament_client {
 
-auto PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
+bool PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
                  const std::string &name, const std::string &game,
                  const std::string &opponent, const ChooseActionFn &choose,
-                 std::mt19937 &gen) -> bool {
+                 std::mt19937 &gen) {
   grpc::ClientContext context;
   auto stream = stub->Play(&context);
 
@@ -59,10 +59,10 @@ auto PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
   return true;
 }
 
-auto PlayGames(tournament_broker::proto::TournamentBroker::Stub *stub,
+bool PlayGames(tournament_broker::proto::TournamentBroker::Stub *stub,
                const std::string &name, const std::string &game,
                const std::string &opponent, int games,
-               const ChooseActionFn &choose, std::mt19937 &gen) -> bool {
+               const ChooseActionFn &choose, std::mt19937 &gen) {
   for (int i = 0; i < games; ++i) {
     if (!PlayOneGame(stub, name, game, opponent, choose, gen)) {
       return false;

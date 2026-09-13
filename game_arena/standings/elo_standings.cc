@@ -15,7 +15,7 @@ constexpr std::string_view kPlayerPrefix = "player:";
 // The name the opponent is rated under. A builtin is a player like any other --
 // that is what makes "beat builtin:mcts" a meaningful thing to be rated for --
 // and a candidate opponent is rated under its own id.
-auto OpponentName(const std::string &opponent) -> std::string {
+std::string OpponentName(const std::string &opponent) {
   if (opponent.rfind(kPlayerPrefix, 0) == 0) {
     return opponent.substr(kPlayerPrefix.size());
   }
@@ -55,12 +55,12 @@ void EloStandings::Record(const std::string &candidate_id,
   }
 }
 
-auto EloStandings::Get(const std::string &candidate_id) const -> Standing {
+Standing EloStandings::Get(const std::string &candidate_id) const {
   return GetIn(problem_id_, candidate_id);
 }
 
-auto EloStandings::GetIn(const std::string &problem_id,
-                         const std::string &candidate_id) const -> Standing {
+Standing EloStandings::GetIn(const std::string &problem_id,
+                         const std::string &candidate_id) const {
   const auto rating = elo_store_->Get(problem_id, candidate_id);
   Standing standing;
   standing.candidate_id = candidate_id;
@@ -71,12 +71,12 @@ auto EloStandings::GetIn(const std::string &problem_id,
   return standing;
 }
 
-auto EloStandings::has(const std::string &candidate_id) const -> bool {
+bool EloStandings::has(const std::string &candidate_id) const {
   const auto rating = elo_store_->Get(problem_id_, candidate_id);
   return rating.wins() + rating.draws() + rating.losses() > 0;
 }
 
-auto EloStandings::Rank(int limit) const -> std::vector<Standing> {
+std::vector<Standing> EloStandings::Rank(int limit) const {
   std::vector<Standing> rows;
   if (candidates_ != nullptr) {
     for (const proto::Candidate &candidate : candidates_->List()) {

@@ -130,7 +130,7 @@ class Tally {
 
   // Blocks until the target is reached or |deadline| passes. Returns true if
   // the full match was played.
-  auto Await(std::chrono::steady_clock::time_point deadline) -> bool {
+  bool Await(std::chrono::steady_clock::time_point deadline) {
     std::unique_lock lock(mutex_);
     if (deadline == std::chrono::steady_clock::time_point::max()) {
       cv_.wait(lock, [&] { return games_ >= target_; });
@@ -142,7 +142,7 @@ class Tally {
   struct Counts {
     int games, wins, draws, losses;
   };
-  auto counts() const -> Counts {
+  Counts counts() const {
     std::lock_guard lock(mutex_);
     return {games_, wins_, draws_, losses_};
   }
@@ -157,7 +157,7 @@ class Tally {
 
 }  // namespace
 
-auto main(int argc, char **argv) -> int {
+int main(int argc, char **argv) {
   absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);

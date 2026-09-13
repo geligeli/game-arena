@@ -33,7 +33,7 @@ struct StepResult {
 // RunOptions does; empty inherits. Last in the list, out of the order it
 // reads in, so that adding it did not renumber the arguments of every
 // existing call site.
-auto RunStep(const std::string &executable,
+StepResult RunStep(const std::string &executable,
              const std::vector<std::string> &args,
              const std::filesystem::path &cwd,
              const std::filesystem::path &log_dir, const std::string &tag,
@@ -41,7 +41,7 @@ auto RunStep(const std::string &executable,
              std::size_t address_space_limit_bytes = 0,
              const std::function<void(pid_t)> &on_started = {},
              const std::vector<std::string> &env = {},
-             const std::filesystem::path &stdin_path = {}) -> StepResult;
+             const std::filesystem::path &stdin_path = {});
 
 }  // namespace sandbox_common
 

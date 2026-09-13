@@ -21,17 +21,16 @@ namespace sandbox_exec {
 // mounts. Nothing here is optional for a caller to remember: the zero value
 // of every relaxation is the hardened one, so a default-constructed Isolation
 // produces --cap-drop ALL, no-new-privileges and a read-only root.
-auto IsolationArgs(const proto::Isolation &isolation)
-    -> std::vector<std::string>;
+std::vector<std::string> IsolationArgs(const proto::Isolation &isolation);
 
 // What to pass docker's --network for |isolation|, given the name of the
 // phase's own bridge. Empty leaves docker's default, which is never what a
 // sandbox wants and so is never returned here.
-auto NetworkArg(const proto::Isolation &isolation,
-                const std::string &phase_network) -> std::string;
+std::string NetworkArg(const proto::Isolation &isolation,
+                const std::string &phase_network);
 
 // True when |isolation| asks for a bridge the engine has to create first.
-auto NeedsPhaseNetwork(const proto::Isolation &isolation) -> bool;
+bool NeedsPhaseNetwork(const proto::Isolation &isolation);
 
 }  // namespace sandbox_exec
 

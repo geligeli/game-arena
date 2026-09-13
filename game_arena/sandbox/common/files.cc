@@ -6,7 +6,7 @@
 
 namespace sandbox_common {
 
-auto ReadFile(const std::filesystem::path &path) -> std::string {
+std::string ReadFile(const std::filesystem::path &path) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     return {};
@@ -15,8 +15,8 @@ auto ReadFile(const std::filesystem::path &path) -> std::string {
                      std::istreambuf_iterator<char>());
 }
 
-auto WriteFile(const std::filesystem::path &path, const std::string &content,
-               std::string *error) -> bool {
+bool WriteFile(const std::filesystem::path &path, const std::string &content,
+               std::string *error) {
   std::error_code ec;
   if (path.has_parent_path()) {
     std::filesystem::create_directories(path.parent_path(), ec);

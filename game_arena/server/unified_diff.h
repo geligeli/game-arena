@@ -39,7 +39,7 @@ struct PatchFile {
 
   // The path this entry is about, for policy checks and display: the new path
   // when there is one, else the old.
-  auto path() const -> const std::string & {
+  const std::string & path() const {
     return new_path.empty() ? old_path : new_path;
   }
 };
@@ -52,12 +52,12 @@ struct Patch {
 // Parses a unified diff. Returns false with *error set when a header is
 // malformed or a path is unusable; an empty diff is an error, since a
 // submission that changes nothing cannot be evaluated.
-auto ParseUnifiedDiff(std::string_view diff, Patch *out,
-                      std::string *error) -> bool;
+bool ParseUnifiedDiff(std::string_view diff, Patch *out,
+                      std::string *error);
 
 // Every path |diff| touches, in order, deduplicated. Convenience over
 // ParseUnifiedDiff for callers that only need the paths.
-auto TouchedPaths(const Patch &patch) -> std::vector<std::string>;
+std::vector<std::string> TouchedPaths(const Patch &patch);
 
 // One file of an add-only patch.
 struct NewFile {
@@ -69,13 +69,13 @@ struct NewFile {
 // turns the structured submit form (a list of files) into the one thing the
 // worker knows how to handle, so there is a single execution path rather than
 // two.
-auto MakeAddOnlyPatch(const std::vector<NewFile> &files) -> std::string;
+std::string MakeAddOnlyPatch(const std::vector<NewFile> &files);
 
 // True when |path| matches |pattern|, where '*' matches within one path
 // segment and '**' matches across segments. No character classes: a submission
 // policy is read by whoever operates the problem, and glob subtleties there
 // are a way to allow something by accident.
-auto PathMatchesGlob(std::string_view path, std::string_view pattern) -> bool;
+bool PathMatchesGlob(std::string_view path, std::string_view pattern);
 
 }  // namespace tournament_arena
 

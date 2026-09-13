@@ -13,7 +13,7 @@ namespace tournament_arena {
 
 namespace {
 
-auto NowUnixMs() -> int64_t {
+int64_t NowUnixMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
@@ -95,12 +95,12 @@ void MetricStandings::Save(const std::string &blob, uint64_t version) {
   saved_version_ = version;
 }
 
-auto MetricStandings::has(const std::string &candidate_id) const -> bool {
+bool MetricStandings::has(const std::string &candidate_id) const {
   std::lock_guard lock(mutex_);
   return store_.records().contains(candidate_id);
 }
 
-auto MetricStandings::Get(const std::string &candidate_id) const -> Standing {
+Standing MetricStandings::Get(const std::string &candidate_id) const {
   std::lock_guard lock(mutex_);
   Standing standing;
   standing.candidate_id = candidate_id;
@@ -122,7 +122,7 @@ auto MetricStandings::Get(const std::string &candidate_id) const -> Standing {
   return standing;
 }
 
-auto MetricStandings::Rank(int limit) const -> std::vector<Standing> {
+std::vector<Standing> MetricStandings::Rank(int limit) const {
   std::vector<Standing> rows;
   {
     std::lock_guard lock(mutex_);

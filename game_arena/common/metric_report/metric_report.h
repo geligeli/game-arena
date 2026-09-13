@@ -28,8 +28,8 @@ namespace metric_report {
 
 // Parses one run's report, preferring |json| and falling back to a RESULT
 // line in |stdout_text|. Returns false when neither form is present.
-auto Parse(std::string_view json, std::string_view stdout_text,
-           std::map<std::string, double> *metrics) -> bool;
+bool Parse(std::string_view json, std::string_view stdout_text,
+           std::map<std::string, double> *metrics);
 
 }  // namespace metric_report
 

@@ -25,33 +25,33 @@ using sandbox_common::TailOf;
 
 constexpr int kDefaultDrainTimeoutS = 60;
 
-auto Merge(const proto::Isolation &base,
-           const proto::Isolation &override_with) -> proto::Isolation {
+proto::Isolation Merge(const proto::Isolation &base,
+           const proto::Isolation &override_with) {
   // A step's isolation replaces the phase's outright rather than merging
   // field by field. Half-overridden isolation is the kind of thing that reads
   // as tight and is not.
   return override_with.ByteSizeLong() > 0 ? override_with : base;
 }
 
-auto TimeoutOf(const proto::Step &step) -> std::chrono::seconds {
+std::chrono::seconds TimeoutOf(const proto::Step &step) {
   return std::chrono::seconds(step.timeout_s());
 }
 
 // The job's own volumes: the tree, the staged files, and scratch.
-auto WorkspaceVolume(const proto::Job &job) -> std::string {
+std::string WorkspaceVolume(const proto::Job &job) {
   return SandboxName(job.id(), "ws");
 }
-auto PatchesVolume(const proto::Job &job) -> std::string {
+std::string PatchesVolume(const proto::Job &job) {
   return SandboxName(job.id(), "patches");
 }
-auto ScratchVolume(const proto::Job &job) -> std::string {
+std::string ScratchVolume(const proto::Job &job) {
   return SandboxName(job.id(), "scratch");
 }
-auto LoaderName(const proto::Job &job) -> std::string {
+std::string LoaderName(const proto::Job &job) {
   return SandboxName(job.id(), "load");
 }
 
-auto MountArg(const proto::Mount &mount) -> std::string {
+std::string MountArg(const proto::Mount &mount) {
   return mount.kind() == proto::Mount::VOLUME
              ? sandbox_common::VolumeMount(mount.source(), mount.target(),
                                            mount.readonly())
@@ -61,7 +61,7 @@ auto MountArg(const proto::Mount &mount) -> std::string {
 
 // The `--mount` arguments every step of |job| gets, in order: the tree, the
 // scratch dir, then whatever the job asked for.
-auto WorkspaceMounts(const proto::Job &job) -> std::vector<std::string> {
+std::vector<std::string> WorkspaceMounts(const proto::Job &job) {
   std::vector<std::string> mounts = {
       sandbox_common::VolumeMount(WorkspaceVolume(job),
                                   sandbox_common::kWorkspace, false),
@@ -74,8 +74,8 @@ auto WorkspaceMounts(const proto::Job &job) -> std::vector<std::string> {
 }
 
 // True when a step needs the staged files at /patches.
-auto AppliesStagedFiles(const proto::Job &job,
-                        const proto::Step &step) -> bool {
+bool AppliesStagedFiles(const proto::Job &job,
+                        const proto::Step &step) {
   return step.applies_patches() &&
          job.workspace().patch() != proto::Workspace::PATCH_NONE &&
          job.workspace().patch() != proto::Workspace::PATCH_HOST;
@@ -95,8 +95,8 @@ void Fail(proto::Status *status, proto::Status::Code code,
 ContainerEngine::ContainerEngine(ContainerEngineConfig config)
     : config_(std::move(config)) {}
 
-auto ContainerEngine::Prepare(const proto::Workspace &prototype, int lanes,
-                              std::string *error) -> bool {
+bool ContainerEngine::Prepare(const proto::Workspace &prototype, int lanes,
+                              std::string *error) {
   (void)prototype;
   (void)lanes;
   (void)error;
@@ -106,8 +106,8 @@ auto ContainerEngine::Prepare(const proto::Workspace &prototype, int lanes,
   return true;
 }
 
-auto ContainerEngine::Run(const proto::Job &job,
-                          Observer *observer) -> proto::JobResult {
+proto::JobResult ContainerEngine::Run(const proto::Job &job,
+                          Observer *observer) {
   proto::JobResult result;
   proto::Status *status = result.mutable_status();
 
@@ -166,8 +166,8 @@ auto ContainerEngine::Run(const proto::Job &job,
   return result;
 }
 
-auto ContainerEngine::LoadWorkspace(const proto::Job &job,
-                                    proto::Status *status) -> bool {
+bool ContainerEngine::LoadWorkspace(const proto::Job &job,
+                                    proto::Status *status) {
   const std::filesystem::path log_dir(job.log_dir());
   const proto::Workspace &ws = job.workspace();
 
@@ -306,9 +306,9 @@ void ContainerEngine::RemoveVolumes(const proto::Job &job) {
   }
 }
 
-auto ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
+bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
                                Observer *observer, proto::PhaseResult *result,
-                               proto::Status *status) -> bool {
+                               proto::Status *status) {
   const std::filesystem::path log_dir(job.log_dir());
   const proto::Isolation phase_isolation =
       Merge(job.isolation(), phase.isolation());

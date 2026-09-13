@@ -53,17 +53,17 @@ class Standings {
                       const std::string &opponent,
                       const proto::OrderResult &result) = 0;
 
-  virtual auto Get(const std::string &candidate_id) const -> Standing = 0;
+  virtual Standing Get(const std::string &candidate_id) const = 0;
 
   // Best first. |limit| <= 0 returns everyone.
-  virtual auto Rank(int limit) const -> std::vector<Standing> = 0;
+  virtual std::vector<Standing> Rank(int limit) const = 0;
 
   // What the score column is called, for the HTTP table and the JSON key.
-  virtual auto score_label() const -> std::string = 0;
+  virtual std::string score_label() const = 0;
 
   // True when a submission has been measured at all. A board should not show a
   // default rating as if it were a result.
-  virtual auto has(const std::string &candidate_id) const -> bool = 0;
+  virtual bool has(const std::string &candidate_id) const = 0;
 };
 
 }  // namespace tournament_arena

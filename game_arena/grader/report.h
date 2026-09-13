@@ -25,18 +25,18 @@ namespace grader {
 // Writes the report to |path|. Returns false (with *error set) if it cannot be
 // written -- the caller should exit non-zero, because a graded run that reports
 // nothing is not a zero score, it is a failed run.
-auto WriteReport(const std::string &path,
+bool WriteReport(const std::string &path,
                  const std::map<std::string, double> &metrics,
-                 std::string *error) -> bool;
+                 std::string *error);
 
 // The same, to the path in $ARENA_REPORT. Returns false if the variable is
 // unset, which means the command is not running under the arena.
-auto WriteReportToArenaPath(const std::map<std::string, double> &metrics,
-                            std::string *error) -> bool;
+bool WriteReportToArenaPath(const std::map<std::string, double> &metrics,
+                            std::string *error);
 
 // The JSON body, exposed for tests and for graders that want to place it
 // themselves.
-auto RenderReport(const std::map<std::string, double> &metrics) -> std::string;
+std::string RenderReport(const std::map<std::string, double> &metrics);
 
 }  // namespace grader
 

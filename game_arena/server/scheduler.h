@@ -107,13 +107,13 @@ class Scheduler {
     Reservation() = default;
     ~Reservation();
     Reservation(Reservation &&other) noexcept;
-    auto operator=(Reservation &&other) noexcept -> Reservation &;
+    Reservation & operator=(Reservation &&other) noexcept;
     Reservation(const Reservation &) = delete;
-    auto operator=(const Reservation &) -> Reservation & = delete;
+    Reservation & operator=(const Reservation &) = delete;
 
-    auto client_id() const -> const std::string & { return client_id_; }
+    const std::string & client_id() const { return client_id_; }
     // Job ids aborted to make room, when the caller asked to replace.
-    auto superseded() const -> const std::vector<std::string> & {
+    const std::vector<std::string> & superseded() const {
       return superseded_;
     }
 
@@ -132,30 +132,30 @@ class Scheduler {
   //
   // An empty |client_id| means the server is running without a client
   // registry: nothing to meter, and the reservation is granted.
-  auto TryReserve(const std::string &client_id, const proto::ClientQuota &quota,
+  std::optional<Reservation> TryReserve(const std::string &client_id, const proto::ClientQuota &quota,
                   bool cancel_running,
-                  std::string *error) -> std::optional<Reservation>;
+                  std::string *error);
 
   // Queues the placement series for a newly created candidate, consuming
   // |reservation|.
-  auto EnqueuePlacement(const proto::Candidate &candidate,
-                        Reservation reservation) -> std::string;
+  std::string EnqueuePlacement(const proto::Candidate &candidate,
+                        Reservation reservation);
 
   // Queues |games| games against |opponent|: "builtin:<spec>" |
   // "<candidate_id>" | "top" | "ladder". Returns nullopt with *error set on an
   // unusable request.
-  auto EnqueueChallenge(const std::string &candidate_id,
+  std::optional<std::string> EnqueueChallenge(const std::string &candidate_id,
                         const std::string &opponent, int games,
                         Reservation reservation,
-                        std::string *error) -> std::optional<std::string>;
+                        std::string *error);
 
   // Queues another measurement of |candidate_id| for a graded problem.
   // |repeats| <= 0 uses the problem's default. Returns nullopt with *error set.
-  auto EnqueueRegrade(const std::string &candidate_id, int repeats,
+  std::optional<std::string> EnqueueRegrade(const std::string &candidate_id, int repeats,
                       Reservation reservation,
-                      std::string *error) -> std::optional<std::string>;
+                      std::string *error);
 
-  auto GetJob(const std::string &job_id) const -> std::optional<proto::Job>;
+  std::optional<proto::Job> GetJob(const std::string &job_id) const;
 
   // Records how far |progress|'s order has got, so GetJob can say more than
   // "running". Unknown orders are ignored: a progress report racing the
@@ -171,9 +171,9 @@ class Scheduler {
 
   // --- introspection (tests, /api) -------------------------------------
 
-  auto worker_count() const -> int;
-  auto queued_orders() const -> int;
-  auto in_flight_orders() const -> int;
+  int worker_count() const;
+  int queued_orders() const;
+  int in_flight_orders() const;
 
  private:
   struct Job {
@@ -191,30 +191,29 @@ class Scheduler {
   };
 
   // Caller holds mutex_.
-  auto ExpandOpponentsLocked(const proto::Candidate &candidate,
-                             const std::string &spec, std::string *error) const
-      -> std::optional<std::vector<std::string>>;
+  std::optional<std::vector<std::string>> ExpandOpponentsLocked(const proto::Candidate &candidate,
+                             const std::string &spec, std::string *error) const;
   // Builds the whole order, opponent sources included. Returns nullopt when the
   // named rival cannot play (unknown, not ready, wrong game). Not const: each
   // call consumes an order id.
-  auto MakeOrderLocked(
+  std::optional<proto::WorkOrder> MakeOrderLocked(
       const proto::Candidate &candidate, const std::string &opponent, int games,
-      const std::string &job_id) -> std::optional<proto::WorkOrder>;
+      const std::string &job_id);
   // Fills one side of an order: its patch and its expanded bazel targets.
   // Returns false when the patch cannot be read, which makes the order
   // unrunnable rather than silently short.
-  auto FillSideLocked(const proto::Candidate &candidate,
-                      proto::Side *side) const -> bool;
-  auto EnqueueLocked(const proto::Candidate &candidate,
+  bool FillSideLocked(const proto::Candidate &candidate,
+                      proto::Side *side) const;
+  std::string EnqueueLocked(const proto::Candidate &candidate,
                      const std::vector<std::string> &opponents, int games,
-                     const std::string &client_id) -> std::string;
+                     const std::string &client_id);
   // Aborts |job|, cancelling whatever it has in flight. Caller holds mutex_.
   void AbortJobLocked(Job *job, const std::string &reason);
   // Drops a reservation that was never consumed. Called by ~Reservation.
   void ReleaseReservationLocked(const std::string &client_id);
   void DispatchLocked();
   void ConcludeJobLocked(Job *job);
-  auto FreeSlotsLocked() const -> int;
+  int FreeSlotsLocked() const;
 
   const SchedulerConfig config_;
   CandidateStore *candidates_;              // not owned

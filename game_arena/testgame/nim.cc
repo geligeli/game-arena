@@ -12,7 +12,7 @@
 namespace arena_testgame {
 namespace {
 
-auto ParseInt(std::string_view text, int *out) -> bool {
+bool ParseInt(std::string_view text, int *out) {
   if (text.empty()) {
     return false;
   }
@@ -24,7 +24,7 @@ auto ParseInt(std::string_view text, int *out) -> bool {
 
 }  // namespace
 
-auto ParseState(std::string_view bytes, int *remaining, int *player) -> bool {
+bool ParseState(std::string_view bytes, int *remaining, int *player) {
   const std::size_t colon = bytes.find(':');
   if (colon == std::string_view::npos) {
     return false;
@@ -36,7 +36,7 @@ auto ParseState(std::string_view bytes, int *remaining, int *player) -> bool {
   return *remaining >= 0 && (*player == 0 || *player == 1);
 }
 
-auto NimSession::SerializeState() const -> std::string {
+std::string NimSession::SerializeState() const {
   return std::to_string(remaining_) + ":" + std::to_string(player_);
 }
 
@@ -46,8 +46,8 @@ void NimSession::ApplyChanceAction(std::mt19937 & /*gen*/) {
   CHECK(false) << "Nim has no chance nodes";
 }
 
-auto NimSession::ApplySerializedAction(std::string_view bytes,
-                                       std::string *error) -> bool {
+bool NimSession::ApplySerializedAction(std::string_view bytes,
+                                       std::string *error) {
   int take = 0;
   if (!ParseInt(bytes, &take)) {
     *error = "action bytes do not parse as an integer";
@@ -72,8 +72,7 @@ auto NimSession::ApplySerializedAction(std::string_view bytes,
   return true;
 }
 
-auto NimSession::Outcome() const
-    -> std::optional<tournament_broker::GameOutcome> {
+std::optional<tournament_broker::GameOutcome> NimSession::Outcome() const {
   if (winner_ < 0) {
     return std::nullopt;
   }
@@ -81,8 +80,7 @@ auto NimSession::Outcome() const
                                         .winning_player = winner_};
 }
 
-auto MakeBuiltin(std::string_view spec, std::string *error)
-    -> std::optional<tournament_broker::BuiltinFn> {
+std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec, std::string *error) {
   if (spec == "random") {
     return [](std::string_view state_bytes, std::mt19937 &gen) -> std::string {
       int remaining = 0;
@@ -116,7 +114,7 @@ auto MakeBuiltin(std::string_view spec, std::string *error)
   return std::nullopt;
 }
 
-auto Descriptor() -> tournament_broker::GameDescriptor {
+tournament_broker::GameDescriptor Descriptor() {
   return tournament_broker::GameDescriptor{
       .name = "nim",
       .new_session = [] { return std::make_unique<NimSession>(); },

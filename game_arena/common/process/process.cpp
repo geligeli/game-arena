@@ -39,7 +39,7 @@ class FdOutputBuffer : public std::streambuf {
   }
 
  protected:
-  auto overflow(int_type ch) -> int_type override {
+  int_type overflow(int_type ch) override {
     if (fd_ < 0) {
       throw std::runtime_error("stdin pipe already closed");
     }
@@ -51,8 +51,8 @@ class FdOutputBuffer : public std::streambuf {
     return ch;
   }
 
-  auto xsputn(const char* s,
-              std::streamsize count) -> std::streamsize override {
+  std::streamsize xsputn(const char* s,
+              std::streamsize count) override {
     if (fd_ < 0) {
       throw std::runtime_error("stdin pipe already closed");
     }
@@ -60,7 +60,7 @@ class FdOutputBuffer : public std::streambuf {
     return count;
   }
 
-  auto sync() -> int override { return 0; }
+  int sync() override { return 0; }
 
  private:
   void WriteAll(const char* data, std::streamsize len) {
@@ -89,9 +89,9 @@ struct ExecVectors {
   std::vector<char*> envp;
 };
 
-auto BuildExecVectors(const std::string& executable,
+ExecVectors BuildExecVectors(const std::string& executable,
                       const std::vector<std::string>& arguments,
-                      const std::vector<std::string>& env) -> ExecVectors {
+                      const std::vector<std::string>& env) {
   ExecVectors vectors;
   vectors.argv_storage.reserve(arguments.size() + 1);
   vectors.argv_storage.push_back(executable);
@@ -116,7 +116,7 @@ auto BuildExecVectors(const std::string& executable,
   return vectors;
 }
 
-auto RedirectStream(const std::filesystem::path& path, int target_fd) -> bool {
+bool RedirectStream(const std::filesystem::path& path, int target_fd) {
   if (path.empty()) {
     return true;
   }
@@ -141,7 +141,7 @@ struct PipePair {
   int write_end;
 };
 
-auto CreatePipeOrThrow() -> PipePair {
+PipePair CreatePipeOrThrow() {
   int fds[2];
   if (::pipe(fds) == -1) {
     throw std::system_error(errno, std::generic_category(), "pipe");
@@ -170,8 +170,7 @@ InputStreamProcess::InputStreamProcess(std::unique_ptr<Impl> impl)
 InputStreamProcess::InputStreamProcess(InputStreamProcess&& other) noexcept =
     default;
 
-auto InputStreamProcess::operator=(InputStreamProcess&& other) noexcept
-    -> InputStreamProcess& = default;
+InputStreamProcess& InputStreamProcess::operator=(InputStreamProcess&& other) noexcept = default;
 
 InputStreamProcess::~InputStreamProcess() {
   if (!impl_) {
@@ -197,7 +196,7 @@ std::ostream& InputStreamProcess::stdin() {
   return impl_->stream;
 }
 
-auto InputStreamProcess::Wait() -> int {
+int InputStreamProcess::Wait() {
   if (!impl_) {
     throw std::runtime_error("process not initialized");
   }
@@ -232,7 +231,7 @@ auto InputStreamProcess::Wait() -> int {
   return impl_->exit_code;
 }
 
-auto ResolveExecutable(const std::string& name) -> std::string {
+std::string ResolveExecutable(const std::string& name) {
   if (name.empty()) {
     return {};
   }
@@ -263,9 +262,9 @@ auto ResolveExecutable(const std::string& name) -> std::string {
   return {};
 }
 
-auto RunCommand(const std::string& executable,
+RunResult RunCommand(const std::string& executable,
                 const std::vector<std::string>& arguments,
-                const RunOptions& options) -> RunResult {
+                const RunOptions& options) {
   RunResult result;
   // A relative path with a '/' in it is relative to where the command runs,
   // not to where the caller happens to be: "bazel-bin/grader/grade" means the
@@ -375,7 +374,7 @@ auto RunCommand(const std::string& executable,
   }
 }
 
-auto ExitCodeOf(int status) -> int {
+int ExitCodeOf(int status) {
   if (WIFEXITED(status)) {
     return WEXITSTATUS(status);
   }
@@ -386,8 +385,7 @@ auto ExitCodeOf(int status) -> int {
 }
 
 // The caller's environment with |extra| laid over it, "K=V" by key.
-auto MergedEnvironment(const std::vector<std::string>& extra)
-    -> std::vector<std::string> {
+std::vector<std::string> MergedEnvironment(const std::vector<std::string>& extra) {
   std::vector<std::string> merged;
   for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
     merged.emplace_back(*entry);
@@ -402,9 +400,9 @@ auto MergedEnvironment(const std::vector<std::string>& extra)
   return merged;
 }
 
-auto Child::Start(const std::string& executable,
+std::optional<Child> Child::Start(const std::string& executable,
                   const std::vector<std::string>& arguments,
-                  const ChildOptions& options) -> std::optional<Child> {
+                  const ChildOptions& options) {
   const std::string resolved = ResolveExecutable(executable);
   if (resolved.empty()) {
     return std::nullopt;
@@ -442,7 +440,7 @@ Child::Child(Child&& other) noexcept
   other.pid_ = -1;
 }
 
-auto Child::operator=(Child&& other) noexcept -> Child& {
+Child& Child::operator=(Child&& other) noexcept {
   if (this != &other) {
     if (pid_ > 0 && !exit_code_) {
       Stop(std::chrono::seconds(2));
@@ -460,7 +458,7 @@ Child::~Child() {
   }
 }
 
-auto Child::Poll() -> std::optional<int> {
+std::optional<int> Child::Poll() {
   if (exit_code_ || pid_ <= 0) {
     return exit_code_;
   }
@@ -488,14 +486,14 @@ void Child::Signal(int signum) const {
   }
 }
 
-auto Child::Wait() -> int {
+int Child::Wait() {
   while (!Poll()) {
     ::usleep(20000);
   }
   return *exit_code_;
 }
 
-auto Child::Stop(std::chrono::seconds grace) -> int {
+int Child::Stop(std::chrono::seconds grace) {
   if (Poll()) {
     return *exit_code_;
   }
@@ -514,11 +512,11 @@ auto Child::Stop(std::chrono::seconds grace) -> int {
   return *exit_code_;
 }
 
-auto CreateInputStreamProcess(
+InputStreamProcess CreateInputStreamProcess(
     const std::string& executable, const std::vector<std::string>& arguments,
     const std::vector<std::string>& env,
     std::filesystem::path const& stdout_path,
-    std::filesystem::path const& stderr_path) -> InputStreamProcess {
+    std::filesystem::path const& stderr_path) {
   if (executable.empty()) {
     throw std::invalid_argument("executable path must not be empty");
   }

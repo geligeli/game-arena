@@ -49,7 +49,7 @@ OrderRunner::OrderRunner(sandbox_exec::Engine *process_engine,
       config_(std::move(config)),
       machine_class_(std::move(machine_class)) {}
 
-auto OrderRunner::Warmup(int slots, std::string *error) -> bool {
+bool OrderRunner::Warmup(int slots, std::string *error) {
   // Only the directories now. The tree itself arrives with the order -- a
   // worker has no repository of its own -- so the clone happens in the
   // engine's PrepareWorkspace, which is idempotent and therefore pays for
@@ -85,7 +85,7 @@ auto OrderRunner::Warmup(int slots, std::string *error) -> bool {
   return true;
 }
 
-auto OrderRunner::engines() const -> std::string {
+std::string OrderRunner::engines() const {
   if (process_engine_ != nullptr && container_engine_ != nullptr) {
     return process_engine_->name() + "+" + container_engine_->name();
   }
@@ -95,8 +95,7 @@ auto OrderRunner::engines() const -> std::string {
   return process_engine_ != nullptr ? process_engine_->name() : "none";
 }
 
-auto OrderRunner::EngineFor(const proto::WorkOrder &order) const
-    -> sandbox_exec::Engine * {
+sandbox_exec::Engine * OrderRunner::EngineFor(const proto::WorkOrder &order) const {
   // The problem decides, by naming an image or not -- and the coordinator
   // requires one (server/problem_config.cc), so in a tournament this is
   // always the container engine. A worker binary is built with no other
@@ -105,7 +104,7 @@ auto OrderRunner::EngineFor(const proto::WorkOrder &order) const
   return order.sandbox().image().empty() ? process_engine_ : container_engine_;
 }
 
-auto OrderRunner::Refusal(const proto::WorkOrder &order) const -> std::string {
+std::string OrderRunner::Refusal(const proto::WorkOrder &order) const {
   const sandbox_exec::Engine *engine = EngineFor(order);
   if (engine == nullptr) {
     return order.sandbox().image().empty()
@@ -125,8 +124,8 @@ auto OrderRunner::Refusal(const proto::WorkOrder &order) const -> std::string {
   return "";
 }
 
-auto OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
-                           const ProgressSink &progress) -> OrderOutcome {
+OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
+                           const ProgressSink &progress) {
   OrderOutcome outcome;
   if (const std::string refusal = Refusal(order); !refusal.empty()) {
     outcome.error = refusal;

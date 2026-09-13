@@ -19,8 +19,8 @@ namespace {
 
 using sandbox_common::TailOf;
 
-auto StepNamed(const sx::PhaseResult &phase,
-               const std::string &name) -> const sx::StepResult * {
+const sx::StepResult * StepNamed(const sx::PhaseResult &phase,
+               const std::string &name) {
   for (const sx::StepResult &step : phase.steps()) {
     if (step.name() == name) {
       return &step;
@@ -29,8 +29,8 @@ auto StepNamed(const sx::PhaseResult &phase,
   return nullptr;
 }
 
-auto PhaseNamed(const sx::JobResult &result,
-                const std::string &name) -> const sx::PhaseResult * {
+const sx::PhaseResult * PhaseNamed(const sx::JobResult &result,
+                const std::string &name) {
   for (const sx::PhaseResult &phase : result.phases()) {
     if (phase.name() == name) {
       return &phase;
@@ -41,8 +41,8 @@ auto PhaseNamed(const sx::JobResult &result,
 
 // The order's own candidate is the one being evaluated; the opponent's build
 // breaking is somebody else's problem and must not retire this submission.
-auto BlameForBuild(const proto::WorkOrder &order,
-                   const std::string &log) -> std::string {
+std::string BlameForBuild(const proto::WorkOrder &order,
+                   const std::string &log) {
   if (!order.has_opponent()) {
     return "";
   }
@@ -54,8 +54,8 @@ auto BlameForBuild(const proto::WorkOrder &order,
   return "";
 }
 
-auto ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
-               OrderOutcome *outcome) -> void {
+void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
+               OrderOutcome *outcome) {
   const sx::StepResult *referee = StepNamed(match, "referee");
   const sx::StepResult *bot = StepNamed(match, "bot");
   const std::string referee_output =
@@ -89,8 +89,8 @@ auto ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
   outcome->elo = tally.elo;
 }
 
-auto ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
-               OrderOutcome *outcome) -> void {
+void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
+               OrderOutcome *outcome) {
   std::vector<std::map<std::string, double>> runs;
   for (const sx::PhaseResult &phase : result.phases()) {
     if (phase.name() != "grade") {
@@ -141,8 +141,8 @@ auto ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
 
 }  // namespace
 
-auto OutcomeFor(const proto::WorkOrder &order,
-                const sx::JobResult &result) -> OrderOutcome {
+OrderOutcome OutcomeFor(const proto::WorkOrder &order,
+                const sx::JobResult &result) {
   OrderOutcome outcome;
 
   const sx::PhaseResult *build = PhaseNamed(result, "build");

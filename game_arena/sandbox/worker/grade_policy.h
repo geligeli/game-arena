@@ -20,16 +20,14 @@ namespace tournament_arena {
 // Folds |runs| into one value per metric. A metric missing from some runs is
 // aggregated over the runs that have it: a benchmark that only reports peak
 // RSS on some platforms should still contribute what it measured.
-auto AggregateMetrics(const std::vector<std::map<std::string, double>> &runs,
-                      proto::GradeOrder::Aggregate how)
-    -> std::map<std::string, double>;
+std::map<std::string, double> AggregateMetrics(const std::vector<std::map<std::string, double>> &runs,
+                      proto::GradeOrder::Aggregate how);
 
 // Aggregates |runs| per |grade|, then keeps only the metrics the problem ranks
 // on. A benchmark printing more than that is normal; storing it all would let
 // a report grow the standings file without bound.
-auto ScoreGradedRuns(const std::vector<std::map<std::string, double>> &runs,
-                     const proto::GradeOrder &grade)
-    -> std::map<std::string, double>;
+std::map<std::string, double> ScoreGradedRuns(const std::vector<std::map<std::string, double>> &runs,
+                     const proto::GradeOrder &grade);
 
 }  // namespace tournament_arena
 

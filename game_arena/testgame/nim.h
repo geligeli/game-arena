@@ -31,16 +31,15 @@ class NimSession final : public tournament_broker::GameSession {
   explicit NimSession(int remaining, int player)
       : remaining_(remaining), player_(player) {}
 
-  auto SerializeState() const -> std::string override;
-  auto CurrentPlayer() const -> int override { return player_; }
-  auto IsChanceNode() const -> bool override { return false; }
+  std::string SerializeState() const override;
+  int CurrentPlayer() const override { return player_; }
+  bool IsChanceNode() const override { return false; }
   void ApplyChanceAction(std::mt19937 &gen) override;
-  auto ApplySerializedAction(std::string_view bytes,
-                             std::string *error) -> bool override;
-  auto Outcome() const
-      -> std::optional<tournament_broker::GameOutcome> override;
+  bool ApplySerializedAction(std::string_view bytes,
+                             std::string *error) override;
+  std::optional<tournament_broker::GameOutcome> Outcome() const override;
 
-  auto remaining() const -> int { return remaining_; }
+  int remaining() const { return remaining_; }
 
  private:
   int remaining_ = kStartingStones;
@@ -50,15 +49,14 @@ class NimSession final : public tournament_broker::GameSession {
 
 // Parses a state string as written by NimSession::SerializeState. Returns false
 // on anything malformed rather than throwing: these bytes come off the wire.
-auto ParseState(std::string_view bytes, int *remaining, int *player) -> bool;
+bool ParseState(std::string_view bytes, int *remaining, int *player);
 
 // Builtins for Nim. "random" plays uniformly among the legal takes; "optimal"
 // plays the winning strategy (leave a multiple of four behind) and is there so
 // a test can assert that a stronger opponent actually wins.
-auto MakeBuiltin(std::string_view spec, std::string *error)
-    -> std::optional<tournament_broker::BuiltinFn>;
+std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec, std::string *error);
 
-auto Descriptor() -> tournament_broker::GameDescriptor;
+tournament_broker::GameDescriptor Descriptor();
 
 }  // namespace arena_testgame
 

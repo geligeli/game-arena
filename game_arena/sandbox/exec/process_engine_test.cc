@@ -16,7 +16,7 @@
 namespace sandbox_exec {
 namespace {
 
-auto Word(const std::string &text) -> proto::Token {
+proto::Token Word(const std::string &text) {
   proto::Token token;
   token.set_text(text);
   return token;
@@ -37,7 +37,7 @@ class ProcessEngineTest : public ::testing::Test {
     std::filesystem::remove_all(root_, ec);
   }
 
-  auto Script(const std::string &name, const std::string &body) -> std::string {
+  std::string Script(const std::string &name, const std::string &body) {
     const std::filesystem::path path = root_ / name;
     std::ofstream out(path);
     out << "#!/usr/bin/env bash\n" << body << "\n";
@@ -48,7 +48,7 @@ class ProcessEngineTest : public ::testing::Test {
     return path.string();
   }
 
-  auto BaseJob(const std::string &id) -> proto::Job {
+  proto::Job BaseJob(const std::string &id) {
     proto::Job job;
     job.set_id(id);
     job.set_log_dir((root_ / "logs").string());

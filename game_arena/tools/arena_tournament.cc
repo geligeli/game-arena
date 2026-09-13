@@ -160,14 +160,14 @@ volatile std::sig_atomic_t g_reload_requested = 0;
 extern "C" void OnStopSignal(int /*signum*/) { g_stop_requested = 1; }
 extern "C" void OnReloadSignal(int /*signum*/) { g_reload_requested = 1; }
 
-auto EnvOr(const char *name, std::string fallback) -> std::string {
+std::string EnvOr(const char *name, std::string fallback) {
   const char *value = std::getenv(name);
   return value != nullptr && *value != '\0' ? std::string(value) : fallback;
 }
 
 // Under `bazel run`, the checkout the target was run from; otherwise the
 // current directory.
-auto WorkspaceRoot() -> std::filesystem::path {
+std::filesystem::path WorkspaceRoot() {
   const std::string root = EnvOr("BUILD_WORKSPACE_DIRECTORY", "");
   return root.empty() ? std::filesystem::current_path()
                       : std::filesystem::path(root);
@@ -178,13 +178,13 @@ auto Resolve(const std::string &path) -> std::filesystem::path {
   return p.is_absolute() ? p : WorkspaceRoot() / p;
 }
 
-auto StateDir(std::string_view problem_id) -> std::filesystem::path {
+std::filesystem::path StateDir(std::string_view problem_id) {
   const std::filesystem::path base =
       EnvOr("ARENA_STATE_DIR", EnvOr("HOME", "/tmp") + "/.arena");
   return base / std::string(problem_id);
 }
 
-auto ReadFile(const std::filesystem::path &path) -> std::optional<std::string> {
+std::optional<std::string> ReadFile(const std::filesystem::path &path) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     return std::nullopt;
@@ -193,8 +193,8 @@ auto ReadFile(const std::filesystem::path &path) -> std::optional<std::string> {
                      std::istreambuf_iterator<char>());
 }
 
-auto WriteFile(const std::filesystem::path &path,
-               std::string_view text) -> bool {
+bool WriteFile(const std::filesystem::path &path,
+               std::string_view text) {
   std::error_code ec;
   std::filesystem::create_directories(path.parent_path(), ec);
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -204,9 +204,9 @@ auto WriteFile(const std::filesystem::path &path,
 
 // Runs |executable| with the caller's stdout/stderr and waits. -1 when it
 // could not be started.
-auto RunInherit(const std::string &executable,
+int RunInherit(const std::string &executable,
                 const std::vector<std::string> &arguments,
-                const std::filesystem::path &cwd) -> int {
+                const std::filesystem::path &cwd) {
   process::ChildOptions options;
   options.cwd = cwd;
   auto child = process::Child::Start(executable, arguments, options);
@@ -224,9 +224,9 @@ auto RunInherit(const std::string &executable,
 
 // Runs a command and returns its stdout, or nullopt on failure to start or a
 // non-zero exit.
-auto Capture(const std::string &executable,
+std::optional<std::string> Capture(const std::string &executable,
              const std::vector<std::string> &arguments,
-             const std::filesystem::path &cwd) -> std::optional<std::string> {
+             const std::filesystem::path &cwd) {
   const std::filesystem::path out =
       std::filesystem::temp_directory_path() /
       absl::StrCat("arena_tournament_", ::getpid(), "_",
@@ -245,7 +245,7 @@ auto Capture(const std::string &executable,
   return text;
 }
 
-auto WaitForPort(int port, std::chrono::seconds timeout) -> bool {
+bool WaitForPort(int port, std::chrono::seconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline && !g_stop_requested) {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -268,8 +268,7 @@ auto WaitForPort(int port, std::chrono::seconds timeout) -> bool {
 }
 
 // A local path for repo.url, or nullopt when it is a URL.
-auto LocalRepoDir(const proto::ProblemConfig &config)
-    -> std::optional<std::filesystem::path> {
+std::optional<std::filesystem::path> LocalRepoDir(const proto::ProblemConfig &config) {
   const std::string &url = config.repo().url();
   if (url.find("://") != std::string::npos) {
     return std::nullopt;
@@ -282,8 +281,7 @@ auto LocalRepoDir(const proto::ProblemConfig &config)
   return std::filesystem::path(url);
 }
 
-auto LoadConfig(std::filesystem::path *config_path)
-    -> std::optional<proto::ProblemConfig> {
+std::optional<proto::ProblemConfig> LoadConfig(std::filesystem::path *config_path) {
   const std::string flag = absl::GetFlag(FLAGS_problem_config).empty()
                                ? EnvOr("ARENA_PROBLEM_CONFIG", "")
                                : absl::GetFlag(FLAGS_problem_config);
@@ -374,7 +372,7 @@ class ArenaRunfiles {
   }
 
   // Installed rather than under bazel.
-  auto installed() const -> bool { return !home_.empty(); }
+  bool installed() const { return !home_.empty(); }
 
  private:
   std::string home_;
@@ -385,8 +383,8 @@ class ArenaRunfiles {
 // check
 // ---------------------------------------------------------------------------
 
-auto CheckConfig(const proto::ProblemConfig &config,
-                 std::string *error) -> bool {
+bool CheckConfig(const proto::ProblemConfig &config,
+                 std::string *error) {
   const std::string &submit_dir = config.submission().files_submit_dir();
   if (!submit_dir.empty()) {
     bool names_submission = false;
@@ -429,7 +427,7 @@ auto CheckConfig(const proto::ProblemConfig &config,
   return true;
 }
 
-auto RunCheck() -> int {
+int RunCheck() {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
   if (!config) {
@@ -453,8 +451,7 @@ auto RunCheck() -> int {
 // Where the problem overrides game_arena with a local checkout, if it does:
 // --override_module in .bazelrc.local (which, as a flag, beats the file), or
 // MODULE.bazel's local_path_override.
-auto LocalArenaOverride(const std::filesystem::path &root)
-    -> std::optional<std::filesystem::path> {
+std::optional<std::filesystem::path> LocalArenaOverride(const std::filesystem::path &root) {
   for (const char *rc : {".bazelrc.local", ".bazelrc"}) {
     if (const auto text = ReadFile(root / rc)) {
       static const std::regex kFlag(R"(--override_module=game_arena=(\S+))");
@@ -477,7 +474,7 @@ auto LocalArenaOverride(const std::filesystem::path &root)
 
 // The bazel release the repo pins in .bazelversion, if it names one, else
 // --bazel_version, else empty (the Dockerfile's default).
-auto BazelVersionFor(const std::filesystem::path &root) -> std::string {
+std::string BazelVersionFor(const std::filesystem::path &root) {
   std::string version = absl::GetFlag(FLAGS_bazel_version);
   if (version.empty()) {
     if (const auto text = ReadFile(root / ".bazelversion")) {
@@ -496,13 +493,13 @@ auto BazelVersionFor(const std::filesystem::path &root) -> std::string {
 // game_arena override found in |context| goes in as a second build context,
 // since its host path does not exist inside the build. |build_args| are
 // NAME=value pairs; |contexts| further name=path build contexts.
-auto DockerBuild(const std::filesystem::path &dockerfile,
+bool DockerBuild(const std::filesystem::path &dockerfile,
                  const std::string &target, const std::string &tag,
                  const std::filesystem::path &context,
                  const std::vector<std::string> &build_args,
                  const std::vector<std::string> &contexts = {},
                  bool push = absl::GetFlag(FLAGS_push),
-                 bool with_arena_context = true) -> bool {
+                 bool with_arena_context = true) {
   std::vector<std::string> args = {"build", "--file", dockerfile.string(),
                                    "--tag", tag};
   if (!target.empty()) {
@@ -563,7 +560,7 @@ auto DockerBuild(const std::filesystem::path &dockerfile,
 // up
 // ---------------------------------------------------------------------------
 
-auto Hostname() -> std::string {
+std::string Hostname() {
   char name[256] = {};
   if (::gethostname(name, sizeof(name) - 1) != 0) {
     return "host";
@@ -573,8 +570,8 @@ auto Hostname() -> std::string {
 
 // Runs a command with its output discarded; the exit code, -1 if it could not
 // start.
-auto RunQuiet(const std::string &executable,
-              const std::vector<std::string> &arguments) -> int {
+int RunQuiet(const std::string &executable,
+              const std::vector<std::string> &arguments) {
   process::ChildOptions options;
   options.stdout_path = "/dev/null";
   options.stderr_path = "/dev/null";
@@ -586,10 +583,10 @@ auto RunQuiet(const std::string &executable,
 // the repo for the workers to clone, and the sandbox reached through a
 // mounted docker socket. Built from the problem's workspace root, as the
 // sandbox image is.
-auto BuildTournamentImage(const ArenaRunfiles &runfiles,
+int BuildTournamentImage(const ArenaRunfiles &runfiles,
                           const proto::ProblemConfig &config,
                           const std::filesystem::path &config_path,
-                          const std::string &tag) -> int {
+                          const std::string &tag) {
   const std::filesystem::path dockerfile =
       runfiles.Locate("game_arena/image/Dockerfile");
   if (dockerfile.empty()) {
@@ -653,7 +650,7 @@ auto BuildTournamentImage(const ArenaRunfiles &runfiles,
   return 0;
 }
 
-auto RunUp(const ArenaRunfiles &runfiles) -> int {
+int RunUp(const ArenaRunfiles &runfiles) {
   std::filesystem::path config_path;
   auto config = LoadConfig(&config_path);
   if (!config) {
@@ -883,7 +880,7 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
 // author's machine -- a kit uses the arena beside it. That is the copy the
 // participant can read, it is trimmed to what they build against, and it
 // needs no network and no checkout of anyone else's.
-auto ArenaOverrideBlock() -> std::string {
+std::string ArenaOverrideBlock() {
   return "\n# Written by arena_tournament kit: the arena, trimmed to the "
          "packages\n# this workspace builds against, vendored in ./arena.\n"
          "local_path_override(\n"
@@ -892,14 +889,14 @@ auto ArenaOverrideBlock() -> std::string {
          ")\n";
 }
 
-auto WithoutArenaOverride(std::string text) -> std::string {
+std::string WithoutArenaOverride(std::string text) {
   static const std::regex kArenaOverride(
       R"re((?:local_path|git|archive|single_version)_override\(\s*module_name\s*=\s*"game_arena"[^)]*\)\n?)re");
   return std::regex_replace(text, kArenaOverride, "");
 }
 
-auto RerootedModuleFile(std::string text,
-                        const std::filesystem::path &root) -> std::string {
+std::string RerootedModuleFile(std::string text,
+                        const std::filesystem::path &root) {
   static const std::regex kOverride(
       R"re(local_path_override\(([^)]*?)path\s*=\s*"([^"]+)")re");
   std::string out;
@@ -924,7 +921,7 @@ auto RerootedModuleFile(std::string text,
   return out;
 }
 
-auto KitBuildFile(const std::string &registry) -> std::string {
+std::string KitBuildFile(const std::string &registry) {
   std::string text =
       "# Generated by arena_tournament kit. The arena's tools, reachable from\n"
       "# this workspace through @game_arena";
@@ -977,10 +974,10 @@ auto KitBuildFile(const std::string &registry) -> std::string {
   return text;
 }
 
-auto KitReadme(const proto::ProblemConfig &config, const std::string &server,
+std::string KitReadme(const proto::ProblemConfig &config, const std::string &server,
                const std::string &http, const std::string &client_id,
                bool has_token,
-               const std::vector<std::string> &files) -> std::string {
+               const std::vector<std::string> &files) {
   std::ostringstream md;
   const std::string title = config.display_name().empty()
                                 ? config.problem_id()
@@ -1088,7 +1085,7 @@ auto KitReadme(const proto::ProblemConfig &config, const std::string &server,
   return md.str();
 }
 
-auto JsonEscape(std::string_view s) -> std::string {
+std::string JsonEscape(std::string_view s) {
   std::string out;
   for (const char c : s) {
     if (c == '"' || c == '\\') {
@@ -1131,7 +1128,7 @@ constexpr std::array<std::string_view, 4> kKitSurfaceFiles = {
 // beside them, anything built from it that something depends on -- arena_cli's
 // own binary, for one, which is a symlink into bazel-out. A kit vendors the
 // sources; the binary it gets is the builtin, installed once.
-auto IsBuildOutput(const std::filesystem::path &path) -> bool {
+bool IsBuildOutput(const std::filesystem::path &path) {
   std::error_code ec;
   const std::filesystem::path real =
       std::filesystem::weakly_canonical(path, ec);
@@ -1141,8 +1138,8 @@ auto IsBuildOutput(const std::filesystem::path &path) -> bool {
 // Copies that surface into <kit>/arena. Under `bazel run` it comes from this
 // tool's runfiles; installed (the tournament image) from the module copy the
 // image carries.
-auto InstallArenaSurface(const ArenaRunfiles &runfiles,
-                         const std::filesystem::path &out) -> bool {
+bool InstallArenaSurface(const ArenaRunfiles &runfiles,
+                         const std::filesystem::path &out) {
   const std::filesystem::path arena = out / "arena";
   std::error_code ec;
   std::filesystem::remove_all(arena, ec);
@@ -1215,8 +1212,8 @@ auto InstallArenaSurface(const ArenaRunfiles &runfiles,
 //
 // A kit image builds its own copy instead (see the Dockerfile): this one was
 // linked against the host's libraries, and the image is not this host.
-auto InstallBuiltins(const ArenaRunfiles &runfiles,
-                     const std::filesystem::path &out) -> bool {
+bool InstallBuiltins(const ArenaRunfiles &runfiles,
+                     const std::filesystem::path &out) {
   const std::filesystem::path cli = runfiles.Locate("game_arena/cli/arena_cli");
   if (cli.empty()) {
     LOG(ERROR) << "cannot find arena_cli to install into the kit";
@@ -1255,9 +1252,9 @@ auto InstallBuiltins(const ArenaRunfiles &runfiles,
 // The kit's own config, as the participant finds it: what arena_cli does when
 // they do not say. Everything in it is theirs to change -- the coordinator
 // enforces the problem's policy on what actually arrives.
-auto KitConfigText(const proto::ProblemConfig &config,
+std::string KitConfigText(const proto::ProblemConfig &config,
                    const std::string &server, const std::string &http,
-                   const std::string &client_id) -> std::string {
+                   const std::string &client_id) {
   proto::KitConfig kit;
   kit.set_problem_id(config.problem_id());
   kit.set_server(server);
@@ -1280,7 +1277,7 @@ auto KitConfigText(const proto::ProblemConfig &config,
       text);
 }
 
-auto RunKit(const ArenaRunfiles &runfiles) -> int {
+int RunKit(const ArenaRunfiles &runfiles) {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
   if (!config) {
@@ -1645,7 +1642,7 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
 // image
 // ---------------------------------------------------------------------------
 
-auto RunImage(const ArenaRunfiles &runfiles) -> int {
+int RunImage(const ArenaRunfiles &runfiles) {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
   if (!config) {
@@ -1688,8 +1685,8 @@ auto RunImage(const ArenaRunfiles &runfiles) -> int {
 // ---------------------------------------------------------------------------
 
 // The value of KEY=... in a shell-style env file (`export KEY=value` lines).
-auto EnvFileValue(const std::filesystem::path &file,
-                  std::string_view key) -> std::string {
+std::string EnvFileValue(const std::filesystem::path &file,
+                  std::string_view key) {
   const auto text = ReadFile(file);
   if (!text) {
     return "";
@@ -1703,7 +1700,7 @@ auto EnvFileValue(const std::filesystem::path &file,
   return "";
 }
 
-auto TailOf(const std::filesystem::path &file, int lines) -> std::string {
+std::string TailOf(const std::filesystem::path &file, int lines) {
   const auto text = ReadFile(file);
   if (!text) {
     return "";
@@ -1718,7 +1715,7 @@ auto TailOf(const std::filesystem::path &file, int lines) -> std::string {
 // `up` and `kit` are run as this binary's own subprocesses rather than called:
 // they already have the flags, the checks and the messages, and the shell is
 // the only thing new here.
-auto RunPlay() -> int {
+int RunPlay() {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
   if (!config) {
@@ -1917,7 +1914,7 @@ void PrintUsage() {
 
 }  // namespace
 
-auto main(int argc, char **argv) -> int {
+int main(int argc, char **argv) {
   const std::vector<char *> positional = absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);

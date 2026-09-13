@@ -16,14 +16,14 @@
 namespace process {
 namespace {
 
-auto MakeTempFilePath(const std::string& suffix) -> std::filesystem::path {
+std::filesystem::path MakeTempFilePath(const std::string& suffix) {
   static std::atomic<uint64_t> counter{0};
   auto name =
       std::string("process_test_") + suffix + "_" + std::to_string(counter++);
   return std::filesystem::temp_directory_path() / name;
 }
 
-auto ReadFile(const std::filesystem::path& path) -> std::string {
+std::string ReadFile(const std::filesystem::path& path) {
   std::ifstream file(path);
   if (!file) {
     throw std::runtime_error("failed to open file: " + path.string());

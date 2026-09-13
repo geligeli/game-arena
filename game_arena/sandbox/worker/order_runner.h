@@ -41,25 +41,25 @@ class OrderRunner {
   // otherwise conjure up as empty directories. Here rather than on the
   // engine because a slot is an arena concept -- the engine is handed paths,
   // it does not know how many of them there will be.
-  auto Warmup(int slots, std::string *error) -> bool;
+  bool Warmup(int slots, std::string *error);
 
-  auto RunOrder(int slot, const proto::WorkOrder &order,
-                const ProgressSink &progress) -> OrderOutcome;
+  OrderOutcome RunOrder(int slot, const proto::WorkOrder &order,
+                const ProgressSink &progress);
 
   // Aborts |order_id| if this runner is running it. Called from the stream
   // thread while a slot thread is inside RunOrder.
   void Cancel(const std::string &order_id);
 
   // What this worker can run, for the hello. Both engines when it has both.
-  auto engines() const -> std::string;
+  std::string engines() const;
 
  private:
   // Why this worker will not run |order| at all, or empty if it will. Refused
   // rather than attempted: an order run on the wrong kind of host produces a
   // number that looks like a result.
-  auto Refusal(const proto::WorkOrder &order) const -> std::string;
+  std::string Refusal(const proto::WorkOrder &order) const;
   // The engine this order runs on, or null when this worker has none for it.
-  auto EngineFor(const proto::WorkOrder &order) const -> sandbox_exec::Engine *;
+  sandbox_exec::Engine * EngineFor(const proto::WorkOrder &order) const;
 
   // What a Cancel needs: which job, and which engine took it.
   struct InFlight {

@@ -43,7 +43,7 @@ class WorkerPool {
   ~WorkerPool();
 
   WorkerPool(const WorkerPool &) = delete;
-  auto operator=(const WorkerPool &) -> WorkerPool & = delete;
+  WorkerPool & operator=(const WorkerPool &) = delete;
 
   // Queues |task|. Silently dropped after Stop().
   void Submit(Task task);
@@ -51,7 +51,7 @@ class WorkerPool {
   // Drains what is already queued, then joins every worker. Idempotent.
   void Stop();
 
-  auto size() const -> int { return static_cast<int>(threads_.size()); }
+  int size() const { return static_cast<int>(threads_.size()); }
 
  private:
   void WorkerLoop();
@@ -72,12 +72,12 @@ class WorkerPool {
 // into a freed strand.
 class Strand : public std::enable_shared_from_this<Strand> {
  public:
-  static auto Create(WorkerPool *pool) -> std::shared_ptr<Strand> {
+  static std::shared_ptr<Strand> Create(WorkerPool *pool) {
     return std::shared_ptr<Strand>(new Strand(pool));
   }
 
   Strand(const Strand &) = delete;
-  auto operator=(const Strand &) -> Strand & = delete;
+  Strand & operator=(const Strand &) = delete;
 
   void Post(Task task);
 
@@ -100,11 +100,11 @@ class Timer {
   ~Timer();
 
   Timer(const Timer &) = delete;
-  auto operator=(const Timer &) -> Timer & = delete;
+  Timer & operator=(const Timer &) = delete;
 
   // Runs |fn| on the timer thread after |delay|. |fn| must not block: post the
   // real work elsewhere. Returns an id usable with Cancel().
-  auto After(std::chrono::milliseconds delay, Task fn) -> Id;
+  Id After(std::chrono::milliseconds delay, Task fn);
 
   // Best-effort: a timer already being dispatched still runs. Callers must
   // therefore tolerate a late fire (games compare a turn epoch). O(log n) --

@@ -33,8 +33,8 @@ constexpr char kGradeConfig[] = R"pb(
   ranking { kind: METRIC }
 )pb";
 
-auto Load(const std::string &text,
-          std::string *error) -> std::optional<proto::ProblemConfig> {
+std::optional<proto::ProblemConfig> Load(const std::string &text,
+          std::string *error) {
   std::optional<proto::ProblemConfig> config =
       ParseProblemConfigText(text, error);
   if (!config) {

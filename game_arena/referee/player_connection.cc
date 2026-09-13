@@ -10,9 +10,9 @@ PlayerConnection::PlayerConnection(std::string player_name,
                                    Transport *transport)
     : player_name_(std::move(player_name)), transport_(transport) {}
 
-auto PlayerConnection::name() const -> std::string { return player_name_; }
+std::string PlayerConnection::name() const { return player_name_; }
 
-auto PlayerConnection::Send(const proto::ServerMessage &msg) -> bool {
+bool PlayerConnection::Send(const proto::ServerMessage &msg) {
   bool accepted = false;
   bool dropped = false;
   {
@@ -41,7 +41,7 @@ auto PlayerConnection::Send(const proto::ServerMessage &msg) -> bool {
   return accepted;
 }
 
-auto PlayerConnection::TryPopAction() -> std::optional<std::string> {
+std::optional<std::string> PlayerConnection::TryPopAction() {
   std::lock_guard lock(mu_);
   if (inbox_.empty()) {
     return std::nullopt;
@@ -64,7 +64,7 @@ void PlayerConnection::MarkDisconnected() {
   Notify();
 }
 
-auto PlayerConnection::disconnected() const -> bool {
+bool PlayerConnection::disconnected() const {
   std::lock_guard lock(mu_);
   return disconnected_;
 }

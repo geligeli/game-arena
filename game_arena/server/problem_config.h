@@ -24,8 +24,7 @@ namespace tournament_arena {
 
 // Parses text format. Returns nullopt with *error set to the protobuf parse
 // diagnostics, one "line N: ..." per problem found.
-auto ParseProblemConfigText(std::string_view text, std::string *error)
-    -> std::optional<proto::ProblemConfig>;
+std::optional<proto::ProblemConfig> ParseProblemConfigText(std::string_view text, std::string *error);
 
 // Fills in every unset field that has a sensible default, so no consumer has to
 // know what zero means. Idempotent.
@@ -37,8 +36,8 @@ void ApplyProblemDefaults(proto::ProblemConfig *config);
 //
 // Expects defaults to have been applied; a bare parse result will trip checks
 // on fields ApplyProblemDefaults fills.
-auto ValidateProblemConfig(const proto::ProblemConfig &config,
-                           std::string *error) -> bool;
+bool ValidateProblemConfig(const proto::ProblemConfig &config,
+                           std::string *error);
 
 // A repo.url that is a relative filesystem path is taken relative to the
 // directory holding the config file, so a problem repo can say `url: "."` and
@@ -50,24 +49,22 @@ void ResolveRelativeRepoUrl(proto::ProblemConfig *config,
 
 // Read + parse + default + validate, with repo.url resolved against the
 // config's directory. The one entry point main() should use.
-auto LoadProblemConfig(const std::filesystem::path &path, std::string *error)
-    -> std::optional<proto::ProblemConfig>;
+std::optional<proto::ProblemConfig> LoadProblemConfig(const std::filesystem::path &path, std::string *error);
 
 // The metric the leaderboard orders by: ranking.metric_name if set, otherwise
 // the grade metric marked primary. Null for a non-METRIC ranking. Points into
 // |config|.
-auto PrimaryMetric(const proto::ProblemConfig &config)
-    -> const proto::MetricSpec *;
+const proto::MetricSpec * PrimaryMetric(const proto::ProblemConfig &config);
 
 // Substitutes "{submission_id}" in |text|. Applied to build.targets,
 // grade.argv and match.referee_target before they reach a worker, so a problem
 // whose solutions each live in their own directory can name their targets.
-auto ExpandSubmissionId(std::string_view text,
-                        std::string_view submission_id) -> std::string;
+std::string ExpandSubmissionId(std::string_view text,
+                        std::string_view submission_id);
 
 // True when |problem_id| is safe as a standings key and a path component:
 // 1-64 chars, starting with [a-z0-9], continuing with [a-z0-9_-].
-auto IsValidProblemId(std::string_view problem_id) -> bool;
+bool IsValidProblemId(std::string_view problem_id);
 
 }  // namespace tournament_arena
 

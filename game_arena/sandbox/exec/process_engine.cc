@@ -31,8 +31,8 @@ using sandbox_common::TailOf;
 // A step's isolation, or the phase's, or the job's. Same precedence the
 // container engine uses: a step's isolation replaces rather than merges, so
 // half-overridden isolation cannot read as tight and not be.
-auto EffectiveIsolation(const proto::Job &job, const proto::Phase &phase,
-                        const proto::Step &step) -> proto::Isolation {
+proto::Isolation EffectiveIsolation(const proto::Job &job, const proto::Phase &phase,
+                        const proto::Step &step) {
   if (step.isolation().ByteSizeLong() > 0) {
     return step.isolation();
   }
@@ -53,8 +53,7 @@ void Fail(proto::Status *status, proto::Status::Code code,
 
 // The caller's environment plus |extra|. RunOptions treats an empty env as
 // "inherit", so adding one variable means rebuilding the whole list.
-auto InheritedEnvWith(const std::map<std::string, std::string> &extra)
-    -> std::vector<std::string> {
+std::vector<std::string> InheritedEnvWith(const std::map<std::string, std::string> &extra) {
   std::vector<std::string> env;
   for (char **entry = ::environ; entry != nullptr && *entry != nullptr;
        ++entry) {
@@ -68,8 +67,8 @@ auto InheritedEnvWith(const std::map<std::string, std::string> &extra)
 
 // Polls for a step's port file. Polling rather than a pipe because a
 // background step is started detached and its stdout is a log, not a channel.
-auto AwaitPort(const std::filesystem::path &port_file,
-               std::chrono::seconds limit) -> int {
+int AwaitPort(const std::filesystem::path &port_file,
+               std::chrono::seconds limit) {
   const auto deadline = std::chrono::steady_clock::now() + limit;
   while (std::chrono::steady_clock::now() < deadline) {
     std::ifstream in(port_file);
@@ -103,8 +102,8 @@ void ProcessEngine::Untrack(const std::string &job_id, pid_t pgid) {
   }
 }
 
-auto ProcessEngine::Run(const proto::Job &job,
-                        Observer *observer) -> proto::JobResult {
+proto::JobResult ProcessEngine::Run(const proto::Job &job,
+                        Observer *observer) {
   proto::JobResult result;
   proto::Status *status = result.mutable_status();
 
@@ -147,9 +146,9 @@ auto ProcessEngine::Run(const proto::Job &job,
   return result;
 }
 
-auto ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
+bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
                              Observer *observer, proto::PhaseResult *result,
-                             proto::Status *status) -> bool {
+                             proto::Status *status) {
   const std::filesystem::path log_dir(job.log_dir());
   const std::filesystem::path scratch(job.workspace().scratch_dir());
   const std::filesystem::path tree(job.workspace().tree_dir());

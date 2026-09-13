@@ -40,9 +40,9 @@ class FakeClient final : public ClientHandle {
   FakeClient(std::string name, Mode mode)
       : name_(std::move(name)), mode_(mode) {}
 
-  auto name() const -> std::string override { return name_; }
+  std::string name() const override { return name_; }
 
-  auto Send(const proto::ServerMessage &msg) -> bool override {
+  bool Send(const proto::ServerMessage &msg) override {
     {
       std::lock_guard lock(mu_);
       if (disconnected_) {
@@ -70,7 +70,7 @@ class FakeClient final : public ClientHandle {
     return true;
   }
 
-  auto TryPopAction() -> std::optional<std::string> override {
+  std::optional<std::string> TryPopAction() override {
     std::lock_guard lock(mu_);
     if (inbox_.empty()) {
       return std::nullopt;
@@ -93,7 +93,7 @@ class FakeClient final : public ClientHandle {
     Notify();
   }
 
-  auto disconnected() const -> bool override {
+  bool disconnected() const override {
     std::lock_guard lock(mu_);
     return disconnected_;
   }
@@ -103,12 +103,12 @@ class FakeClient final : public ClientHandle {
     closed_ = true;
   }
 
-  auto game_over() const -> std::optional<proto::GameOver> {
+  std::optional<proto::GameOver> game_over() const {
     std::lock_guard lock(mu_);
     return game_over_;
   }
 
-  auto closed() const -> bool {
+  bool closed() const {
     std::lock_guard lock(mu_);
     return closed_;
   }
@@ -166,12 +166,12 @@ class NimGameRunTest : public ::testing::Test {
     std::filesystem::remove_all(dir_);
   }
 
-  static auto MakeSeat(const std::shared_ptr<FakeClient> &client) -> Seat {
+  static Seat MakeSeat(const std::shared_ptr<FakeClient> &client) {
     return Seat{
         .display_name = client->name(), .client = client, .builtin = nullptr};
   }
 
-  static auto MakeBuiltinSeat(const std::string &spec) -> Seat {
+  static Seat MakeBuiltinSeat(const std::string &spec) {
     std::string error;
     auto builtin = GameRegistry().at("nim").make_builtin(spec, &error);
     EXPECT_TRUE(builtin.has_value()) << error;

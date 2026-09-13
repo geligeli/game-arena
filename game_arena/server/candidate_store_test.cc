@@ -20,7 +20,7 @@
 namespace tournament_arena {
 namespace {
 
-auto MakeRequest(const std::string &name = "My Bot") -> proto::SubmitRequest {
+proto::SubmitRequest MakeRequest(const std::string &name = "My Bot") {
   proto::SubmitRequest request;
   request.set_display_name(name);
   request.set_author("agent-1");
@@ -34,7 +34,7 @@ auto MakeRequest(const std::string &name = "My Bot") -> proto::SubmitRequest {
 
 // The rules a structured submission needs: where its files land, and a policy
 // that admits that directory.
-auto MakeRules() -> SubmissionRules {
+SubmissionRules MakeRules() {
   SubmissionRules rules;
   rules.files_submit_dir = "solutions";
   rules.policy.add_allowed_dep_prefixes("//problem/lib:");

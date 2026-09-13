@@ -4,7 +4,7 @@
 
 namespace sandbox_common {
 
-auto TailOf(const std::string &text, std::size_t max_chars) -> std::string {
+std::string TailOf(const std::string &text, std::size_t max_chars) {
   if (text.size() <= max_chars) {
     return text;
   }

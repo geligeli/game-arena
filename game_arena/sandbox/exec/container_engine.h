@@ -45,16 +45,16 @@ class ContainerEngine final : public Engine {
  public:
   explicit ContainerEngine(ContainerEngineConfig config);
 
-  auto name() const -> std::string override { return "container"; }
-  auto capabilities() const -> Capabilities override {
+  std::string name() const override { return "container"; }
+  Capabilities capabilities() const override {
     return Capabilities{/*isolates=*/true, /*shared_network=*/true,
                         /*stable_peer_names=*/true};
   }
 
-  auto Prepare(const proto::Workspace &prototype, int lanes,
-               std::string *error) -> bool override;
-  auto Run(const proto::Job &job,
-           Observer *observer) -> proto::JobResult override;
+  bool Prepare(const proto::Workspace &prototype, int lanes,
+               std::string *error) override;
+  proto::JobResult Run(const proto::Job &job,
+           Observer *observer) override;
   void Cancel(const std::string &job_id) override;
 
  private:
@@ -68,12 +68,12 @@ class ContainerEngine final : public Engine {
 
   // Creates the job's volumes and fills the workspace and patch volumes from
   // the exported tree and the staging directory.
-  auto LoadWorkspace(const proto::Job &job, proto::Status *status) -> bool;
+  bool LoadWorkspace(const proto::Job &job, proto::Status *status);
   void RemoveVolumes(const proto::Job &job);
 
-  auto RunPhase(const proto::Job &job, const proto::Phase &phase,
+  bool RunPhase(const proto::Job &job, const proto::Phase &phase,
                 Observer *observer, proto::PhaseResult *result,
-                proto::Status *status) -> bool;
+                proto::Status *status);
 
   const ContainerEngineConfig config_;
   std::mutex mutex_;

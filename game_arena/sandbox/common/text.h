@@ -16,7 +16,7 @@ namespace sandbox_common {
 
 // Keeps the last |max_chars| of |text|, marking what was dropped. The tail
 // rather than the head: whatever failed says so at the end.
-auto TailOf(const std::string &text, std::size_t max_chars) -> std::string;
+std::string TailOf(const std::string &text, std::size_t max_chars);
 
 }  // namespace sandbox_common
 

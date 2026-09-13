@@ -15,7 +15,7 @@ namespace {
 
 using Metrics = std::map<std::string, double>;
 
-auto ReadFile(const std::filesystem::path &path) -> std::string {
+std::string ReadFile(const std::filesystem::path &path) {
   std::ifstream in(path, std::ios::binary);
   std::ostringstream out;
   out << in.rdbuf();

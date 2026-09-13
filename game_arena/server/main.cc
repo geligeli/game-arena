@@ -132,7 +132,7 @@ void WaitForShutdownSignal(tournament_arena::ClientRegistry *clients) {
 
 // The sha |url|'s HEAD names, via `git ls-remote`, which works the same for a
 // path and a URL. Empty when git cannot say.
-auto ResolveRemoteHead(const std::string &url) -> std::string {
+std::string ResolveRemoteHead(const std::string &url) {
   const std::filesystem::path out =
       std::filesystem::temp_directory_path() /
       ("problem_server_ls_remote_" + std::to_string(::getpid()));
@@ -159,8 +159,7 @@ auto ResolveRemoteHead(const std::string &url) -> std::string {
 // Turns the problem's evaluation spec into the scheduler's knobs. The scheduler
 // stays problem-agnostic: it knows about orders and timeouts, not about games
 // or benchmarks.
-auto SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem)
-    -> tournament_arena::SchedulerConfig {
+tournament_arena::SchedulerConfig SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem) {
   tournament_arena::SchedulerConfig config;
   config.build_timeout_s = static_cast<int>(problem.build().timeout_s());
   config.build_targets.assign(problem.build().targets().begin(),
@@ -231,7 +230,7 @@ auto SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem)
 
 }  // namespace
 
-auto main(int argc, char **argv) -> int {
+int main(int argc, char **argv) {
   absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);

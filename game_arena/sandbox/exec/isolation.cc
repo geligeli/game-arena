@@ -5,8 +5,7 @@
 
 namespace sandbox_exec {
 
-auto IsolationArgs(const proto::Isolation &isolation)
-    -> std::vector<std::string> {
+std::vector<std::string> IsolationArgs(const proto::Isolation &isolation) {
   std::vector<std::string> args;
   if (!isolation.keep_default_caps()) {
     args.insert(args.end(), {"--cap-drop", "ALL"});
@@ -48,8 +47,8 @@ auto IsolationArgs(const proto::Isolation &isolation)
   return args;
 }
 
-auto NetworkArg(const proto::Isolation &isolation,
-                const std::string &phase_network) -> std::string {
+std::string NetworkArg(const proto::Isolation &isolation,
+                const std::string &phase_network) {
   switch (isolation.network()) {
     case proto::Isolation::NETWORK_PHASE_BRIDGE:
       return phase_network;
@@ -61,7 +60,7 @@ auto NetworkArg(const proto::Isolation &isolation,
   }
 }
 
-auto NeedsPhaseNetwork(const proto::Isolation &isolation) -> bool {
+bool NeedsPhaseNetwork(const proto::Isolation &isolation) {
   return isolation.network() == proto::Isolation::NETWORK_PHASE_BRIDGE;
 }
 

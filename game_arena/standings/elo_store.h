@@ -30,18 +30,18 @@ class EloStore {
   // Applies one game result and persists. |score_a| is from player A's
   // perspective: 1.0 win, 0.5 draw, 0.0 loss. Returns the new ratings
   // {a, b}. Thread-safe.
-  auto RecordResult(const std::string &game, const std::string &player_a,
+  std::pair<double, double> RecordResult(const std::string &game, const std::string &player_a,
                     const std::string &player_b,
-                    double score_a) -> std::pair<double, double>;
+                    double score_a);
 
-  auto Get(const std::string &game,
-           const std::string &player) const -> proto::Rating;
+  proto::Rating Get(const std::string &game,
+           const std::string &player) const;
 
-  auto Snapshot() const -> proto::RatingStore;
+  proto::RatingStore Snapshot() const;
 
  private:
-  static auto Key(const std::string &game,
-                  const std::string &player) -> std::string;
+  static std::string Key(const std::string &game,
+                  const std::string &player);
   // Atomic rewrite (tmp + rename) of an already-serialized store. Must be
   // called without mutex_ held; drops |blob| if a newer version already landed.
   void Save(const std::string &blob, uint64_t version);

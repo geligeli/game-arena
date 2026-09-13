@@ -30,7 +30,7 @@ ABSL_FLAG(std::string, opponent, "any",
           "any | builtin:random | builtin:mcts | builtin:minimax | ...");
 ABSL_FLAG(int, games, 1, "Number of games to play");
 
-auto main(int argc, char **argv) -> int {
+int main(int argc, char **argv) {
   absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
 

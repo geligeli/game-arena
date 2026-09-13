@@ -22,14 +22,14 @@ namespace kv_options {
 // duplicate key keeps the last value. Never fails: these bytes come off a
 // command line built by another process, and a referee that refused to start
 // over one unparsable setting would take an order down with it.
-auto Parse(std::string_view text) -> std::map<std::string, std::string>;
+std::map<std::string, std::string> Parse(std::string_view text);
 
 // Renders a map as "k=v,k2=v2", keys in sorted order so the result is stable
 // (a work order's argv ends up in test expectations and in logs).
-auto Format(const std::map<std::string, std::string> &options) -> std::string;
+std::string Format(const std::map<std::string, std::string> &options);
 
-auto IsValidKey(std::string_view key) -> bool;
-auto IsValidValue(std::string_view value) -> bool;
+bool IsValidKey(std::string_view key);
+bool IsValidValue(std::string_view value);
 
 }  // namespace kv_options
 

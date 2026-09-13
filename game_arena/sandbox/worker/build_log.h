@@ -27,8 +27,8 @@ struct BuildLogLimits {
 // which candidate header pulled in the failure. Falls back to the tail of the
 // log when nothing matches, since an unrecognised failure still has to be
 // diagnosable.
-auto CompactBuildLog(const std::string &log,
-                     BuildLogLimits limits = {}) -> std::string;
+std::string CompactBuildLog(const std::string &log,
+                     BuildLogLimits limits = {});
 
 }  // namespace tournament_arena
 

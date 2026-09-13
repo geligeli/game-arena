@@ -13,7 +13,7 @@ namespace {
 
 // A line is worth keeping if it says what broke or where. Ordered roughly by
 // how often each one carries the answer.
-auto IsInteresting(const std::string &line) -> bool {
+bool IsInteresting(const std::string &line) {
   static const RE2 *const kPatterns[] = {
       // file.cc:12:34: error: ...  (gcc/clang, the usual answer)
       new RE2(R"(^\s*\S+\.(cc|cpp|h|hpp|inl):\d+(:\d+)?:)"),
@@ -39,8 +39,8 @@ using sandbox_common::TailOf;
 
 }  // namespace
 
-auto CompactBuildLog(const std::string &log,
-                     BuildLogLimits limits) -> std::string {
+std::string CompactBuildLog(const std::string &log,
+                     BuildLogLimits limits) {
   std::vector<std::string> kept;
   std::istringstream lines(log);
   std::string line;

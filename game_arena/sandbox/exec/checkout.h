@@ -18,10 +18,10 @@ namespace sandbox_exec {
 // the slot is on the same filesystem, so a clone of a multi-gigabyte history
 // costs almost nothing there, and copied otherwise. Returns false with *error
 // set.
-auto EnsureClone(const std::string &git, const std::string &source,
+bool EnsureClone(const std::string &git, const std::string &source,
                  const std::filesystem::path &dest,
                  const std::filesystem::path &log_dir,
-                 std::string *error) -> bool;
+                 std::string *error);
 
 // A best-effort fetch, then a forced checkout of |commit| and a clean, so the
 // tree is exactly that commit -- a previous job's patched-in files included.
@@ -29,10 +29,10 @@ auto EnsureClone(const std::string &git, const std::string &source,
 // decides. A literal "HEAD" means the source's tip (origin/HEAD after the
 // fetch), not the clone's own, which would never move. An empty |commit|
 // leaves the tree where it is. Returns false with *error set.
-auto SyncToCommit(const std::string &git, const std::filesystem::path &repo,
+bool SyncToCommit(const std::string &git, const std::filesystem::path &repo,
                   const std::string &commit,
                   const std::filesystem::path &log_dir,
-                  std::string *error) -> bool;
+                  std::string *error);
 
 }  // namespace sandbox_exec
 

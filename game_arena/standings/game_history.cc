@@ -13,7 +13,7 @@ namespace {
 // Minimal JSON string escaping (the fields written here are player names,
 // game ids, and fixed vocabularies — no control characters expected, but
 // quotes and backslashes are handled).
-auto JsonEscape(const std::string &s) -> std::string {
+std::string JsonEscape(const std::string &s) {
   std::string out;
   out.reserve(s.size());
   for (const char c : s) {
@@ -53,8 +53,7 @@ GameHistory::GameHistory(std::filesystem::path dir) : dir_(std::move(dir)) {
   }
 }
 
-auto GameHistory::Store(const proto::GameRecord &record)
-    -> std::filesystem::path {
+std::filesystem::path GameHistory::Store(const proto::GameRecord &record) {
   const std::filesystem::path path = dir_ / (record.game_id() + ".pb");
   {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -92,7 +91,7 @@ auto GameHistory::Store(const proto::GameRecord &record)
   return path;
 }
 
-auto GameHistory::RecentGames(int limit) const -> std::vector<std::string> {
+std::vector<std::string> GameHistory::RecentGames(int limit) const {
   std::lock_guard lock(mutex_);
   if (limit <= 0) {
     return {};

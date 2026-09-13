@@ -27,7 +27,7 @@ class ClientRegistryTest : public ::testing::Test {
     out << text;
   }
 
-  auto Defaults() -> proto::ClientQuota {
+  proto::ClientQuota Defaults() {
     proto::ClientQuota quota;
     quota.set_max_active_evaluations(1);
     quota.set_max_queued_jobs(8);

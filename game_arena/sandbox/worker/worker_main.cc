@@ -74,7 +74,7 @@ namespace {
 // problem or a host makes a different number right.
 constexpr std::chrono::seconds kReconnectDelay{5};
 
-auto Hostname() -> std::string {
+std::string Hostname() {
   char name[256] = {};
   if (::gethostname(name, sizeof(name) - 1) != 0) {
     return "host";
@@ -82,7 +82,7 @@ auto Hostname() -> std::string {
   return name;
 }
 
-auto EnvOr(const char *name, const std::string &fallback) -> std::string {
+std::string EnvOr(const char *name, const std::string &fallback) {
   const char *value = std::getenv(name);
   return value != nullptr && *value != '\0' ? std::string(value) : fallback;
 }
@@ -95,7 +95,7 @@ namespace proto = tournament_arena::proto;
 using Stream =
     grpc::ClientReaderWriter<proto::WorkerMessage, proto::FleetMessage>;
 
-auto DefaultWorkerId() -> std::string {
+std::string DefaultWorkerId() {
   char hostname[256] = {};
   if (::gethostname(hostname, sizeof(hostname) - 1) != 0) {
     hostname[0] = '\0';
@@ -249,7 +249,7 @@ class WorkerSession {
 
 }  // namespace
 
-auto main(int argc, char **argv) -> int {
+int main(int argc, char **argv) {
   absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);

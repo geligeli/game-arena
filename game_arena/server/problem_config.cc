@@ -33,7 +33,7 @@ class CollectingErrors final : public google::protobuf::io::ErrorCollector {
                     column + 1, ": ", message);
   }
 
-  auto text() const -> const std::string & { return text_; }
+  const std::string & text() const { return text_; }
 
  private:
   std::string text_;
@@ -41,7 +41,7 @@ class CollectingErrors final : public google::protobuf::io::ErrorCollector {
 
 // "https://...", "ssh://...", "file://..." have a scheme; "git@host:path" is
 // scp-style. Everything else is a filesystem path.
-auto LooksLikeUrl(std::string_view url) -> bool {
+bool LooksLikeUrl(std::string_view url) {
   if (url.find("://") != std::string_view::npos) {
     return true;
   }
@@ -51,7 +51,7 @@ auto LooksLikeUrl(std::string_view url) -> bool {
          (slash == std::string_view::npos || colon < slash);
 }
 
-auto CountPrimaryMetrics(const proto::GradeSpec &grade) -> int {
+int CountPrimaryMetrics(const proto::GradeSpec &grade) {
   int primaries = 0;
   for (const proto::MetricSpec &metric : grade.metrics()) {
     primaries += metric.primary() ? 1 : 0;
@@ -61,7 +61,7 @@ auto CountPrimaryMetrics(const proto::GradeSpec &grade) -> int {
 
 }  // namespace
 
-auto IsValidProblemId(std::string_view problem_id) -> bool {
+bool IsValidProblemId(std::string_view problem_id) {
   if (problem_id.empty() || problem_id.size() > 64) {
     return false;
   }
@@ -79,8 +79,8 @@ auto IsValidProblemId(std::string_view problem_id) -> bool {
   return true;
 }
 
-auto ExpandSubmissionId(std::string_view text,
-                        std::string_view submission_id) -> std::string {
+std::string ExpandSubmissionId(std::string_view text,
+                        std::string_view submission_id) {
   constexpr std::string_view kPlaceholder = "{submission_id}";
   std::string out;
   out.reserve(text.size());
@@ -97,8 +97,7 @@ auto ExpandSubmissionId(std::string_view text,
   return out;
 }
 
-auto ParseProblemConfigText(std::string_view text, std::string *error)
-    -> std::optional<proto::ProblemConfig> {
+std::optional<proto::ProblemConfig> ParseProblemConfigText(std::string_view text, std::string *error) {
   proto::ProblemConfig config;
   CollectingErrors errors;
   google::protobuf::TextFormat::Parser parser;
@@ -183,8 +182,8 @@ void ApplyProblemDefaults(proto::ProblemConfig *config) {
   }
 }
 
-auto ValidateProblemConfig(const proto::ProblemConfig &config,
-                           std::string *error) -> bool {
+bool ValidateProblemConfig(const proto::ProblemConfig &config,
+                           std::string *error) {
   if (!IsValidProblemId(config.problem_id())) {
     *error = absl::StrCat(
         "problem_id ",
@@ -291,8 +290,7 @@ auto ValidateProblemConfig(const proto::ProblemConfig &config,
   return true;
 }
 
-auto PrimaryMetric(const proto::ProblemConfig &config)
-    -> const proto::MetricSpec * {
+const proto::MetricSpec * PrimaryMetric(const proto::ProblemConfig &config) {
   if (config.ranking().kind() != proto::RankingSpec::METRIC ||
       !config.has_grade()) {
     return nullptr;
@@ -332,8 +330,7 @@ void ResolveRelativeRepoUrl(proto::ProblemConfig *config,
   config->mutable_repo()->set_url(url_out);
 }
 
-auto LoadProblemConfig(const std::filesystem::path &path, std::string *error)
-    -> std::optional<proto::ProblemConfig> {
+std::optional<proto::ProblemConfig> LoadProblemConfig(const std::filesystem::path &path, std::string *error) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     *error = absl::StrCat("cannot read problem config ", path.string());

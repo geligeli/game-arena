@@ -20,8 +20,8 @@ namespace {
 
 // "RESULT a=1 b=2.5" -> {a: 1, b: 2.5}. The last RESULT line wins, so a
 // command that prints progress lines before its final one is fine.
-auto ParseResultLineMetrics(std::string_view text,
-                            std::map<std::string, double> *metrics) -> bool {
+bool ParseResultLineMetrics(std::string_view text,
+                            std::map<std::string, double> *metrics) {
   constexpr std::string_view kMarker = "RESULT ";
   std::size_t line_start = 0;
   bool found = false;
@@ -70,8 +70,8 @@ auto ParseResultLineMetrics(std::string_view text,
 
 }  // namespace
 
-auto Parse(std::string_view json, std::string_view stdout_text,
-           std::map<std::string, double> *metrics) -> bool {
+bool Parse(std::string_view json, std::string_view stdout_text,
+           std::map<std::string, double> *metrics) {
   metrics->clear();
   if (!json.empty()) {
     tournament_arena::proto::MetricReport report;

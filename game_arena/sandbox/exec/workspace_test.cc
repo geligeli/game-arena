@@ -28,7 +28,7 @@ class WorkspaceTest : public ::testing::Test {
   }
 
   // A fake binary that logs its argv and exits |exit_code|.
-  auto FakeTool(const std::string &name, int exit_code) -> std::string {
+  std::string FakeTool(const std::string &name, int exit_code) {
     const std::filesystem::path path = root_ / name;
     std::ofstream out(path);
     out << "#!/usr/bin/env bash\n"
@@ -43,13 +43,13 @@ class WorkspaceTest : public ::testing::Test {
     return path.string();
   }
 
-  auto ToolLog() const -> std::string {
+  std::string ToolLog() const {
     std::ifstream in(root_ / "tools.log");
     return {std::istreambuf_iterator<char>(in),
             std::istreambuf_iterator<char>()};
   }
 
-  auto BaseWorkspace() -> proto::Workspace {
+  proto::Workspace BaseWorkspace() {
     proto::Workspace ws;
     ws.set_tree_dir((root_ / "lower").string());
     ws.set_scratch_dir((root_ / "scratch").string());

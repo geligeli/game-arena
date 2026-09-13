@@ -45,45 +45,44 @@ class ArenaService final : public proto::Arena::Service {
                const ClientRegistry *clients = nullptr,
                int default_list_limit = 50);
 
-  auto Submit(grpc::ServerContext *context, const proto::SubmitRequest *request,
-              proto::SubmitResponse *response) -> grpc::Status override;
+  grpc::Status Submit(grpc::ServerContext *context, const proto::SubmitRequest *request,
+              proto::SubmitResponse *response) override;
 
-  auto GetCandidate(grpc::ServerContext *context,
+  grpc::Status GetCandidate(grpc::ServerContext *context,
                     const proto::GetCandidateRequest *request,
-                    proto::Candidate *response) -> grpc::Status override;
+                    proto::Candidate *response) override;
 
-  auto GetSource(grpc::ServerContext *context,
+  grpc::Status GetSource(grpc::ServerContext *context,
                  const proto::GetSourceRequest *request,
-                 proto::SourceFile *response) -> grpc::Status override;
+                 proto::SourceFile *response) override;
 
-  auto ListCandidates(
+  grpc::Status ListCandidates(
       grpc::ServerContext *context, const proto::ListCandidatesRequest *request,
-      proto::ListCandidatesResponse *response) -> grpc::Status override;
+      proto::ListCandidatesResponse *response) override;
 
-  auto Evaluate(grpc::ServerContext *context,
+  grpc::Status Evaluate(grpc::ServerContext *context,
                 const proto::EvaluateRequest *request,
-                proto::EvaluateResponse *response) -> grpc::Status override;
+                proto::EvaluateResponse *response) override;
 
-  auto GetJob(grpc::ServerContext *context, const proto::GetJobRequest *request,
-              proto::Job *response) -> grpc::Status override;
+  grpc::Status GetJob(grpc::ServerContext *context, const proto::GetJobRequest *request,
+              proto::Job *response) override;
 
-  auto Leaderboard(
+  grpc::Status Leaderboard(
       grpc::ServerContext *context, const proto::LeaderboardRequest *request,
-      proto::LeaderboardResponse *response) -> grpc::Status override;
+      proto::LeaderboardResponse *response) override;
 
-  auto GetProblem(grpc::ServerContext *context,
+  grpc::Status GetProblem(grpc::ServerContext *context,
                   const proto::GetProblemRequest *request,
-                  proto::ProblemInfo *response) -> grpc::Status override;
+                  proto::ProblemInfo *response) override;
 
  private:
-  auto StandingFor(const proto::Candidate &candidate) const
-      -> proto::CandidateStanding;
+  proto::CandidateStanding StandingFor(const proto::Candidate &candidate) const;
 
   // Resolves the caller's x-arena-token. Returns false with *status set when
   // the header is missing or names nobody. With no registry configured it
   // succeeds with an empty identity, and nothing downstream meters.
-  auto Authenticate(grpc::ServerContext *context, ClientIdentity *identity,
-                    grpc::Status *status) const -> bool;
+  bool Authenticate(grpc::ServerContext *context, ClientIdentity *identity,
+                    grpc::Status *status) const;
 
   // Who the caller is, for the problem's source policy. Only SOURCE_OWN needs
   // to know: it fills *client_id from the caller's token, and under every
@@ -94,13 +93,13 @@ class ArenaService final : public proto::Arena::Service {
   // nothing" is worth saying as UNAUTHENTICATED. The listings are lenient --
   // a standing is not source, and a leaderboard should stay legible to
   // someone who has not been given a token at all. They redact instead.
-  auto ResolveReader(grpc::ServerContext *context, bool strict,
+  bool ResolveReader(grpc::ServerContext *context, bool strict,
                      std::string *client_id,
-                     grpc::Status *status) const -> bool;
+                     grpc::Status *status) const;
 
   // Whether |candidate|'s files may be served to |client_id|.
-  auto MayReadSource(const proto::Candidate &candidate,
-                     const std::string &client_id) const -> bool;
+  bool MayReadSource(const proto::Candidate &candidate,
+                     const std::string &client_id) const;
 
   // Drops the source bytes from a manifest the caller may not read, leaving
   // the names and the standings: who submitted what, without the what.

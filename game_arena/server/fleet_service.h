@@ -40,9 +40,9 @@ class StreamFleetWorker
   StreamFleetWorker(std::string worker_id, int slots, Stream *stream);
   ~StreamFleetWorker() override;
 
-  auto worker_id() const -> std::string override { return worker_id_; }
-  auto slots() const -> int override { return slots_; }
-  auto Send(const proto::FleetMessage &msg) -> bool override;
+  std::string worker_id() const override { return worker_id_; }
+  int slots() const override { return slots_; }
+  bool Send(const proto::FleetMessage &msg) override;
 
   // Starts the writer thread. Call once, before the stream is used.
   void Start();
@@ -67,10 +67,10 @@ class FleetService final : public proto::SandboxFleet::Service {
  public:
   explicit FleetService(Scheduler *scheduler);
 
-  auto Attach(
+  grpc::Status Attach(
       grpc::ServerContext *context,
       grpc::ServerReaderWriter<proto::FleetMessage, proto::WorkerMessage>
-          *stream) -> grpc::Status override;
+          *stream) override;
 
  private:
   Scheduler *scheduler_;  // not owned

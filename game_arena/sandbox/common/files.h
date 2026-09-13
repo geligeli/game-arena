@@ -12,14 +12,14 @@ namespace sandbox_common {
 
 // The file's whole contents, or empty when it cannot be opened. Callers use
 // this for logs and reports, where a missing file reads as "no output".
-auto ReadFile(const std::filesystem::path &path) -> std::string;
+std::string ReadFile(const std::filesystem::path &path);
 
 // Writes |content| to |path|, creating parent directories. Returns false with
 // *error set when the file cannot be opened or the write comes up short -- a
 // staged patch that silently truncated would otherwise fail much later, as a
 // confusing build error.
-auto WriteFile(const std::filesystem::path &path, const std::string &content,
-               std::string *error) -> bool;
+bool WriteFile(const std::filesystem::path &path, const std::string &content,
+               std::string *error);
 
 }  // namespace sandbox_common
 

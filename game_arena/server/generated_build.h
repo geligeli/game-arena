@@ -27,11 +27,11 @@
 namespace tournament_arena {
 
 // The name of the generated binary: harness.binary_name, or "bot".
-auto CandidateBinaryName(const proto::CandidateHarness &harness) -> std::string;
+std::string CandidateBinaryName(const proto::CandidateHarness &harness);
 
 // The bazel label of a structured submission's binary.
-auto CandidateTarget(const std::string &dir, const std::string &candidate_id,
-                     const proto::CandidateHarness &harness) -> std::string;
+std::string CandidateTarget(const std::string &dir, const std::string &candidate_id,
+                     const proto::CandidateHarness &harness);
 
 // The BUILD file contents. Returns an empty string when the submission is
 // unusable: no files, an entry header that is not one of them, or a harness
@@ -40,11 +40,11 @@ auto CandidateTarget(const std::string &dir, const std::string &candidate_id,
 // |harness| supplies every label that ends up in the generated BUILD. It comes
 // from the problem config rather than from here on purpose: which library a
 // solution links is the problem's business, not the arena's.
-auto GenerateCandidateBuild(
+std::string GenerateCandidateBuild(
     const std::string &dir, const std::string &candidate_id,
     const proto::CandidateHarness &harness,
     const std::vector<std::string> &file_paths, const std::string &entry_header,
-    const std::vector<std::string> &extra_deps) -> std::string;
+    const std::vector<std::string> &extra_deps);
 
 }  // namespace tournament_arena
 

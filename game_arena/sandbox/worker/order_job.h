@@ -65,14 +65,14 @@ struct OrderJobConfig {
 // Builds the job for |order| in |slot|. |capabilities| decides the rendezvous:
 // an engine with stable peer names gets a referee on a fixed port addressed by
 // name, and one without gets the port-file dance.
-auto JobForOrder(int slot, const proto::WorkOrder &order,
+bool JobForOrder(int slot, const proto::WorkOrder &order,
                  const OrderJobConfig &config,
                  const sandbox_exec::Capabilities &capabilities,
-                 sandbox_exec::proto::Job *job, std::string *error) -> bool;
+                 sandbox_exec::proto::Job *job, std::string *error);
 
 // Where |slot|'s logs go, which is also where the engine writes them.
-auto SlotLogDir(const OrderJobConfig &config,
-                int slot) -> std::filesystem::path;
+std::filesystem::path SlotLogDir(const OrderJobConfig &config,
+                int slot);
 
 }  // namespace tournament_arena
 

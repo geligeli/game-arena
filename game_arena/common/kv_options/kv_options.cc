@@ -6,7 +6,7 @@
 
 namespace kv_options {
 
-auto Parse(std::string_view text) -> std::map<std::string, std::string> {
+std::map<std::string, std::string> Parse(std::string_view text) {
   std::map<std::string, std::string> out;
   while (!text.empty()) {
     const std::size_t comma = text.find(',');
@@ -23,7 +23,7 @@ auto Parse(std::string_view text) -> std::map<std::string, std::string> {
   return out;
 }
 
-auto Format(const std::map<std::string, std::string> &options) -> std::string {
+std::string Format(const std::map<std::string, std::string> &options) {
   std::string out;
   for (const auto &[key, value] : options) {  // std::map iterates sorted
     if (!IsValidKey(key) || !IsValidValue(value)) {
@@ -39,12 +39,12 @@ auto Format(const std::map<std::string, std::string> &options) -> std::string {
   return out;
 }
 
-auto IsValidKey(std::string_view key) -> bool {
+bool IsValidKey(std::string_view key) {
   return !key.empty() && key.find(',') == std::string_view::npos &&
          key.find('=') == std::string_view::npos;
 }
 
-auto IsValidValue(std::string_view value) -> bool {
+bool IsValidValue(std::string_view value) {
   return value.find(',') == std::string_view::npos &&
          value.find('=') == std::string_view::npos;
 }

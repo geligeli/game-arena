@@ -10,7 +10,7 @@
 namespace tournament_arena {
 namespace {
 
-auto Parse(const std::string &diff, Patch *patch) -> bool {
+bool Parse(const std::string &diff, Patch *patch) {
   std::string error;
   const bool ok = ParseUnifiedDiff(diff, patch, &error);
   if (!ok) {

@@ -59,14 +59,14 @@ class Matchmaker {
   ~Matchmaker();
 
   Matchmaker(const Matchmaker &) = delete;
-  auto operator=(const Matchmaker &) -> Matchmaker & = delete;
+  Matchmaker & operator=(const Matchmaker &) = delete;
 
   // Queues the client ("any"), parks it for a named partner
   // ("player:<name>"), or starts a game against a built-in ("builtin:<spec>")
   // immediately. Returns false with *error set when the game, builtin spec or
   // partner name is unusable. Non-blocking: games run on their own threads.
-  auto Join(std::shared_ptr<ClientHandle> client, const proto::Hello &hello,
-            std::string *error) -> bool;
+  bool Join(std::shared_ptr<ClientHandle> client, const proto::Hello &hello,
+            std::string *error);
 
   // Dequeues the client if still waiting (in either the "any" queue or a
   // rendezvous slot); marks it disconnected so a running game awards the win
@@ -82,13 +82,13 @@ class Matchmaker {
   // Pair with Shutdown() to make it bounded.
   void Drain();
 
-  auto running_games() const -> int { return running_games_.load(); }
+  int running_games() const { return running_games_.load(); }
 
   // Clients currently waiting for any opponent in |game|.
-  auto queued(const std::string &game) const -> int;
+  int queued(const std::string &game) const;
 
   // Clients currently parked for a specific named partner in |game|.
-  auto parked(const std::string &game) const -> int;
+  int parked(const std::string &game) const;
 
  private:
   // A client waiting for one specific partner to show up.
@@ -105,9 +105,9 @@ class Matchmaker {
   // Handles a "player:<name>" join: parks, or pairs with an already-parked
   // partner. Precondition: |wanted| is non-empty and differs from the client's
   // own name.
-  auto JoinRendezvous(std::shared_ptr<ClientHandle> client,
+  bool JoinRendezvous(std::shared_ptr<ClientHandle> client,
                       const std::string &game, const std::string &wanted,
-                      std::string *error) -> bool;
+                      std::string *error);
   // Closes rendezvous slots whose deadline has passed. Runs until stopping_.
   void ReaperLoop();
 

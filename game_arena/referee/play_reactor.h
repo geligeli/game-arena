@@ -44,9 +44,9 @@ class PlayReactor final : public grpc::ServerBidiReactor<proto::ClientMessage,
  private:
   // Handles the mandatory opening hello. Returns false when the stream was
   // rejected (a finish has been requested and no further read should start).
-  auto HandleHello() -> bool;
+  bool HandleHello();
 
-  auto connection() -> std::shared_ptr<PlayerConnection>;
+  std::shared_ptr<PlayerConnection> connection();
 
   // Finishes a stream that never got as far as having a connection. Once
   // conn_ exists every finish goes through PlayerConnection instead, so the
@@ -54,7 +54,7 @@ class PlayReactor final : public grpc::ServerBidiReactor<proto::ClientMessage,
   void FinishWithoutConnection(const grpc::Status &status);
 
   // Starts the next read unless the RPC is already finishing.
-  auto StartReadUnlessFinishing() -> void;
+  void StartReadUnlessFinishing();
 
   void OnHelloDeadline();
 

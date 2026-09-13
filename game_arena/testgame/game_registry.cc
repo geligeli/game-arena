@@ -19,7 +19,7 @@ void SetRegistryOptions(
   // Nim has nothing to tune. Registries that do read their keys here.
 }
 
-auto GameRegistry() -> const std::map<std::string, GameDescriptor> & {
+const std::map<std::string, GameDescriptor> & GameRegistry() {
   static const auto *registry = [] {
     auto *out = new std::map<std::string, GameDescriptor>();
     out->emplace(arena_testgame::Descriptor().name,

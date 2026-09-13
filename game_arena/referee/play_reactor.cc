@@ -61,7 +61,7 @@ void PlayReactor::EndRpc(const grpc::Status &status) {
   Finish(status);
 }
 
-auto PlayReactor::StartReadUnlessFinishing() -> void {
+void PlayReactor::StartReadUnlessFinishing() {
   std::lock_guard lock(mu_);
   if (finish_issued_) {
     return;
@@ -77,7 +77,7 @@ auto PlayReactor::StartReadUnlessFinishing() -> void {
   StartRead(&read_msg_);
 }
 
-auto PlayReactor::connection() -> std::shared_ptr<PlayerConnection> {
+std::shared_ptr<PlayerConnection> PlayReactor::connection() {
   std::lock_guard lock(mu_);
   return conn_;
 }
@@ -93,7 +93,7 @@ void PlayReactor::FinishWithoutConnection(const grpc::Status &status) {
   Finish(status);
 }
 
-auto PlayReactor::HandleHello() -> bool {
+bool PlayReactor::HandleHello() {
   if (!read_msg_.has_hello()) {
     FinishWithoutConnection(grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                                          "first message must be hello"));

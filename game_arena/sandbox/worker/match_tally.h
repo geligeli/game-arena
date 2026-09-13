@@ -27,7 +27,7 @@ struct RunTally {
 // Parses the "RESULT games=N wins=W draws=D losses=L elo=E" line out of
 // |output|. Returns false when no such line is present, which is how a match
 // that never got as far as a verdict is told from one that ended 0-0.
-auto ParseResultLine(const std::string &output, RunTally *tally) -> bool;
+bool ParseResultLine(const std::string &output, RunTally *tally);
 
 }  // namespace tournament_arena
 

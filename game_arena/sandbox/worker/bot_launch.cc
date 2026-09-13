@@ -7,7 +7,7 @@
 
 namespace tournament_arena {
 
-auto BinaryPathForTarget(std::string_view target) -> std::string {
+std::string BinaryPathForTarget(std::string_view target) {
   std::string label(target);
   if (label.rfind("//", 0) == 0) {
     label = label.substr(2);
@@ -21,9 +21,9 @@ auto BinaryPathForTarget(std::string_view target) -> std::string {
                                     : label + "/" + label.substr(slash + 1);
 }
 
-auto BotArgs(const std::string &name, const std::string &target,
+std::vector<std::string> BotArgs(const std::string &name, const std::string &target,
              const std::string &opponent, int games,
-             const std::string &params) -> std::vector<std::string> {
+             const std::string &params) {
   std::vector<std::string> args = {
       "--name=" + name,
       "--server=" + target,
@@ -36,8 +36,7 @@ auto BotArgs(const std::string &name, const std::string &target,
   return args;
 }
 
-auto FormatParams(const google::protobuf::Map<std::string, std::string> &params)
-    -> std::string {
+std::string FormatParams(const google::protobuf::Map<std::string, std::string> &params) {
   // proto3 map iteration order is unspecified; sorting keeps a rebuild of the
   // same candidate byte-identical.
   const std::map<std::string, std::string> sorted(params.begin(), params.end());

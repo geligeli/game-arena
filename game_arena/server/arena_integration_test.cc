@@ -90,13 +90,13 @@ class ArenaIntegrationTest : public ::testing::Test {
 
   // Supplies the client registry the service is built with. Default: none, so
   // writes are ungated.
-  virtual auto MakeClients() -> std::unique_ptr<ClientRegistry> {
+  virtual std::unique_ptr<ClientRegistry> MakeClients() {
     return nullptr;
   }
 
   // The problem as submitters see it. Default: empty, which means the arena's
   // default source policy -- everything readable.
-  virtual auto MakeProblemInfo() -> proto::ProblemInfo { return {}; }
+  virtual proto::ProblemInfo MakeProblemInfo() { return {}; }
 
   void TearDown() override {
     server_->Shutdown(std::chrono::system_clock::now() +
@@ -105,8 +105,7 @@ class ArenaIntegrationTest : public ::testing::Test {
     std::filesystem::remove_all(dir_);
   }
 
-  auto Submit(const std::string &name, const std::string &content = "// bot\n")
-      -> proto::SubmitResponse {
+  proto::SubmitResponse Submit(const std::string &name, const std::string &content = "// bot\n") {
     proto::SubmitRequest request;
     request.set_display_name(name);
     request.set_author("agent-1");
@@ -126,8 +125,8 @@ class ArenaIntegrationTest : public ::testing::Test {
 
   // Attaches a worker and returns its stream. The caller drives it, so a test
   // can decide exactly when an order is answered.
-  auto AttachWorker(const std::string &id, int slots,
-                    grpc::ClientContext *context) -> std::unique_ptr<Stream> {
+  std::unique_ptr<Stream> AttachWorker(const std::string &id, int slots,
+                    grpc::ClientContext *context) {
     auto stream = fleet_stub_->Attach(context);
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id(id);
@@ -150,8 +149,8 @@ class ArenaIntegrationTest : public ::testing::Test {
     EXPECT_TRUE(stream->Write(msg));
   }
 
-  auto WaitForJob(const std::string &job_id,
-                  proto::Job::State state) -> proto::Job {
+  proto::Job WaitForJob(const std::string &job_id,
+                  proto::Job::State state) {
     proto::Job job;
     for (int i = 0; i < 400; ++i) {
       grpc::ClientContext context;
@@ -445,7 +444,7 @@ class AuthenticatedArenaTest : public ArenaIntegrationTest {
  protected:
   static constexpr char kToken[] = "s3cret-token";
 
-  auto MakeClients() -> std::unique_ptr<ClientRegistry> override {
+  std::unique_ptr<ClientRegistry> MakeClients() override {
     const auto path = dir_ / "clients.textproto";
     {
       std::ofstream out(path);
@@ -461,8 +460,8 @@ class AuthenticatedArenaTest : public ArenaIntegrationTest {
     return registry;
   }
 
-  auto SubmitAs(const std::string &token, const std::string &name,
-                bool cancel_running = false) -> grpc::Status {
+  grpc::Status SubmitAs(const std::string &token, const std::string &name,
+                bool cancel_running = false) {
     proto::SubmitRequest request;
     request.set_display_name(name);
     request.set_author("i-am-someone-else");
@@ -585,7 +584,7 @@ class SourcePolicyTest : public AuthenticatedArenaTest {
  protected:
   static constexpr char kOtherToken[] = "other-token";
 
-  auto MakeClients() -> std::unique_ptr<ClientRegistry> override {
+  std::unique_ptr<ClientRegistry> MakeClients() override {
     const auto path = dir_ / "clients.textproto";
     {
       std::ofstream out(path);
@@ -601,14 +600,14 @@ class SourcePolicyTest : public AuthenticatedArenaTest {
     return registry;
   }
 
-  auto MakeProblemInfo() -> proto::ProblemInfo override {
+  proto::ProblemInfo MakeProblemInfo() override {
     proto::ProblemInfo info;
     info.set_source_visibility(visibility_);
     return info;
   }
 
-  auto GetSourceAs(const std::string &token, const std::string &candidate_id,
-                   const std::string &path) -> grpc::Status {
+  grpc::Status GetSourceAs(const std::string &token, const std::string &candidate_id,
+                   const std::string &path) {
     proto::GetSourceRequest request;
     request.set_candidate_id(candidate_id);
     request.set_path(path);
@@ -620,7 +619,7 @@ class SourcePolicyTest : public AuthenticatedArenaTest {
     return arena_stub_->GetSource(&context, request, &file);
   }
 
-  auto ListAs(const std::string &token) -> proto::ListCandidatesResponse {
+  proto::ListCandidatesResponse ListAs(const std::string &token) {
     grpc::ClientContext context;
     if (!token.empty()) {
       context.AddMetadata("x-arena-token", token);

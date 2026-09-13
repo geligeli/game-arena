@@ -13,8 +13,7 @@ EloStore::EloStore(std::filesystem::path path, double k_factor,
       k_factor_(k_factor),
       initial_rating_(initial_rating) {}
 
-auto EloStore::Key(const std::string &game, const std::string &player)
-    -> std::string {
+std::string EloStore::Key(const std::string &game, const std::string &player) {
   return game + "\t" + player;
 }
 
@@ -31,10 +30,9 @@ void EloStore::Load() {
   }
 }
 
-auto EloStore::RecordResult(const std::string &game,
+std::pair<double, double> EloStore::RecordResult(const std::string &game,
                             const std::string &player_a,
-                            const std::string &player_b, double score_a)
-    -> std::pair<double, double> {
+                            const std::string &player_b, double score_a) {
   std::pair<double, double> new_ratings;
   std::string blob;
   uint64_t version = 0;
@@ -72,8 +70,7 @@ auto EloStore::RecordResult(const std::string &game,
   return new_ratings;
 }
 
-auto EloStore::Get(const std::string &game, const std::string &player) const
-    -> proto::Rating {
+proto::Rating EloStore::Get(const std::string &game, const std::string &player) const {
   std::lock_guard lock(mutex_);
   const auto it = store_.ratings().find(Key(game, player));
   if (it == store_.ratings().end()) {
@@ -84,7 +81,7 @@ auto EloStore::Get(const std::string &game, const std::string &player) const
   return it->second;
 }
 
-auto EloStore::Snapshot() const -> proto::RatingStore {
+proto::RatingStore EloStore::Snapshot() const {
   std::lock_guard lock(mutex_);
   return store_;
 }

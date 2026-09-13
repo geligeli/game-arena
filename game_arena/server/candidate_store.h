@@ -75,51 +75,49 @@ class CandidateStore : public CandidateView {
 
   // Validates |request| without storing anything. Returns false with *error
   // set describing the first problem, in terms the submitting agent can act on.
-  auto Validate(const proto::SubmitRequest &request,
-                std::string *error) const -> bool;
+  bool Validate(const proto::SubmitRequest &request,
+                std::string *error) const;
 
   // Validates, allocates an id, and writes the candidate to disk. Returns
   // nullopt with *error set on a rejected or unwritable submission.
-  auto Create(const proto::SubmitRequest &request,
+  std::optional<proto::Candidate> Create(const proto::SubmitRequest &request,
               const std::string &base_commit,
-              std::string *error) -> std::optional<proto::Candidate>;
+              std::string *error);
 
-  auto Get(const std::string &candidate_id) const
-      -> std::optional<proto::Candidate> override;
+  std::optional<proto::Candidate> Get(const std::string &candidate_id) const override;
 
   // Reads one submitted file. |path| is matched against the manifest's
   // file_paths, so it cannot escape the candidate's directory.
-  auto ReadSource(const std::string &candidate_id, const std::string &path,
-                  std::string *error) const -> std::optional<std::string>;
+  std::optional<std::string> ReadSource(const std::string &candidate_id, const std::string &path,
+                  std::string *error) const;
 
   // The stored patch, verbatim. This is what the scheduler puts on the wire.
-  auto ReadPatch(const std::string &candidate_id,
-                 std::string *error) const -> std::optional<std::string>;
+  std::optional<std::string> ReadPatch(const std::string &candidate_id,
+                 std::string *error) const;
 
   // All candidates, newest first.
-  auto List() const -> std::vector<proto::Candidate> override;
+  std::vector<proto::Candidate> List() const override;
 
   // Records a build outcome. |build_error| is trimmed to the configured cap.
-  auto SetStatus(const std::string &candidate_id,
+  bool SetStatus(const std::string &candidate_id,
                  proto::Candidate::Status status,
-                 const std::string &build_error) -> bool;
+                 const std::string &build_error);
 
-  auto size() const -> std::size_t;
+  std::size_t size() const;
 
  private:
-  auto CandidateDir(const std::string &candidate_id) const
-      -> std::filesystem::path;
+  std::filesystem::path CandidateDir(const std::string &candidate_id) const;
   // Writes manifest.pb for |candidate|. Caller holds mutex_.
-  auto WriteManifestLocked(const proto::Candidate &candidate) const -> bool;
+  bool WriteManifestLocked(const proto::Candidate &candidate) const;
   void AppendIndexLocked(const proto::Candidate &candidate) const;
-  auto AllocateIdLocked(const std::string &display_name) const -> std::string;
+  std::string AllocateIdLocked(const std::string &display_name) const;
 
   // Builds the patch a request will be stored as: the request's own when it
   // sent one, otherwise a synthesized add-only patch under the problem's
   // files_submit_dir, generated BUILD included.
-  auto PatchForLocked(const proto::SubmitRequest &request,
+  std::optional<std::string> PatchForLocked(const proto::SubmitRequest &request,
                       const std::string &candidate_id,
-                      std::string *error) const -> std::optional<std::string>;
+                      std::string *error) const;
 
   const std::filesystem::path dir_;
   const CandidateLimits limits_;
@@ -132,10 +130,10 @@ class CandidateStore : public CandidateView {
 };
 
 // Exposed for testing: the rules a submitted path must satisfy.
-auto ValidateSourcePath(const std::string &path, std::string *error) -> bool;
+bool ValidateSourcePath(const std::string &path, std::string *error);
 
 // Exposed for testing: "My Bot v2!" -> "my-bot-v2".
-auto Slugify(const std::string &display_name) -> std::string;
+std::string Slugify(const std::string &display_name);
 
 }  // namespace tournament_arena
 

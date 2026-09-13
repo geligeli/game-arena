@@ -20,8 +20,8 @@ constexpr std::string_view kPlayerPrefix = "player:";
 
 // Order-independent key for a pair of players in one game, so both sides of a
 // "player:<name>" rendezvous compute the same string.
-auto RendezvousKey(const std::string &game, const std::string &a,
-                   const std::string &b) -> std::string {
+std::string RendezvousKey(const std::string &game, const std::string &a,
+                   const std::string &b) {
   const std::string &lo = a < b ? a : b;
   const std::string &hi = a < b ? b : a;
   return game + "\t" + lo + "\t" + hi;
@@ -64,8 +64,8 @@ Matchmaker::~Matchmaker() {
   pool_.Stop();
 }
 
-auto Matchmaker::Join(std::shared_ptr<ClientHandle> client,
-                      const proto::Hello &hello, std::string *error) -> bool {
+bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
+                      const proto::Hello &hello, std::string *error) {
   {
     std::lock_guard lock(mutex_);
     if (stopping_) {
@@ -128,10 +128,10 @@ auto Matchmaker::Join(std::shared_ptr<ClientHandle> client,
   return false;
 }
 
-auto Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
+bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
                                 const std::string &game,
                                 const std::string &wanted,
-                                std::string *error) -> bool {
+                                std::string *error) {
   const std::string key = RendezvousKey(game, client->name(), wanted);
   std::shared_ptr<ClientHandle> partner;
   uint64_t pair_games = 0;
@@ -317,13 +317,13 @@ void Matchmaker::Disconnect(const std::shared_ptr<ClientHandle> &client) {
   });
 }
 
-auto Matchmaker::queued(const std::string &game) const -> int {
+int Matchmaker::queued(const std::string &game) const {
   std::lock_guard lock(mutex_);
   const auto it = queues_.find(game);
   return it == queues_.end() ? 0 : static_cast<int>(it->second.size());
 }
 
-auto Matchmaker::parked(const std::string &game) const -> int {
+int Matchmaker::parked(const std::string &game) const {
   std::lock_guard lock(mutex_);
   return static_cast<int>(std::count_if(
       rendezvous_.begin(), rendezvous_.end(),

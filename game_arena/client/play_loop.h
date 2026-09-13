@@ -28,16 +28,16 @@ using ChooseActionFn =
 
 // Plays one game on its own stream. Returns false if the stream failed, not if
 // the game was lost.
-auto PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
+bool PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
                  const std::string &name, const std::string &game,
                  const std::string &opponent, const ChooseActionFn &choose,
-                 std::mt19937 &gen) -> bool;
+                 std::mt19937 &gen);
 
 // Plays |games| of them in sequence, stopping at the first stream failure.
-auto PlayGames(tournament_broker::proto::TournamentBroker::Stub *stub,
+bool PlayGames(tournament_broker::proto::TournamentBroker::Stub *stub,
                const std::string &name, const std::string &game,
                const std::string &opponent, int games,
-               const ChooseActionFn &choose, std::mt19937 &gen) -> bool;
+               const ChooseActionFn &choose, std::mt19937 &gen);
 
 }  // namespace tournament_client
 

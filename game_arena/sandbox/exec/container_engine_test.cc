@@ -18,7 +18,7 @@
 namespace sandbox_exec {
 namespace {
 
-auto Word(const std::string &text, bool verbatim) -> proto::Token {
+proto::Token Word(const std::string &text, bool verbatim) {
   proto::Token token;
   token.set_text(text);
   token.set_verbatim(verbatim);
@@ -58,7 +58,7 @@ class ContainerEngineTest : public ::testing::Test {
     std::filesystem::remove_all(root_, ec);
   }
 
-  auto Log() const -> std::string {
+  std::string Log() const {
     std::ifstream in(root_ / "docker.log");
     return {std::istreambuf_iterator<char>(in),
             std::istreambuf_iterator<char>()};
@@ -67,7 +67,7 @@ class ContainerEngineTest : public ::testing::Test {
   // The argv of the `docker run` for |container|, up to the `-c` that
   // introduces the entrypoint script -- the same slice sandbox/worker's
   // golden test takes.
-  auto RunArgvFor(const std::string &container) const -> std::string {
+  std::string RunArgvFor(const std::string &container) const {
     const std::string log = Log();
     const std::string name_flag = "--name " + container + " ";
     const std::size_t at = log.find(name_flag);
@@ -81,7 +81,7 @@ class ContainerEngineTest : public ::testing::Test {
 
   // A workspace laid out the way the fleet worker lays out a slot: the tree
   // and the staged patch on this side, the persistent output base a volume.
-  auto SlotWorkspace() -> proto::Workspace {
+  proto::Workspace SlotWorkspace() {
     proto::Workspace ws;
     ws.set_tree_dir((root_ / "lower").string());
     ws.set_staging_dir((root_ / "patches").string());
@@ -99,7 +99,7 @@ class ContainerEngineTest : public ::testing::Test {
     return ws;
   }
 
-  auto DiskCacheVolume() -> proto::Mount {
+  proto::Mount DiskCacheVolume() {
     proto::Mount disk_cache;
     disk_cache.set_kind(proto::Mount::VOLUME);
     disk_cache.set_source("arena-disk_cache");
@@ -107,7 +107,7 @@ class ContainerEngineTest : public ::testing::Test {
     return disk_cache;
   }
 
-  auto HardenedIsolation() -> proto::Isolation {
+  proto::Isolation HardenedIsolation() {
     proto::Isolation isolation;
     isolation.set_image("fake-image:1");
     isolation.set_memory_limit_mb(4096);

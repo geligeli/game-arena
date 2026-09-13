@@ -30,7 +30,7 @@ struct Registration {
 
 }  // namespace
 
-auto IsSafePatchPath(const std::string &path) -> bool {
+bool IsSafePatchPath(const std::string &path) {
   if (path.empty() || path.front() == '/') {
     return false;
   }
@@ -42,7 +42,7 @@ auto IsSafePatchPath(const std::string &path) -> bool {
   return true;
 }
 
-auto ContainerName(const std::string &id) -> std::string {
+std::string ContainerName(const std::string &id) {
   return "sbr-" + sandbox_common::SanitizeContainerName(id);
 }
 
@@ -50,9 +50,9 @@ SandboxRunnerService::SandboxRunnerService(SandboxRunnerConfig config,
                                            sandbox_exec::Engine *engine)
     : config_(std::move(config)), engine_(engine) {}
 
-auto SandboxRunnerService::Run(grpc::ServerContext *context,
+grpc::Status SandboxRunnerService::Run(grpc::ServerContext *context,
                                const proto::RunRequest *request,
-                               proto::RunResponse *response) -> grpc::Status {
+                               proto::RunResponse *response) {
   (void)context;
   if (request->id().empty()) {
     return {grpc::StatusCode::INVALID_ARGUMENT, "id is required"};
@@ -152,9 +152,9 @@ auto SandboxRunnerService::Run(grpc::ServerContext *context,
   return grpc::Status::OK;
 }
 
-auto SandboxRunnerService::Kill(grpc::ServerContext *context,
+grpc::Status SandboxRunnerService::Kill(grpc::ServerContext *context,
                                 const proto::KillRequest *request,
-                                proto::KillResponse *response) -> grpc::Status {
+                                proto::KillResponse *response) {
   (void)context;
   (void)response;
   std::string job_id;

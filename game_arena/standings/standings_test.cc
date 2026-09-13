@@ -21,7 +21,7 @@
 namespace tournament_arena {
 namespace {
 
-auto TempDir(const std::string &tag) -> std::filesystem::path {
+std::filesystem::path TempDir(const std::string &tag) {
   const auto dir =
       std::filesystem::temp_directory_path() /
       (tag + "_" + std::to_string(::getpid()) + "_" +
@@ -31,7 +31,7 @@ auto TempDir(const std::string &tag) -> std::filesystem::path {
   return dir;
 }
 
-auto Tally(int wins, int draws, int losses) -> proto::OrderResult {
+proto::OrderResult Tally(int wins, int draws, int losses) {
   proto::OrderResult result;
   result.set_build_ok(true);
   result.set_wins(wins);
@@ -41,9 +41,9 @@ auto Tally(int wins, int draws, int losses) -> proto::OrderResult {
   return result;
 }
 
-auto Metrics(std::initializer_list<std::pair<std::string, double>> values,
+proto::OrderResult Metrics(std::initializer_list<std::pair<std::string, double>> values,
              const std::string &worker = "w1",
-             const std::string &machine = "bench-c7i") -> proto::OrderResult {
+             const std::string &machine = "bench-c7i") {
   proto::OrderResult result;
   result.set_build_ok(true);
   for (const auto &[name, value] : values) {
@@ -60,7 +60,7 @@ auto Metrics(std::initializer_list<std::pair<std::string, double>> values,
 // any other.
 class FakeCandidates : public CandidateView {
  public:
-  auto Add(const std::string &name) -> std::string {
+  std::string Add(const std::string &name) {
     proto::Candidate candidate;
     candidate.set_candidate_id(name + "-abc123");
     candidate.set_display_name(name);
@@ -70,12 +70,11 @@ class FakeCandidates : public CandidateView {
     return candidate.candidate_id();
   }
 
-  auto List() const -> std::vector<proto::Candidate> override {
+  std::vector<proto::Candidate> List() const override {
     return candidates_;
   }
 
-  auto Get(const std::string &candidate_id) const
-      -> std::optional<proto::Candidate> override {
+  std::optional<proto::Candidate> Get(const std::string &candidate_id) const override {
     for (const proto::Candidate &candidate : candidates_) {
       if (candidate.candidate_id() == candidate_id) {
         return candidate;
@@ -100,7 +99,7 @@ class EloStandingsTest : public ::testing::Test {
   }
   void TearDown() override { std::filesystem::remove_all(dir_); }
 
-  auto Add(const std::string &name) -> std::string { return store_->Add(name); }
+  std::string Add(const std::string &name) { return store_->Add(name); }
 
   std::filesystem::path dir_;
   std::unique_ptr<tournament_broker::EloStore> elo_;
