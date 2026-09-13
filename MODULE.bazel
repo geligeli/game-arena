@@ -53,16 +53,29 @@ pip.parse(
 use_repo(pip, "arena_mcp_pip_deps")
 
 
-bazel_dep(name = "cpp_formatting", version = "0.1.0")
+# C++ formatting (//tools/cpp_format.sh). Dev-only, and deliberately so: it is
+# not in the BCR, so it can only be resolved through the archive_override below,
+# and an override only has effect in the root module. A repo that depends on
+# game_arena (examples/connect4, a participant's kit) would otherwise fail to
+# resolve the module graph at all. dev_dependency drops the bazel_dep and the
+# extension for every module that isn't the root, which is exactly the set of
+# builds that never run the formatter. No BUILD file here references
+# @cpp_format_bin, so nothing in the build graph misses it.
+bazel_dep(name = "cpp_formatting", version = "0.1.0", dev_dependency = True)
 
-CPP_FORMAT_VERSION="20260913-a8e45a1"
+CPP_FORMAT_VERSION = "20260913-a0a8896"
+
 archive_override(
     module_name = "cpp_formatting",
-    urls = ["https://github.com/geligeli/cpp_formatting/archive/refs/tags/"+CPP_FORMAT_VERSION+".tar.gz"],
-    strip_prefix = "cpp_formatting-"+CPP_FORMAT_VERSION,
+    urls = ["https://github.com/geligeli/cpp_formatting/archive/refs/tags/" + CPP_FORMAT_VERSION + ".tar.gz"],
+    strip_prefix = "cpp_formatting-" + CPP_FORMAT_VERSION,
 )
 
-cpp_format = use_extension("@cpp_formatting//bazel/integration:extensions.bzl", "cpp_format")
+cpp_format = use_extension(
+    "@cpp_formatting//bazel/integration:extensions.bzl",
+    "cpp_format",
+    dev_dependency = True,
+)
 cpp_format.release(
     version = CPP_FORMAT_VERSION,
     # Optional but recommended for reproducible CI — pin per-asset hashes:
