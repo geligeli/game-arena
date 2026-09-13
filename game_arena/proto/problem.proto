@@ -113,6 +113,70 @@ message CandidateHarness {
 }
 
 // ---------------------------------------------------------------------------
+// The participant's kit
+// ---------------------------------------------------------------------------
+
+// What a participant's environment is, beyond the files the build macro names
+// in kit_files.
+//
+// Everything here ends up inside the kit -- in arena.textproto, which steers
+// the kit's arena_cli, or in the kit's image. A participant may change any of
+// it; none of it is enforcement. What the tournament accepts is decided by
+// SubmissionPolicy and SourcePolicy, at the coordinator, from the problem's
+// own copy of this config.
+message KitSpec {
+  // What `arena_cli submit` sends when the participant names no files: paths
+  // inside the kit, a directory taken whole. This is where a solution lives,
+  // spelled out for the tool, so that submitting is one word.
+  repeated string submit_files = 1;
+
+  // Where `arena_cli source <candidate_id>` writes what it pulls -- one
+  // directory per candidate under this one, inside the kit. Default
+  // "rivals". Empty leaves `source` a reader that writes nothing.
+  string source_dir = 2;
+
+  // A Dockerfile in the problem's repo, layered into the kit image between
+  // the arena's toolchain stage and the kit itself: `FROM kit_base` plus
+  // whatever this problem's participants need installed. The kit's own
+  // contents, the builtins and the build still come from the arena's
+  // Dockerfile after it, so this cannot change what a kit *is*, only what is
+  // available inside it.
+  string dockerfile = 3;
+
+  // Leave the kit image's bazel able to fetch from the network. Off by
+  // default: a kit whose dependencies are vendored builds what the sandbox
+  // builds, and a dependency that resolves here but not there is a
+  // submission that fails after it was tested.
+  bool allow_network_builds = 4;
+}
+
+// ---------------------------------------------------------------------------
+// What participants may read of each other
+// ---------------------------------------------------------------------------
+
+// The arena's default is that every candidate's source is readable by every
+// participant: the point of a tournament like this is that strategies are
+// improved upon, and a leaderboard nobody can learn from is only a scoreboard.
+// A problem run as an exam, or scored on originality, says otherwise here.
+//
+// Enforced by the coordinator on GetSource, and on the manifests GetCandidate
+// and ListCandidates return -- a stored patch is source too. It is not a
+// secrecy guarantee against the operator or against a participant who can
+// reach the coordinator's disk; it is the tournament's rule about reading.
+message SourcePolicy {
+  enum Visibility {
+    // Any participant may read any candidate's files. The arena's default.
+    ALL = 0;
+    // Only what you submitted yourself. Reads are then gated on the same
+    // token writes are, so an anonymous reader gets nothing.
+    OWN = 1;
+    // Nobody's files, your own included. The kit is all you get.
+    NONE = 2;
+  }
+  Visibility visibility = 1;
+}
+
+// ---------------------------------------------------------------------------
 // Building
 // ---------------------------------------------------------------------------
 
@@ -158,10 +222,13 @@ message SandboxSpec {
   reserved 5;
   reserved "network";
 
-  // Refuse to run this problem on the local (non-container) backend. Any
-  // problem whose patches may touch BUILD files should set this: on the local
-  // backend a submitted genrule runs as the worker's own user.
-  bool require_container = 6;
+  // Was require_container: whether this problem refused to run on the local
+  // (non-container) backend. There is no such backend to refuse any more --
+  // sandbox.image is required, a worker builds and runs every order in a
+  // container, and an order it cannot isolate it hands back. The setting a
+  // problem could get wrong is gone rather than defaulted.
+  reserved 6;
+  reserved "require_container";
 
   // Let the build container reach the network.
   //
@@ -338,4 +405,9 @@ message ProblemConfig {
 
   RankingSpec ranking = 10;
   ClientPolicy clients = 11;
+  // What participants may read of each other. Absent means ALL: the arena
+  // opens source by default and a problem opts out.
+  SourcePolicy source = 12;
+  // The participant's environment. Absent is a workable default everywhere.
+  KitSpec kit = 13;
 }

@@ -55,47 +55,6 @@ cc_test(
     ],
 )
 
-# How a problem's submissions are scored and ordered. Two problems ask
-# genuinely different questions -- "who beats whom" and "how fast is it" -- and
-# everything above this sees only rows.
-cc_library(
-    name = "standings",
-    hdrs = ["standings.h"],
-    deps = ["//game_arena/proto:arena_cc_proto"],
-)
-
-cc_library(
-    name = "elo_standings",
-    srcs = ["elo_standings.cc"],
-    hdrs = ["elo_standings.h"],
-    deps = [
-        ":candidate_store",
-        ":elo_store",
-        ":standings",
-        "@abseil-cpp//absl/log",
-    ],
-)
-
-cc_library(
-    name = "metric_standings",
-    srcs = ["metric_standings.cc"],
-    hdrs = ["metric_standings.h"],
-    deps = [
-        ":standings",
-        "@abseil-cpp//absl/log",
-    ],
-)
-
-cc_test(
-    name = "standings_test",
-    srcs = ["standings_test.cc"],
-    deps = [
-        ":elo_standings",
-        ":metric_standings",
-        "@googletest//:gtest_main",
-    ],
-)
-
 # Reading and writing unified diffs: which paths a submission touches, how big
 # it is, and what a newly added file contains. Header-level only -- applying a
 # patch is the worker's job, in a container.
@@ -155,6 +114,7 @@ cc_library(
     srcs = ["candidate_store.cc"],
     hdrs = ["candidate_store.h"],
     deps = [
+        "//game_arena/standings:candidate_view",
         ":generated_build",
         ":unified_diff",
         "//game_arena/proto:arena_cc_proto",
@@ -187,10 +147,10 @@ cc_library(
     hdrs = ["scheduler.h"],
     deps = [
         ":candidate_store",
-        ":elo_store",
+        "//game_arena/standings:elo_store",
         ":fleet_worker",
         ":problem_config",
-        ":standings",
+        "//game_arena/standings:standings",
         "//game_arena/proto:arena_cc_proto",
         "//game_arena/proto:clients_cc_proto",
         "@abseil-cpp//absl/log",
@@ -201,29 +161,9 @@ cc_test(
     name = "scheduler_test",
     srcs = ["scheduler_test.cc"],
     deps = [
-        ":elo_standings",
+        "//game_arena/standings:elo_standings",
         ":scheduler",
         "@googletest//:gtest_main",
-    ],
-)
-
-cc_library(
-    name = "elo_store",
-    srcs = ["elo_store.cc"],
-    hdrs = ["elo_store.h"],
-    deps = [
-        "//game_arena/proto:tournament_broker_cc_proto",
-        "@abseil-cpp//absl/log",
-    ],
-)
-
-cc_library(
-    name = "game_history",
-    srcs = ["game_history.cc"],
-    hdrs = ["game_history.h"],
-    deps = [
-        "//game_arena/proto:tournament_broker_cc_proto",
-        "@abseil-cpp//absl/log",
     ],
 )
 
@@ -235,7 +175,7 @@ cc_library(
     deps = [
         ":candidate_store",
         ":client_registry",
-        ":elo_store",
+        "//game_arena/standings:elo_store",
         ":scheduler",
         "//game_arena/proto:arena_cc_grpc",
         "@abseil-cpp//absl/log",
@@ -257,18 +197,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "http_leaderboard",
-    srcs = ["http_leaderboard.cc"],
-    hdrs = ["http_leaderboard.h"],
-    deps = [
-        ":candidate_store",
-        ":game_history",
-        ":standings",
-        "@abseil-cpp//absl/log",
-    ],
-)
-
 # The coordinator. Links no game and no problem code -- enforced by
 # :no_problem_code_test, not by convention.
 cc_binary(
@@ -278,15 +206,15 @@ cc_binary(
         "//game_arena/common/process",
         ":arena_service",
         ":candidate_store",
-        ":elo_standings",
-        ":elo_store",
+        "//game_arena/standings:elo_standings",
+        "//game_arena/standings:elo_store",
         ":fleet_service",
-        ":game_history",
-        ":http_leaderboard",
-        ":metric_standings",
+        "//game_arena/standings:game_history",
+        "//game_arena/standings:http_leaderboard",
+        "//game_arena/standings:metric_standings",
         ":problem_config",
         ":scheduler",
-        ":standings",
+        "//game_arena/standings:standings",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
         "@abseil-cpp//absl/log",
@@ -309,22 +237,13 @@ sh_test(
 )
 
 cc_test(
-    name = "elo_store_test",
-    srcs = ["elo_store_test.cc"],
-    deps = [
-        ":elo_store",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
     name = "arena_integration_test",
     srcs = ["arena_integration_test.cc"],
     deps = [
-        ":elo_standings",
+        "//game_arena/standings:elo_standings",
         ":arena_service",
         ":candidate_store",
-        ":elo_store",
+        "//game_arena/standings:elo_store",
         ":fleet_service",
         ":scheduler",
         "//game_arena/proto:arena_cc_grpc",

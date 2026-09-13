@@ -14,19 +14,21 @@ That call defines, in the calling package:
   :match_referee, :broker_server, :random_client
       the registry linked with the arena's entry points (only with `registry`)
   :config_test     `bazel test` -- the config parses and is consistent
-  :tournament      `bazel run //:tournament -- [--no_container]` -- a coordinator
-                   and local workers, on this checkout. `--image=TAG` builds
-                   that as a docker image instead: the arena's binaries and
-                   this repo, to `docker run` on any host with a docker socket
-                   and the sandbox image
+  :tournament      `bazel run //:tournament` -- a coordinator and local
+                   workers, on this checkout, building the problem's sandbox
+                   image first if this daemon does not have it. `--image=TAG`
+                   builds the tournament itself as a docker image instead: the
+                   arena's binaries and this repo, to `docker run` on any host
+                   with a docker socket and the sandbox image
   :kit             `bazel run //:kit -- --out=DIR --server=HOST:PORT --mint=ID`
-                   -- a participant's workspace: kit_files, the arena's CLI and
-                   MCP server, a README and a token. Their own environment,
-                   with whatever access they give it; only what they submit
-                   runs sandboxed. `--image=TAG` builds the same as a docker
-                   image, toolchain included and everything built, to
-                   `docker run` wherever they work
-  :play            `bazel run //:play -- [--no_container]` -- the tournament in
+                   -- a participant's workspace: kit_files, the arena's kit
+                   surface vendored as ./arena, arena_cli as a program, an MCP
+                   server, a README and a token. Their own environment, with
+                   whatever access they give it; only what they submit runs
+                   sandboxed. `--image=TAG` builds the same as a docker image,
+                   toolchain included and everything built, to `docker run`
+                   wherever they work
+  :play            `bazel run //:play` -- the tournament in
                    the background, a kit minted for you, and a shell in it with
                    ARENA_SERVER and ARENA_TOKEN set. Leaving the shell stops
                    everything. The dev loop
@@ -55,7 +57,7 @@ _TOURNAMENT_BINARIES = [
     Label("//game_arena/server:problem_server"),
     Label("//game_arena/sandbox/worker:sandbox_worker"),
     Label("//game_arena/tools:arena_admin"),
-    Label("//game_arena/tools:arena_cli"),
+    Label("//game_arena/cli:arena_cli"),
     Label("//mcp_servers/arena_mcp:server"),
 ]
 

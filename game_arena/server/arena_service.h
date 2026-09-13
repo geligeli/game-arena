@@ -23,7 +23,7 @@
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/client_registry.h"
 #include "game_arena/server/scheduler.h"
-#include "game_arena/server/standings.h"
+#include "game_arena/standings/standings.h"
 
 namespace tournament_arena {
 
@@ -84,6 +84,27 @@ class ArenaService final : public proto::Arena::Service {
   // succeeds with an empty identity, and nothing downstream meters.
   auto Authenticate(grpc::ServerContext *context, ClientIdentity *identity,
                     grpc::Status *status) const -> bool;
+
+  // Who the caller is, for the problem's source policy. Only SOURCE_OWN needs
+  // to know: it fills *client_id from the caller's token, and under every
+  // other policy nobody is asked and *client_id stays empty.
+  //
+  // |strict| is for the calls that serve source and nothing else: a missing
+  // or unknown token fails there, because "you are nobody, so you may read
+  // nothing" is worth saying as UNAUTHENTICATED. The listings are lenient --
+  // a standing is not source, and a leaderboard should stay legible to
+  // someone who has not been given a token at all. They redact instead.
+  auto ResolveReader(grpc::ServerContext *context, bool strict,
+                     std::string *client_id,
+                     grpc::Status *status) const -> bool;
+
+  // Whether |candidate|'s files may be served to |client_id|.
+  auto MayReadSource(const proto::Candidate &candidate,
+                     const std::string &client_id) const -> bool;
+
+  // Drops the source bytes from a manifest the caller may not read, leaving
+  // the names and the standings: who submitted what, without the what.
+  void RedactSource(proto::Candidate *candidate) const;
 
   CandidateStore *candidates_;  // not owned
   Scheduler *scheduler_;        // not owned

@@ -146,7 +146,10 @@ cat <<MSG
 Next:
   cd ${dest}
   bazel test //...                                  # the rules and the config
-  bazel run //:tournament -- --no_container         # a local arena
+  bazel run //:play                                 # a local arena + your kit
   bazel run //:kit -- --out=/tmp/kit --mint=me      # what a participant gets
-  bazel run //:sandbox_image                        # the real sandbox (docker)
+  bazel run //:sandbox_image                        # the sandbox image, by hand
+
+Every submission is built and run in a container: set sandbox.image to a tag
+you can build or pull, and play builds it for you the first time.
 MSG

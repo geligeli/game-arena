@@ -18,22 +18,6 @@ cc_binary(
     ],
 )
 
-# A human's client for the Arena service: submit a candidate, poll its job,
-# read standings and rivals' source. Same RPCs as the MCP server, driven from
-# a shell instead of an agent.
-cc_binary(
-    name = "arena_cli",
-    srcs = ["arena_cli.cc"],
-    deps = [
-        "//game_arena/proto:arena_cc_grpc",
-        "@abseil-cpp//absl/flags:flag",
-        "@abseil-cpp//absl/flags:parse",
-        "@abseil-cpp//absl/log:globals",
-        "@abseil-cpp//absl/log:initialize",
-        "@grpc//:grpc++",
-    ],
-)
-
 # Standing a tournament up from a problem repository, and handing out kits to
 # enter it. Driven through the targets @game_arena//game_arena/rules:problem.bzl
 # generates; the arena binaries it launches ride along as data.
@@ -44,9 +28,14 @@ cc_binary(
         "//game_arena/image:Dockerfile",
         "//game_arena/sandbox/worker:sandbox_worker",
         "//game_arena/server:problem_server",
+        # Installed into every kit as a builtin, not run from here.
+        "//game_arena/cli:arena_cli",
+        # Copied into every kit as the arena it builds against.
+        "//:kit_surface",
     ],
     deps = [
         "//game_arena/common/process",
+        "//game_arena/proto:kit_cc_proto",
         "//game_arena/server:client_registry",
         "//game_arena/server:problem_config",
         "@abseil-cpp//absl/flags:flag",

@@ -34,7 +34,6 @@
 #include "game_arena/common/process/process.h"
 #include "game_arena/proto/arena.grpc.pb.h"
 #include "game_arena/sandbox/exec/container_engine.h"
-#include "game_arena/sandbox/exec/process_engine.h"
 #include "game_arena/sandbox/worker/order_runner.h"
 
 ABSL_FLAG(std::string, server, "localhost:50051",
@@ -270,21 +269,21 @@ auto main(int argc, char **argv) -> int {
   job_config.bind_output_base_dir = EnvOr("ARENA_BIND_OUTPUT_BASE", "");
   job_config.bind_disk_cache_dir = EnvOr("ARENA_BIND_DISK_CACHE", "");
 
-  // Both engines, always. Which one an order runs on is the problem's
-  // decision -- it names an image or it does not -- so a worker does not get
-  // to have an opinion, and does not need a flag to express one.
-  auto process_engine = std::make_unique<sandbox_exec::ProcessEngine>();
+  // One engine, and it is a boundary. A worker has no unsandboxed backend to
+  // fall onto: submitted code is arbitrary code, a build of it doubly so, and
+  // an order this worker cannot isolate is an order it hands back. That is
+  // also why there is no flag here -- the choice it would express is not one
+  // an operator should be able to make by accident.
   std::unique_ptr<sandbox_exec::ContainerEngine> container_engine;
   if (process::ResolveExecutable("docker").empty()) {
-    LOG(WARNING) << "no docker on PATH: this worker can only run orders that "
-                    "name no image, and will refuse the rest rather than run "
-                    "submitted code unsandboxed";
-  } else {
-    container_engine = std::make_unique<sandbox_exec::ContainerEngine>(
-        sandbox_exec::ContainerEngineConfig{});
+    LOG(ERROR) << "no docker on PATH: a worker builds and runs every order in "
+                  "a container, so this one would refuse all of them";
+    return 1;
   }
+  container_engine = std::make_unique<sandbox_exec::ContainerEngine>(
+      sandbox_exec::ContainerEngineConfig{});
 
-  OrderRunner runner(process_engine.get(), container_engine.get(),
+  OrderRunner runner(/*process_engine=*/nullptr, container_engine.get(),
                      std::move(job_config), machine_class);
 
   // No repository named here: each order says where its tree comes from.

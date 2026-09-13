@@ -56,6 +56,19 @@ py_proto_library(
     deps = [":problem_proto"],
 )
 
+# The kit's own config, as a participant edits it. Its own file because it is
+# the one schema handed to participants: no import, and nothing about orders,
+# sandboxes or scheduling in it.
+proto_library(
+    name = "kit_proto",
+    srcs = ["kit.proto"],
+)
+
+cc_proto_library(
+    name = "kit_cc_proto",
+    deps = [":kit_proto"],
+)
+
 proto_library(
     name = "arena_proto",
     srcs = ["arena.proto"],
@@ -114,3 +127,10 @@ py_library(
 # and client" -- is true of arena.proto and not of a job description handed
 # between two libraries in one process. Keeping it out also makes the
 # engine's independence checkable by reading one BUILD file.
+
+# Every file of this package, for the arena a participant's kit builds
+# against: a kit gets these packages whole (see //:kit_surface).
+filegroup(
+    name = "kit_surface_files",
+    srcs = glob(["**"]),
+)

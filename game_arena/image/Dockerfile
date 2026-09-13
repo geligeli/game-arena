@@ -11,7 +11,10 @@
 #
 #   --target kit         `arena_tournament kit --image=TAG`
 #       One participant's development environment: the kit the subcommand
-#       wrote, the toolchain, and a completed build. Context: the kit dir.
+#       wrote (their files, the arena's kit surface vendored beside them, the
+#       builtin CLI), the toolchain, vendored dependencies and a completed
+#       build. Context: the kit dir. A problem's own kit.dockerfile is built
+#       first and passed in as the kit_extras stage.
 #
 #   --target tournament  `arena_tournament up --image=TAG`
 #       The coordinator and its workers, ready to `docker run` on any host with
@@ -21,18 +24,22 @@
 #       the problem repo.
 #
 # Named build contexts (BuildKit, the default since Docker 23):
-#   game_arena   optional. A copy of a locally overridden game_arena module,
-#                passed by the tool when MODULE.bazel or .bazelrc.local points
-#                game_arena at a checkout on the host, since that path does not
-#                exist inside a build. A problem pinned to a git commit needs
-#                none of this; bazel fetches the pin.
+#   game_arena   optional, and only for the sandbox and tournament stages. A
+#                copy of a locally overridden game_arena module, passed by the
+#                tool when MODULE.bazel or .bazelrc.local points game_arena at
+#                a checkout on the host, since that path does not exist inside
+#                a build. A problem pinned to a git commit needs none of this;
+#                bazel fetches the pin. A kit image needs none of it either:
+#                the kit carries its own trimmed copy of the arena.
 #   arena_image  this file's directory, for the tournament image to carry it
 #                and build kit images from inside.
 #
 # Build args:
 #   BAZEL_VERSION   the bazel release to install; the tool reads .bazelversion
 #   kit:            ARENA_SERVER, ARENA_HTTP, ARENA_TOKEN, ARENA_CLIENT_ID --
-#                   what the tool baked into arena.env and mcp.json
+#                   what the tool baked into arena.env and mcp.json;
+#                   ARENA_KIT_VENDOR=0 to leave the kit's build able to fetch
+#                   (the problem's kit.allow_network_builds)
 #   tournament:     PROBLEM_ID, PROBLEM_CONFIG (repo-relative), ARENA_KIT_FILES,
 #                   ARENA_KIT_REGISTRY -- what `up` and `kit` need inside;
 #                   DOCKER_VERSION and BUILDX_VERSION, the docker CLI and its
@@ -161,15 +168,40 @@ WORKDIR /
 # kit: one participant's environment. Not a sandbox: it has whatever network
 # and access `docker run` gives it, and only what they submit runs sandboxed.
 #
-#   docker run -it TAG                                  a shell in /kit
-#   docker run -i TAG bazel run //:mcp_server           an MCP server on stdio
-#   docker run -it TAG bazel run //:arena_cli -- leaderboard
+#   docker run -it TAG                          a shell in /kit
+#   docker run -it TAG arena_cli leaderboard    the builtin, on PATH
+#   docker run -i TAG bazel run //:mcp_server   an MCP server on stdio
+#
+# What is in here is what the problem said a participant needs: their files,
+# the toolchain, the arena's kit surface vendored beside them (./arena, not a
+# checkout of the arena), and the builtin CLI. No coordinator, no fleet, no
+# sandbox, no arena_tournament -- none of it would help them and all of it is
+# a distraction.
 #
 # The arena's address and the token are baked in as environment, so the tools
 # work without sourcing arena.env, and `docker run -e ARENA_SERVER=...` moves
 # the kit to another coordinator.
+#
+# No game_arena build context and no with_arena here: whatever the problem
+# does about the arena -- a git pin, a path on the author's machine -- the kit
+# carries its own trimmed copy and builds against that.
 # ==========================================================================
-FROM with_arena AS kit
+FROM base AS kit_base
+
+# --------------------------------------------------------------------------
+# kit_extras: the problem's own layer. Empty by default; a problem that sets
+# kit.dockerfile has its Dockerfile built first (`FROM kit_base`, plus
+# whatever its participants need installed) and passed in to replace this
+# stage:
+#
+#   docker build --build-context kit_extras=docker-image://<tag> ...
+#
+# The kit's own contents, the builtin and the build all come after it, so a
+# problem can add to the environment without changing what a kit is.
+# --------------------------------------------------------------------------
+FROM kit_base AS kit_extras
+
+FROM kit_extras AS kit
 
 # ubuntu:24.04 ships a user "ubuntu" (uid 1000); the kit is theirs.
 COPY --chown=ubuntu:ubuntu . /kit
@@ -182,16 +214,44 @@ RUN python3 -c 'import json; p = "mcp.json"; d = json.load(open(p)); \
       d["mcpServers"]["arena"]["cwd"] = "/kit"; \
       json.dump(d, open(p, "w"), indent=2); open(p, "a").write("\n")'
 
+# Set before anything is built, not after: PATH is part of the environment
+# bazel keys its action cache on, so adding the builtins to it afterwards
+# would invalidate every action this image just ran and hand the participant
+# a full rebuild on their first command.
+ENV ARENA_KIT=/kit \
+    PATH=/kit/.arena/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# ARENA_KIT_VENDOR: vendor every external repository the kit resolves, and
+# point bazel at it, so builds in here need no network and resolve exactly
+# what the sandbox will. Off when the problem sets kit.allow_network_builds.
+ARG ARENA_KIT_VENDOR=1
+RUN if [ "${ARENA_KIT_VENDOR}" = "1" ]; then \
+      bazel vendor --vendor_dir=/kit/.arena/vendor //... \
+   && printf 'common --vendor_dir=/kit/.arena/vendor\n' >> /kit/.bazelrc.local; \
+    fi
+
+# The builtin, built here rather than copied in: the host that wrote this kit
+# is not this image, and a binary linked against its libraries may not run.
+# The kit's own .bazelrc.local (a host's paths) was left behind by
+# .dockerignore, so this is a clean resolve against ./arena.
+RUN bazel build @game_arena//game_arena/cli:arena_cli \
+ && mkdir -p /kit/.arena/bin \
+ && cp "$(bazel info execution_root)/$(bazel cquery --output=files \
+      @game_arena//game_arena/cli:arena_cli | tail -1)" /kit/.arena/bin/arena_cli \
+ && chmod 0755 /kit/.arena/bin/arena_cli
+
 # Build everything once. Bazel's output base lands under ~/.cache/bazel, keyed
-# by the workspace path, so a `bazel run` at run time finds it warm.
+# by the workspace path, so the participant's first build is a no-op and
+# `bazel run //:mcp_server` starts immediately.
 RUN bazel build //... && bazel shutdown
 
 ARG ARENA_SERVER
 ARG ARENA_HTTP
 ARG ARENA_TOKEN
 ARG ARENA_CLIENT_ID
-# arena_cli reads the first two; the MCP server reads them too when its own
-# ARENA_MCP_TARGET/ARENA_MCP_TOKEN are unset (mcp.json sets those explicitly).
+# arena_cli reads the first two and finds the kit through ARENA_KIT; the MCP
+# server reads them too when its own ARENA_MCP_TARGET/ARENA_MCP_TOKEN are
+# unset (mcp.json sets those explicitly).
 ENV ARENA_SERVER=${ARENA_SERVER} \
     ARENA_TOKEN=${ARENA_TOKEN} \
     ARENA_MCP_AUTHOR=${ARENA_CLIENT_ID}
@@ -220,8 +280,8 @@ CMD ["bash"]
 #                                              one more worker, anywhere
 #
 # Runs as root: the socket is root's, and the worker's containers drop every
-# capability regardless. There is no bazel in here on purpose; a `--no_container`
-# run needs a host, not this image.
+# capability regardless. There is no bazel in here on purpose: every build a
+# tournament does happens in the sandbox image, through the socket.
 # ==========================================================================
 
 # --------------------------------------------------------------------------
@@ -241,7 +301,7 @@ RUN --mount=type=cache,target=/var/cache/bazel,sharing=locked \
        @game_arena//game_arena/sandbox/worker:sandbox_worker \
        @game_arena//game_arena/tools:arena_tournament \
        @game_arena//game_arena/tools:arena_admin \
-       @game_arena//game_arena/tools:arena_cli" \
+       @game_arena//game_arena/cli:arena_cli" \
  && $B build --disk_cache=/var/cache/bazel/disk \
       --repository_cache=/var/cache/bazel/repo $T \
  && FILES=$($B cquery --output=files "set($T)") \
@@ -249,8 +309,12 @@ RUN --mount=type=cache,target=/var/cache/bazel,sharing=locked \
       install -D "$f" "/out/$(echo "$f" | sed -E 's#.*/external/game_arena[+~]/##')" || exit 1; \
     done \
  && test -x /out/game_arena/server/problem_server \
- && $B shutdown \
- && mkdir -p /opt/arena/src/game_arena
+ && SURFACE=$($B cquery --output=files @game_arena//:kit_surface) \
+ && for f in $SURFACE; do \
+      install -D "$f" "/out_src/$(echo "$f" | sed -E 's#.*/external/game_arena[+~]/##')" || exit 1; \
+    done \
+ && test -f /out_src/MODULE.bazel \
+ && $B shutdown
 
 # --------------------------------------------------------------------------
 # tournament: no toolchain. git for the workers' clones, the docker CLI for
@@ -286,12 +350,14 @@ RUN curl -fsSL --retry 3 --retry-delay 2 \
 
 COPY --from=tournament_build /out/ /opt/arena/
 COPY --from=arena_image Dockerfile /opt/arena/game_arena/image/Dockerfile
-# The local game_arena copy, if the build had one, so a kit image built from
-# in here (`kit --arena_override=/opt/arena/src/game_arena`) can find it.
-COPY --from=tournament_build /opt/arena/src/game_arena /opt/arena/src/game_arena
+# The arena's kit surface, as sources: `arena_tournament kit` in here vendors
+# it into every kit it writes. Taken from the build above rather than from a
+# checkout, so it is there whether the problem pins the arena by commit or
+# overrides it with a local path.
+COPY --from=tournament_build /out_src /opt/arena/src/game_arena
 RUN ln -s /opt/arena/game_arena/tools/arena_tournament \
           /opt/arena/game_arena/tools/arena_admin \
-          /opt/arena/game_arena/tools/arena_cli \
+          /opt/arena/game_arena/cli/arena_cli \
           /opt/arena/game_arena/server/problem_server \
           /opt/arena/game_arena/sandbox/worker/sandbox_worker \
           /usr/local/bin/

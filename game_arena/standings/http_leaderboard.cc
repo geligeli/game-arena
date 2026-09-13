@@ -1,4 +1,4 @@
-#include "game_arena/server/http_leaderboard.h"
+#include "game_arena/standings/http_leaderboard.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -113,7 +113,7 @@ void Respond(int fd, int status, const std::string &status_text,
 
 HttpLeaderboard::HttpLeaderboard(
     int port, const GameHistory *history,
-    const tournament_arena::CandidateStore *candidates,
+    const tournament_arena::CandidateView *candidates,
     const tournament_arena::Standings *standings, std::string problem_name)
     : port_(port),
       history_(history),

@@ -15,6 +15,7 @@ constexpr char kMatchConfig[] = R"pb(
   display_name: "Risk, two players"
   repo { url: "/repo" base_commit: "abc123" }
   build { targets: "//bot" }
+  sandbox { image: "arena/sandbox:test" }
   match { game: "risk2" referee_target: "//referee:match_referee" }
   ranking { kind: ELO }
 )pb";
@@ -23,6 +24,7 @@ constexpr char kGradeConfig[] = R"pb(
   problem_id: "mcts-bench"
   repo { url: "/repo" }
   build { targets: "//bench" }
+  sandbox { image: "arena/sandbox:test" }
   grade {
     argv: "bazel-bin/bench"
     metrics { name: "wall_ms" direction: MINIMIZE primary: true }
@@ -101,6 +103,7 @@ TEST(ProblemConfigTest, KeepsExplicitValuesOverDefaults) {
              problem_id: "risk2"
              repo { url: "/repo" }
              build { targets: "//bot" timeout_s: 60 }
+             sandbox { image: "arena/sandbox:test" }
              match { game: "risk2" referee_target: "//r" games_per_order: 2 }
              ranking { kind: ELO }
            )pb",
@@ -140,6 +143,7 @@ TEST(ProblemConfigTest, RequiresAnEvaluation) {
                       problem_id: "p"
                       repo { url: "/repo" }
                       build { targets: "//bot" }
+                      sandbox { image: "arena/sandbox:test" }
                     )pb",
                     &error));
   EXPECT_NE(error.find("grade or match"), std::string::npos) << error;
@@ -151,6 +155,7 @@ TEST(ProblemConfigTest, RequiresRankingToMatchEvaluation) {
                       problem_id: "p"
                       repo { url: "/repo" }
                       build { targets: "//bench" }
+                      sandbox { image: "arena/sandbox:test" }
                       grade {
                         argv: "run"
                         metrics { name: "wall_ms" primary: true }
@@ -164,6 +169,7 @@ TEST(ProblemConfigTest, RequiresRankingToMatchEvaluation) {
                       problem_id: "p"
                       repo { url: "/repo" }
                       build { targets: "//bot" }
+                      sandbox { image: "arena/sandbox:test" }
                       match { game: "g" referee_target: "//r" }
                       ranking { kind: METRIC }
                     )pb",
@@ -177,6 +183,7 @@ TEST(ProblemConfigTest, RequiresExactlyOnePrimaryMetric) {
                       problem_id: "p"
                       repo { url: "/repo" }
                       build { targets: "//bench" }
+                      sandbox { image: "arena/sandbox:test" }
                       grade {
                         argv: "run"
                         metrics { name: "a" }
@@ -194,6 +201,7 @@ TEST(ProblemConfigTest, RejectsRankingByAnUndeclaredMetric) {
                       problem_id: "p"
                       repo { url: "/repo" }
                       build { targets: "//bench" }
+                      sandbox { image: "arena/sandbox:test" }
                       grade {
                         argv: "run"
                         metrics { name: "wall_ms" primary: true }
@@ -204,13 +212,15 @@ TEST(ProblemConfigTest, RejectsRankingByAnUndeclaredMetric) {
   EXPECT_NE(error.find("typo_ms"), std::string::npos) << error;
 }
 
-TEST(ProblemConfigTest, RequiresAnImageWhenContainersAreMandatory) {
+// Every submission is built and run in a container, so a problem that names
+// no image is one nothing could run. Refusing it here is the difference
+// between finding out at startup and finding out per order.
+TEST(ProblemConfigTest, RequiresASandboxImage) {
   std::string error;
   EXPECT_FALSE(Load(R"pb(
                       problem_id: "p"
                       repo { url: "/repo" }
                       build { targets: "//bot" }
-                      sandbox { require_container: true }
                       match { game: "g" referee_target: "//r" }
                       ranking { kind: ELO }
                     )pb",
@@ -249,6 +259,7 @@ TEST(ProblemConfigTest, LoadFromFileResolvesRepoUrlDot) {
   {
     std::ofstream out(path);
     out << "problem_id: \"p\" repo { url: \".\" } build { targets: \"//x\" }"
+           " sandbox { image: \"arena/sandbox:test\" }"
            " match { game: \"g\" referee_target: \"//r\" } ranking { kind: ELO "
            "}";
   }

@@ -1,4 +1,4 @@
-#include "game_arena/server/metric_standings.h"
+#include "game_arena/standings/metric_standings.h"
 
 #include <algorithm>
 #include <chrono>

@@ -1,4 +1,4 @@
-#include "game_arena/server/game_history.h"
+#include "game_arena/standings/game_history.h"
 
 #include <algorithm>
 #include <fstream>

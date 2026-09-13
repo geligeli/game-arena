@@ -1,5 +1,5 @@
-#ifndef GAME_ARENA_GAME_ARENA_SERVER_GAME_HISTORY_H
-#define GAME_ARENA_GAME_ARENA_SERVER_GAME_HISTORY_H
+#ifndef GAME_ARENA_GAME_ARENA_STANDINGS_GAME_HISTORY_H
+#define GAME_ARENA_GAME_ARENA_STANDINGS_GAME_HISTORY_H
 
 // Persists completed games: one binary GameRecord proto per game under
 // <dir>/games/<game_id>.pb, plus one JSON line per game appended to
@@ -45,4 +45,4 @@ class GameHistory {
 
 }  // namespace tournament_broker
 
-#endif  // GAME_ARENA_GAME_ARENA_SERVER_GAME_HISTORY_H
+#endif  // GAME_ARENA_GAME_ARENA_STANDINGS_GAME_HISTORY_H

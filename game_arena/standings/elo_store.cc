@@ -1,4 +1,4 @@
-#include "game_arena/server/elo_store.h"
+#include "game_arena/standings/elo_store.h"
 
 #include <cmath>
 #include <fstream>

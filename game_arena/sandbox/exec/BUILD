@@ -133,10 +133,21 @@ cc_test(
     ],
 )
 
+# The engine that is not a boundary: resource limits and timeouts, run as
+# whoever runs it. It exists so the step kernel can be tested without a docker
+# daemon, and so `isolates` has a false case to assert against -- not so that
+# anything can run a submission on it. No shipped binary may link it: a worker
+# takes the container engine and nothing else, which is what makes "submitted
+# code runs in a container" true by construction. Visible to the two packages
+# whose tests use it.
 cc_library(
     name = "process_engine",
     srcs = ["process_engine.cc"],
     hdrs = ["process_engine.h"],
+    visibility = [
+        "//game_arena/sandbox/exec:__pkg__",
+        "//game_arena/sandbox/worker:__pkg__",
+    ],
     deps = [
         ":engine",
         ":sandbox_job_cc_proto",

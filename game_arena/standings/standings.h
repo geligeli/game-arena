@@ -1,5 +1,5 @@
-#ifndef GAME_ARENA_GAME_ARENA_SERVER_STANDINGS_H
-#define GAME_ARENA_GAME_ARENA_SERVER_STANDINGS_H
+#ifndef GAME_ARENA_GAME_ARENA_STANDINGS_STANDINGS_H
+#define GAME_ARENA_GAME_ARENA_STANDINGS_STANDINGS_H
 
 // How a problem's submissions are scored and ordered.
 //
@@ -68,4 +68,4 @@ class Standings {
 
 }  // namespace tournament_arena
 
-#endif  // GAME_ARENA_GAME_ARENA_SERVER_STANDINGS_H
+#endif  // GAME_ARENA_GAME_ARENA_STANDINGS_STANDINGS_H

@@ -5,7 +5,7 @@
 # the problem's repo root: the sandbox worker clones a repo and runs bazel at
 # its root, so a problem's workspace has to be that root.
 #
-#   bazel run //:tournament -- --no_container      # see BUILD
+#   bazel run //:play                              # see BUILD
 
 problem_id: "connect4"
 display_name: "Connect Four"
@@ -71,7 +71,6 @@ sandbox {
   memory_limit_mb: 4096
   # The two bots must reach their referee, and nothing else.
   network: NETWORK_INTERNAL_BRIDGE
-  require_container: true
 }
 
 match {
@@ -86,6 +85,14 @@ match {
   game_time_budget_ms: 60000
   max_moves_per_game: 100
   timeout_s: 900
+}
+
+# What a participant's environment is. The kit gets these files as
+# arena.textproto, so `arena_cli submit --name=...` submits the strategy
+# without being told where it lives.
+kit {
+  submit_files: "bots/reference/strategy.h"
+  source_dir: "rivals"
 }
 
 ranking { kind: ELO }

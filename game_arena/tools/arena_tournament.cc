@@ -1,8 +1,8 @@
 // Standing a tournament up from a problem repository, and handing participants
 // a kit to enter it.
 /*
-bazel run //:tournament -- [--no_container] [--workers=2]
-bazel run //:play -- [--no_container]        # all of it, and a shell in your
+bazel run //:tournament -- [--workers=2]
+bazel run //:play                            # all of it, and a shell in your
 kit bazel run //:kit -- --out=/srv/kits/alice --server=arena:50051 --mint=alice
 bazel run //:kit -- --mint=bob --server=arena:50051 --image=registry/kit-bob
 bazel run //:tournament -- --image=registry/c4-arena --push
@@ -11,16 +11,17 @@ bazel test //:config_test
 
 Without the macro, from a problem repo:
 bazel run @game_arena//game_arena/tools:arena_tournament -- \
-    up --problem_config=problem.textproto --no_container
+    up --problem_config=problem.textproto
 */
 //
 // Four subcommands, one problem config:
 //
-//   up      a coordinator and N local workers on this checkout. The committed
-//           config stays the truth; --no_container derives a loudly-labelled
-//           copy with no image, for a host without docker. With --image, the
-//           same as a docker image: the arena's binaries and the problem, to
-//           `docker run` on any host with a docker socket.
+//   up      a coordinator and N local workers on this checkout, building the
+//           problem's sandbox image first if this daemon does not have it.
+//           Every submission is built and run in a container -- there is no
+//           mode that skips that. With --image, the same as a docker image:
+//           the arena's binaries and the problem, to `docker run` on any host
+//           with a docker socket.
 //   kit     a participant's workspace: the files the problem names, the
 //           arena's CLI and MCP server reachable through @game_arena, a README
 //           from the config, and a freshly minted token. With --image, the
@@ -48,6 +49,7 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -74,6 +76,7 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 #include "absl/strings/str_split.h"
 #include "absl/strings/strip.h"
 #include "game_arena/common/process/process.h"
+#include "game_arena/proto/kit.pb.h"
 #include "game_arena/server/client_registry.h"
 #include "game_arena/server/problem_config.h"
 #include "rules_cc/cc/runfiles/runfiles.h"
@@ -92,11 +95,6 @@ ABSL_FLAG(std::string, data_dir, "",
 ABSL_FLAG(int, grpc_port, 50051, "up: the Arena and SandboxFleet port");
 ABSL_FLAG(int, http_port, 8090, "up: the leaderboard port");
 ABSL_FLAG(int, workers, 1, "up: local sandbox workers to start");
-ABSL_FLAG(bool, no_container, false,
-          "up: run with sandbox.image cleared and require_container off, so "
-          "the workers use the process engine. Submitted code then runs "
-          "unsandboxed as you. For a dev loop on a host without docker; "
-          "never for anything whose numbers are compared");
 ABSL_FLAG(std::string, clients, "",
           "up/kit: the client registry. up passes it to the coordinator, "
           "creating it empty if it does not exist; kit --mint appends to it "
@@ -123,8 +121,13 @@ ABSL_FLAG(std::string, registry, "",
 ABSL_FLAG(std::string, arena_override, "",
           "kit: write a .bazelrc.local pointing @game_arena at this local "
           "checkout, for a participant on the same host");
-ABSL_FLAG(bool, check, false,
-          "kit: run `bazel build //...` in the kit afterwards");
+ABSL_FLAG(std::string, cache_limit, "5G",
+          "kit: how large the kit's own bazel disk cache may grow before "
+          "bazel collects it");
+ABSL_FLAG(bool, prime_cache, true,
+          "kit: build the kit once when it is written, keeping the result in "
+          "a bazel disk cache inside it, so a participant's first build is "
+          "warm and a missing kit file is found here rather than by them");
 ABSL_FLAG(bool, force, false, "kit: write into a non-empty --out");
 ABSL_FLAG(std::string, image, "",
           "kit: also build a docker image of the kit with this tag: the "
@@ -339,6 +342,37 @@ class ArenaRunfiles {
     return {};
   }
 
+  // A *source* file or directory of the game_arena module: the same lookup,
+  // but installed the arena's sources are under $ARENA_HOME/src/game_arena
+  // (its binaries are laid out at $ARENA_HOME directly, so Locate would find
+  // the wrong thing or nothing). Empty when it is not there, which is not an
+  // error by itself -- only the kit's vendored arena needs sources.
+  auto LocateSource(const std::string &path) const -> std::filesystem::path {
+    if (!home_.empty()) {
+      const std::filesystem::path src =
+          std::filesystem::path(home_) / "src" / "game_arena" / path;
+      if (std::filesystem::exists(src)) {
+        return std::filesystem::absolute(src);
+      }
+    }
+    std::vector<std::string> candidates;
+    if (runfiles_) {
+      candidates.push_back(runfiles_->Rlocation("game_arena/" + path));
+      candidates.push_back(runfiles_->Rlocation("_main/" + path));
+    }
+    const std::string dir = EnvOr("RUNFILES_DIR", "");
+    if (!dir.empty()) {
+      candidates.push_back(dir + "/game_arena+/" + path);
+      candidates.push_back(dir + "/_main/" + path);
+    }
+    for (const std::string &candidate : candidates) {
+      if (!candidate.empty() && std::filesystem::exists(candidate)) {
+        return std::filesystem::absolute(candidate);
+      }
+    }
+    return {};
+  }
+
   // Installed rather than under bazel.
   auto installed() const -> bool { return !home_.empty(); }
 
@@ -380,8 +414,7 @@ auto CheckConfig(const proto::ProblemConfig &config,
   // in the tree the worker clones: a lockfile that is not committed is a
   // build that re-resolves against the registry and fails.
   const auto repo = LocalRepoDir(config);
-  if (!config.sandbox().image().empty() &&
-      !config.sandbox().allow_build_network() && repo &&
+  if (!config.sandbox().allow_build_network() && repo &&
       std::filesystem::is_directory(*repo / ".git")) {
     const auto tracked = Capture(
         "git", {"ls-files", "--error-unmatch", "MODULE.bazel.lock"}, *repo);
@@ -467,9 +500,15 @@ auto DockerBuild(const std::filesystem::path &dockerfile,
                  const std::string &target, const std::string &tag,
                  const std::filesystem::path &context,
                  const std::vector<std::string> &build_args,
-                 const std::vector<std::string> &contexts = {}) -> bool {
-  std::vector<std::string> args = {
-      "build", "--file", dockerfile.string(), "--target", target, "--tag", tag};
+                 const std::vector<std::string> &contexts = {},
+                 bool push = absl::GetFlag(FLAGS_push),
+                 bool with_arena_context = true) -> bool {
+  std::vector<std::string> args = {"build", "--file", dockerfile.string(),
+                                   "--tag", tag};
+  if (!target.empty()) {
+    args.push_back("--target");
+    args.push_back(target);
+  }
   for (const std::string &named : contexts) {
     args.push_back("--build-context");
     args.push_back(named);
@@ -483,7 +522,8 @@ auto DockerBuild(const std::filesystem::path &dockerfile,
     args.push_back("--build-arg");
     args.push_back(arg);
   }
-  if (const auto override = LocalArenaOverride(context)) {
+  if (const auto override =
+          with_arena_context ? LocalArenaOverride(context) : std::nullopt) {
     if (!std::filesystem::exists(*override / "MODULE.bazel")) {
       LOG(ERROR) << "game_arena is overridden with " << override->string()
                  << ", which is not a bazel module here. Pin a git commit in "
@@ -509,7 +549,7 @@ auto DockerBuild(const std::filesystem::path &dockerfile,
     LOG(ERROR) << "docker build failed (exit " << code << ")";
     return false;
   }
-  if (absl::GetFlag(FLAGS_push)) {
+  if (push) {
     code = RunInherit(docker, {"push", tag}, context);
     if (code != 0) {
       LOG(ERROR) << "docker push failed (exit " << code << ")";
@@ -649,23 +689,31 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
     return 1;
   }
 
-  // The effective config: what actually runs, and what GetProblem serves.
-  if (absl::GetFlag(FLAGS_no_container)) {
-    config->mutable_sandbox()->clear_image();
-    config->mutable_sandbox()->set_require_container(false);
-    LOG(WARNING) << "--no_container: sandbox.image cleared. Submitted code "
-                    "is built and run by the process engine, as "
-                 << EnvOr("USER", "this user")
-                 << ", with resource limits but no isolation. Dev only";
-  } else if (config->sandbox().image().empty()) {
-    LOG(WARNING) << "sandbox.image is empty: orders run on the process "
-                    "engine, unsandboxed";
-  } else if (!process::ResolveExecutable(absl::GetFlag(FLAGS_docker)).empty() &&
-             RunQuiet(absl::GetFlag(FLAGS_docker),
-                      {"image", "inspect", config->sandbox().image()}) != 0) {
-    LOG(WARNING) << "the sandbox image " << config->sandbox().image()
-                 << " is not on this docker daemon; every order will fail "
-                    "until it is (`bazel run //:sandbox_image`, or a pull)";
+  // Submitted code runs in a container or it does not run: there is no flag
+  // here that turns that off. A tournament without its sandbox image is a
+  // tournament that cannot build anything, so build it rather than starting
+  // and failing every order.
+  const std::string &image = config->sandbox().image();
+  if (process::ResolveExecutable(absl::GetFlag(FLAGS_docker)).empty()) {
+    LOG(ERROR) << "no " << absl::GetFlag(FLAGS_docker)
+               << " on PATH. A tournament builds and runs every submission in "
+                  "a container; there is no unsandboxed mode";
+    return 1;
+  }
+  if (RunQuiet(absl::GetFlag(FLAGS_docker), {"image", "inspect", image}) != 0) {
+    std::printf(
+        "The sandbox image %s is not on this docker daemon; building it "
+        "(the first time takes a while)...\n",
+        image.c_str());
+    std::fflush(stdout);
+    const std::filesystem::path dockerfile =
+        runfiles.Locate("game_arena/image/Dockerfile");
+    if (dockerfile.empty() ||
+        !DockerBuild(dockerfile, "sandbox", image, WorkspaceRoot(), {})) {
+      LOG(ERROR) << "cannot build the sandbox image " << image
+                 << "; build or pull it, then start the tournament again";
+      return 1;
+    }
   }
   std::string effective_text;
   google::protobuf::TextFormat::PrintToString(*config, &effective_text);
@@ -731,12 +779,15 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
   }
   // For `kit --mint` to find the coordinator and have it reload the registry.
   const std::filesystem::path pid_file = data_dir / "problem_server.pid";
-  WriteFile(pid_file, absl::StrCat(server->pid(), "\n"));
   if (!WaitForPort(grpc_port, std::chrono::seconds(60))) {
     LOG(ERROR) << "problem_server did not open port " << grpc_port;
     server->Stop(std::chrono::seconds(5));
     return 1;
   }
+  // Written only once the coordinator is actually serving: it is both how
+  // `kit --mint` finds it and how `play` knows the tournament in front of it
+  // is this one rather than whatever else had the port.
+  WriteFile(pid_file, absl::StrCat(server->pid(), "\n"));
 
   std::vector<process::Child> workers;
   const int worker_count = std::max(1, absl::GetFlag(FLAGS_workers));
@@ -769,7 +820,7 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
       "  leaderboard   http://localhost:%d/\n"
       "  arena         localhost:%d   (writes need a token from %s)\n"
       "  state         %s\n"
-      "  workers       %d local, %s\n"
+      "  workers       %d local, building and running in %s\n"
       "\n"
       "A participant's kit (mints a token and reloads the registry):\n"
       "  %s kit --mint=<client_id> --server=<this host>:%d%s\n"
@@ -778,8 +829,7 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
       config->display_name().empty() ? config->problem_id().c_str()
                                      : config->display_name().c_str(),
       http_port, grpc_port, clients.c_str(), data_dir.c_str(), worker_count,
-      config->sandbox().image().empty() ? "process engine (unsandboxed)"
-                                        : "docker engine",
+      config->sandbox().image().c_str(),
       runfiles.installed() ? "docker exec <container> arena_tournament"
                            : "bazel run //:kit --",
       grpc_port, runfiles.installed() ? " [--image=REG/kit-<client_id>]" : "",
@@ -826,7 +876,28 @@ auto RunUp(const ArenaRunfiles &runfiles) -> int {
 // ---------------------------------------------------------------------------
 
 // The problem's MODULE.bazel, with every relative local_path_override re-rooted
-// so it still points where it did from the kit's new location.
+// so it still points where it did from the kit's new location, and with
+// game_arena pointed at the copy vendored inside the kit.
+//
+// Whatever the problem does about the arena -- a git pin, a path on the
+// author's machine -- a kit uses the arena beside it. That is the copy the
+// participant can read, it is trimmed to what they build against, and it
+// needs no network and no checkout of anyone else's.
+auto ArenaOverrideBlock() -> std::string {
+  return "\n# Written by arena_tournament kit: the arena, trimmed to the "
+         "packages\n# this workspace builds against, vendored in ./arena.\n"
+         "local_path_override(\n"
+         "    module_name = \"game_arena\",\n"
+         "    path = \"arena\",\n"
+         ")\n";
+}
+
+auto WithoutArenaOverride(std::string text) -> std::string {
+  static const std::regex kArenaOverride(
+      R"re((?:local_path|git|archive|single_version)_override\(\s*module_name\s*=\s*"game_arena"[^)]*\)\n?)re");
+  return std::regex_replace(text, kArenaOverride, "");
+}
+
 auto RerootedModuleFile(std::string text,
                         const std::filesystem::path &root) -> std::string {
   static const std::regex kOverride(
@@ -867,14 +938,11 @@ auto KitBuildFile(const std::string &registry) -> std::string {
   text +=
       "package(default_visibility = [\"//visibility:public\"])\n"
       "\n"
-      "# Submit, poll, read standings and rivals' source. Reads $ARENA_SERVER\n"
-      "# and $ARENA_TOKEN (see arena.env).\n"
-      "alias(\n"
-      "    name = \"arena_cli\",\n"
-      "    actual = \"@game_arena//game_arena/tools:arena_cli\",\n"
-      ")\n"
+      "# arena_cli is not here: it is a program, in .arena/bin and on your\n"
+      "# PATH once you have sourced arena.env. Submitting does not need a\n"
+      "# build.\n"
       "\n"
-      "# The same, as MCP tools for an agent (see mcp.json).\n"
+      "# The same operations as MCP tools for an agent (see mcp.json).\n"
       "alias(\n"
       "    name = \"mcp_server\",\n"
       "    actual = \"@game_arena//mcp_servers/arena_mcp:server\",\n"
@@ -967,18 +1035,56 @@ auto KitReadme(const proto::ProblemConfig &config, const std::string &server,
           "`"
        << client_id << "`.";
   }
-  md << "\n\n```sh\n. ./arena.env\n"
-        "bazel run //:arena_cli -- rules\n"
-        "bazel run //:arena_cli -- submit --name=\"My bot\" --file=<path> "
-        "--wait\n"
-        "bazel run //:arena_cli -- leaderboard\n"
-        "bazel run //:arena_cli -- source <candidate_id>   # any rival's "
-        "source is readable\n"
-        "```\n\n"
-        "For an agent, `mcp.json` registers the same operations as MCP tools "
-        "(`arena_rules`, `arena_submit`, `arena_job`, `arena_leaderboard`, "
-        "`arena_source`, `arena_evaluate`); `arena_submit` takes file paths "
-        "relative to this directory.\n";
+  md << "\n\n`arena_cli` is a program, not a build target: sourcing "
+        "`arena.env` puts it on your `PATH` along with the address and the "
+        "token, and submitting needs no build.\n";
+  md << "\n```sh\n. ./arena.env\n"
+        "arena_cli rules\n";
+  const auto &kit = config.kit();
+  if (!kit.submit_files().empty()) {
+    md << "arena_cli submit --name=\"My bot\" --wait   # "
+       << absl::StrJoin(kit.submit_files(), ", ") << "\n";
+  } else {
+    md << "arena_cli submit --name=\"My bot\" --file=<path> --wait\n";
+  }
+  md << "arena_cli leaderboard\n";
+  const std::string rivals =
+      kit.source_dir().empty() ? "rivals" : kit.source_dir();
+  switch (config.source().visibility()) {
+    case proto::SourcePolicy::OWN:
+      md << "arena_cli source <your candidate_id>   # your own submissions "
+            "only\n";
+      break;
+    case proto::SourcePolicy::NONE:
+      break;
+    default:
+      md << "arena_cli source <candidate_id>        # pulled into " << rivals
+         << "/<candidate_id>/\n";
+      break;
+  }
+  md << "```\n\n";
+  md << "`arena.textproto` is what those commands do when you do not say: the "
+        "address, what `submit` sends, where `source` puts what it pulls. It "
+        "is yours to edit -- it steers your tools, and the tournament still "
+        "decides what it accepts.\n";
+  switch (config.source().visibility()) {
+    case proto::SourcePolicy::OWN:
+      md << "\nThis tournament serves you only your own submissions' source; "
+            "a rival's is refused.\n";
+      break;
+    case proto::SourcePolicy::NONE:
+      md << "\nThis tournament serves no submission's source, not even your "
+            "own. What is in this kit is what you have.\n";
+      break;
+    default:
+      md << "\nEvery candidate's source is readable here: `source` is how you "
+            "learn from what is beating you.\n";
+      break;
+  }
+  md << "\nFor an agent, `mcp.json` registers the same operations as MCP "
+        "tools (`arena_rules`, `arena_submit`, `arena_job`, "
+        "`arena_leaderboard`, `arena_source`, `arena_evaluate`); "
+        "`arena_submit` takes file paths relative to this directory.\n";
   return md.str();
 }
 
@@ -991,6 +1097,187 @@ auto JsonEscape(std::string_view s) -> std::string {
     out.push_back(c);
   }
   return out;
+}
+
+// The arena a kit builds against: the packages a participant's workspace
+// actually compiles against, and nothing else.
+//
+// A kit is a bazel workspace whose files `#include` the arena's game session
+// and link its play loop, so it needs @game_arena -- but it needs the game
+// side of it. The coordinator, the sandbox, the fleet, the tools and the
+// arena's own problems are not a participant's business: they are noise in
+// their editor, noise in their build graph, and a map of the machinery that
+// decides their score. So the kit gets a copy of the six packages its targets
+// reach and nothing else, vendored beside their files:
+//
+//   bazel query 'deps(<the kit's targets>)' inside a kit stays within these.
+//
+// Each is closed under dependency (only the others and external modules), so
+// this list is checkable rather than hopeful: //game_arena:kit_surface_test
+// fails when something a kit builds reaches outside them.
+constexpr std::array<std::string_view, 7> kKitSurfaceDirs = {
+    "game_arena/proto", "game_arena/referee",   "game_arena/client",
+    "game_arena/cli",   "game_arena/standings", "game_arena/common/kv_options",
+    "mcp_servers",
+};
+
+// Root files of the module itself: what MODULE.bazel needs to be usable as a
+// local_path_override, and the bazel it was written for.
+constexpr std::array<std::string_view, 4> kKitSurfaceFiles = {
+    "MODULE.bazel", ".bazelversion", "protobuf_python_dist_build.patch",
+    "protobuf_python_dist_bzl.patch"};
+
+// A runfiles tree holds a package's sources (symlinks into the checkout) and,
+// beside them, anything built from it that something depends on -- arena_cli's
+// own binary, for one, which is a symlink into bazel-out. A kit vendors the
+// sources; the binary it gets is the builtin, installed once.
+auto IsBuildOutput(const std::filesystem::path &path) -> bool {
+  std::error_code ec;
+  const std::filesystem::path real =
+      std::filesystem::weakly_canonical(path, ec);
+  return !ec && real.string().find("/bazel-out/") != std::string::npos;
+}
+
+// Copies that surface into <kit>/arena. Under `bazel run` it comes from this
+// tool's runfiles; installed (the tournament image) from the module copy the
+// image carries.
+auto InstallArenaSurface(const ArenaRunfiles &runfiles,
+                         const std::filesystem::path &out) -> bool {
+  const std::filesystem::path arena = out / "arena";
+  std::error_code ec;
+  std::filesystem::remove_all(arena, ec);
+  std::filesystem::create_directories(arena, ec);
+  for (const std::string_view dir : kKitSurfaceDirs) {
+    const std::filesystem::path from = runfiles.LocateSource(std::string(dir));
+    if (from.empty() || !std::filesystem::is_directory(from)) {
+      LOG(ERROR) << "cannot find the arena's " << dir
+                 << " to vendor into the kit. Run this from a checkout of "
+                    "the arena, or point --arena_override at one";
+      return false;
+    }
+    const std::filesystem::path to = arena / std::string(dir);
+    std::filesystem::create_directories(to, ec);
+    for (const auto &entry :
+         std::filesystem::recursive_directory_iterator(from, ec)) {
+      if (!entry.is_regular_file() || IsBuildOutput(entry.path())) {
+        continue;
+      }
+      // Lexical: std::filesystem::relative() resolves symlinks, and every
+      // entry of a runfiles tree is one pointing back at the checkout, so it
+      // would answer with a path out of the kit and into the arena's own
+      // sources.
+      const std::filesystem::path target =
+          to / entry.path().lexically_relative(from);
+      std::filesystem::create_directories(target.parent_path(), ec);
+      std::filesystem::copy_file(
+          entry.path(), target,
+          std::filesystem::copy_options::overwrite_existing, ec);
+      if (ec) {
+        LOG(ERROR) << "cannot copy " << entry.path().string()
+                   << " into the kit: " << ec.message();
+        return false;
+      }
+    }
+  }
+  for (const std::string_view file : kKitSurfaceFiles) {
+    const std::filesystem::path from = runfiles.LocateSource(std::string(file));
+    if (from.empty() || !std::filesystem::is_regular_file(from)) {
+      LOG(ERROR) << "cannot find the arena's " << file << " to vendor";
+      return false;
+    }
+    std::filesystem::copy_file(
+        from, arena / std::string(file),
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+      LOG(ERROR) << "cannot copy " << file << ": " << ec.message();
+      return false;
+    }
+  }
+  // The module's root package: the two patches MODULE.bazel names are labels,
+  // so the package has to exist. The arena's own root BUILD is not copied --
+  // it exports files this surface does not have.
+  return WriteFile(
+      arena / "BUILD",
+      "# The vendored arena's root package: the patches MODULE.bazel names.\n"
+      "exports_files([\n"
+      "    \"protobuf_python_dist_build.patch\",\n"
+      "    \"protobuf_python_dist_bzl.patch\",\n"
+      "])\n");
+}
+
+// The kit's builtins: the tools a participant runs, installed as programs
+// rather than reachable as bazel targets.
+//
+// arena_cli is how a participant enters the tournament, and needing a
+// toolchain and a resolved module graph to submit is both a delay and a
+// distraction -- the arena's build is not their problem. The binary is copied
+// out of this tool's own runfiles, so it is the arena they are entering.
+//
+// A kit image builds its own copy instead (see the Dockerfile): this one was
+// linked against the host's libraries, and the image is not this host.
+auto InstallBuiltins(const ArenaRunfiles &runfiles,
+                     const std::filesystem::path &out) -> bool {
+  const std::filesystem::path cli = runfiles.Locate("game_arena/cli/arena_cli");
+  if (cli.empty()) {
+    LOG(ERROR) << "cannot find arena_cli to install into the kit";
+    return false;
+  }
+  const std::filesystem::path bin = out / ".arena" / "bin";
+  std::error_code ec;
+  std::filesystem::create_directories(bin, ec);
+  const std::filesystem::path target = bin / "arena_cli";
+  // `play` rewrites the kit on every run and this is a large binary on a
+  // possibly slow disk; only copy when it is not already the one we have.
+  if (std::filesystem::exists(target) &&
+      std::filesystem::file_size(target, ec) ==
+          std::filesystem::file_size(cli, ec) &&
+      !ec) {
+    return true;
+  }
+  std::filesystem::remove(target, ec);
+  std::filesystem::copy_file(
+      cli, target, std::filesystem::copy_options::overwrite_existing, ec);
+  if (ec) {
+    LOG(ERROR) << "cannot install arena_cli into " << bin << ": "
+               << ec.message();
+    return false;
+  }
+  std::filesystem::permissions(target,
+                               std::filesystem::perms::owner_all |
+                                   std::filesystem::perms::group_read |
+                                   std::filesystem::perms::group_exec |
+                                   std::filesystem::perms::others_read |
+                                   std::filesystem::perms::others_exec,
+                               ec);
+  return true;
+}
+
+// The kit's own config, as the participant finds it: what arena_cli does when
+// they do not say. Everything in it is theirs to change -- the coordinator
+// enforces the problem's policy on what actually arrives.
+auto KitConfigText(const proto::ProblemConfig &config,
+                   const std::string &server, const std::string &http,
+                   const std::string &client_id) -> std::string {
+  proto::KitConfig kit;
+  kit.set_problem_id(config.problem_id());
+  kit.set_server(server);
+  kit.set_http(http);
+  kit.set_client_id(client_id);
+  for (const std::string &file : config.kit().submit_files()) {
+    kit.add_submit_files(file);
+  }
+  kit.set_source_dir(
+      config.kit().source_dir().empty() ? "rivals" : config.kit().source_dir());
+  std::string text;
+  google::protobuf::TextFormat::PrintToString(kit, &text);
+  return absl::StrCat(
+      "# The kit's config: what arena_cli does when you do not tell it.\n"
+      "# Yours to edit -- it steers your tools and nothing else. The\n"
+      "# tournament enforces its own rules on what arrives, so widening\n"
+      "# anything here changes what you send, never what is accepted.\n"
+      "#\n"
+      "# Schema: tournament_arena.proto.KitConfig.\n",
+      text);
 }
 
 auto RunKit(const ArenaRunfiles &runfiles) -> int {
@@ -1092,7 +1379,13 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
     LOG(WARNING) << "MODULE.bazel does not mention game_arena; the kit's "
                     "arena_cli and mcp_server aliases will not resolve";
   }
-  WriteFile(out / "MODULE.bazel", RerootedModuleFile(*module, root));
+  if (!InstallArenaSurface(runfiles, out)) {
+    return 1;
+  }
+  WriteFile(
+      out / "MODULE.bazel",
+      absl::StrCat(WithoutArenaOverride(RerootedModuleFile(*module, root)),
+                   ArenaOverrideBlock()));
   for (const char *name : {"MODULE.bazel.lock", ".bazelversion", ".bazelrc"}) {
     if (const auto text = ReadFile(root / name)) {
       WriteFile(out / name, *text);
@@ -1109,6 +1402,18 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
     }
   }
 
+  // What the problem tells a participant to submit has to be in what it gave
+  // them. Getting this wrong produces a kit whose one documented command
+  // fails, and the person who finds out is the participant.
+  for (const std::string &file : config->kit().submit_files()) {
+    if (!std::filesystem::exists(out / file)) {
+      LOG(ERROR) << "kit.submit_files names \"" << file
+                 << "\", which is not in the kit. Add it to the macro's "
+                    "kit_files, or name a path that is there";
+      return 1;
+    }
+  }
+
   const std::string server = absl::GetFlag(FLAGS_server);
   const std::string http = absl::GetFlag(FLAGS_http);
   const std::string registry = absl::GetFlag(FLAGS_registry).empty()
@@ -1119,11 +1424,27 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
   WriteFile(out / "ARENA.md",
             KitReadme(*config, server, http, client_id, !token.empty(), files));
 
-  std::string env = "export ARENA_SERVER=" + server + "\n";
+  // Sourced, not run, and it finds itself: a kit that is moved or handed on
+  // still points its tools at its own directory.
+  std::string env = absl::StrCat(
+      "# . ./arena.env -- your tournament, in this shell.\n"
+      "ARENA_KIT=\"$(cd \"$(dirname \"${BASH_SOURCE[0]:-$0}\")\" && pwd)\"\n"
+      "export ARENA_KIT\n"
+      "export PATH=\"$ARENA_KIT/.arena/bin:$PATH\"\n"
+      "export ARENA_SERVER=",
+      server, "\n");
   if (!token.empty()) {
-    env += "export ARENA_TOKEN=" + token + "\n";
+    absl::StrAppend(&env, "export ARENA_TOKEN=", token, "\n");
+  }
+  if (!client_id.empty()) {
+    absl::StrAppend(&env, "export ARENA_MCP_AUTHOR=", client_id, "\n");
   }
   WriteFile(out / "arena.env", env);
+  WriteFile(out / "arena.textproto",
+            KitConfigText(*config, server, http, client_id));
+  if (!InstallBuiltins(runfiles, out)) {
+    return 1;
+  }
 
   std::string mcp = absl::StrCat(
       "{\n"
@@ -1145,33 +1466,75 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
     absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_AUTHOR\": \"",
                     JsonEscape(client_id), "\"");
   }
+  absl::StrAppend(&mcp, ",\n        \"ARENA_KIT\": \"",
+                  JsonEscape(out.string()), "\"");
   absl::StrAppend(&mcp, "\n      }\n    }\n  }\n}\n");
   WriteFile(out / "mcp.json", mcp);
 
-  // bazel-* are symlinks --check leaves behind; .bazelrc.local names this
-  // host's paths. Neither belongs in a repository or an image of the kit.
-  WriteFile(out / ".gitignore", "bazel-*\n.bazelrc.local\n");
-  WriteFile(out / ".dockerignore", "bazel-*\n.bazelrc.local\n.git\n");
+  // bazel-* are symlinks the priming build leaves behind; .bazelrc.local
+  // names this host's paths; .arena/cache is a bazel disk cache, which an
+  // image builds for itself and a git history should never carry. The
+  // builtins are this host's binaries, so an image rebuilds those too.
+  // The vendored arena is a module, not part of this workspace: without this
+  // `bazel build //...` here would try to load its packages as the kit's own
+  // and fail on labels that only resolve inside it.
+  WriteFile(out / ".bazelignore",
+            "# The arena is a bazel module of its own (MODULE.bazel points at\n"
+            "# it); //... is your workspace, not it.\narena\n");
+  WriteFile(out / ".gitignore",
+            "bazel-*\n.bazelrc.local\n.arena/cache/\n.arena/bin/\n");
+  WriteFile(out / ".dockerignore",
+            "bazel-*\n.bazelrc.local\n.arena/cache/\n.arena/bin/\n.git\n");
+  // This host's settings, in the file the problem's own .bazelrc is told to
+  // try-import: an absolute path, because bazel does not expand %workspace%
+  // inside a flag's value, and uncommitted, because it names this machine.
   const std::string arena_override = absl::GetFlag(FLAGS_arena_override);
+  const std::filesystem::path cache = out / ".arena" / "cache";
+  std::string local =
+      "# Written by arena_tournament kit. This host's paths; not committed,\n"
+      "# and not copied into an image of the kit.\n";
+  if (absl::GetFlag(FLAGS_prime_cache)) {
+    // Bounded: this lives inside someone's working directory, and a cache
+    // that only grows is a surprise they find out about from `df`.
+    absl::StrAppend(&local, "build --disk_cache=", cache.string(),
+                    "\ncommon --experimental_disk_cache_gc_max_size=",
+                    absl::GetFlag(FLAGS_cache_limit), "\n");
+  }
   if (!arena_override.empty()) {
-    WriteFile(out / ".bazelrc.local",
-              absl::StrCat("# Written by arena_tournament kit --arena_override."
-                           "\ncommon --override_module=game_arena=",
-                           Resolve(arena_override).string(), "\n"));
-    const auto rc = ReadFile(out / ".bazelrc");
-    if (!rc || rc->find(".bazelrc.local") == std::string::npos) {
-      WriteFile(out / ".bazelrc",
-                absl::StrCat(rc.value_or(""),
-                             "\ntry-import %workspace%/.bazelrc.local\n"));
+    absl::StrAppend(&local, "common --override_module=game_arena=",
+                    Resolve(arena_override).string(), "\n");
+  }
+  // Only the lines this tool owns are rewritten. `play` writes the kit again
+  // on every run, and a participant who put their own cache or their own
+  // flags in here should not lose them to that.
+  if (const auto existing = ReadFile(out / ".bazelrc.local")) {
+    for (std::string_view line : absl::StrSplit(*existing, '\n')) {
+      if (line.empty() || line.front() == '#' ||
+          line.find("--disk_cache=" + cache.string()) !=
+              std::string_view::npos ||
+          line.find("--override_module=game_arena=") !=
+              std::string_view::npos) {
+        continue;
+      }
+      absl::StrAppend(&local, line, "\n");
     }
+  }
+  WriteFile(out / ".bazelrc.local", local);
+  const auto rc = ReadFile(out / ".bazelrc");
+  if (!rc || rc->find(".bazelrc.local") == std::string::npos) {
+    WriteFile(out / ".bazelrc",
+              absl::StrCat(rc.value_or(""),
+                           "\ntry-import %workspace%/.bazelrc.local\n"));
   }
 
   std::printf("Kit for %s written to %s:\n", config->problem_id().c_str(),
               out.c_str());
-  std::printf("  ARENA.md      the rules, and how to submit\n");
-  std::printf("  arena.env     ARENA_SERVER%s for arena_cli\n",
-              token.empty() ? "" : " and ARENA_TOKEN");
-  std::printf("  mcp.json      the MCP server for an agent\n");
+  std::printf("  ARENA.md         the rules, and how to submit\n");
+  std::printf(
+      "  arena.env        . ./arena.env puts arena_cli on your PATH%s\n",
+      token.empty() ? "" : " with your token");
+  std::printf("  arena.textproto  what arena_cli does by default; yours\n");
+  std::printf("  mcp.json         the same operations as MCP tools\n");
   std::printf("  %zu file(s) from the problem\n", files.size());
   if (!token.empty()) {
     std::printf(
@@ -1179,8 +1542,11 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
         "participant only.\n");
   }
 
-  if (absl::GetFlag(FLAGS_check)) {
-    std::printf("\nChecking that the kit builds on its own...\n");
+  if (absl::GetFlag(FLAGS_prime_cache)) {
+    std::printf(
+        "\nBuilding the kit once, into %s (the first time takes a while; "
+        "--prime_cache=false skips it)...\n",
+        cache.c_str());
     std::fflush(stdout);
     const int code = RunInherit("bazel", {"build", "//..."}, out);
     if (code != 0) {
@@ -1189,7 +1555,7 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
                     "source one of them depends on";
       return 1;
     }
-    std::printf("Kit builds.\n");
+    std::printf("Kit builds, and its cache is warm.\n");
   }
 
   const std::string image = absl::GetFlag(FLAGS_image);
@@ -1208,14 +1574,49 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
                     "as the coordinator is reached from where the kit runs, "
                     "or override with `docker run -e ARENA_SERVER=...`";
   }
+  // The problem's own layer, if it has one: built first, from the problem's
+  // repo, and passed in to replace the empty kit_extras stage. Its Dockerfile
+  // starts `FROM kit_base`, which is the arena's toolchain stage, built here
+  // so it has something to start from.
+  std::vector<std::string> contexts;
+  if (!config->kit().dockerfile().empty()) {
+    const std::filesystem::path problem_dockerfile =
+        root / config->kit().dockerfile();
+    if (!std::filesystem::is_regular_file(problem_dockerfile)) {
+      LOG(ERROR) << "kit.dockerfile names " << problem_dockerfile.string()
+                 << ", which is not a file";
+      return 1;
+    }
+    const std::string base = image + "-kit-base";
+    const std::string extras = image + "-kit-extras";
+    std::printf("\nBuilding %s, this problem's own layer of the kit...\n",
+                extras.c_str());
+    std::fflush(stdout);
+    if (!DockerBuild(dockerfile, "kit_base", base, out, {}, {},
+                     /*push=*/false, /*with_arena_context=*/false) ||
+        !DockerBuild(problem_dockerfile, "", extras, root, {},
+                     {"kit_base=docker-image://" + base}, /*push=*/false,
+                     /*with_arena_context=*/false)) {
+      return 1;
+    }
+    contexts.push_back("kit_extras=docker-image://" + extras);
+  }
+
   std::printf(
       "\nBuilding %s from the kit (a full build of it; the first "
       "time takes a while)...\n",
       image.c_str());
   std::fflush(stdout);
+  // No game_arena build context: a kit image builds against the arena the kit
+  // carries, so a copy of the host's checkout would be a second one nothing
+  // reads.
   if (!DockerBuild(dockerfile, "kit", image, out,
                    {"ARENA_SERVER=" + server, "ARENA_HTTP=" + http,
-                    "ARENA_TOKEN=" + token, "ARENA_CLIENT_ID=" + client_id})) {
+                    "ARENA_TOKEN=" + token, "ARENA_CLIENT_ID=" + client_id,
+                    absl::StrCat("ARENA_KIT_VENDOR=",
+                                 config->kit().allow_network_builds() ? 0 : 1)},
+                   contexts, absl::GetFlag(FLAGS_push),
+                   /*with_arena_context=*/false)) {
     return 1;
   }
   std::printf(
@@ -1225,6 +1626,10 @@ auto RunKit(const ArenaRunfiles &runfiles) -> int {
   std::printf(
       "  docker run -it %s                          # a shell in "
       "/kit, everything built\n",
+      image.c_str());
+  std::printf(
+      "  docker run -it %s arena_cli leaderboard      # the builtin, on "
+      "PATH\n",
       image.c_str());
   std::printf(
       "  docker run -i %s bazel run //:mcp_server   # the MCP "
@@ -1371,9 +1776,12 @@ auto RunPlay() -> int {
       absl::StrCat("--http_port=", http_port),
       absl::StrCat("--workers=", absl::GetFlag(FLAGS_workers)),
   };
-  if (absl::GetFlag(FLAGS_no_container)) {
-    up_args.push_back("--no_container");
-  }
+  // The coordinator writes this once it is serving, so waiting for it means
+  // waiting for *our* tournament. Waiting for the port would not: something
+  // else on this host may already hold it, and then the kit would be pointed
+  // at a stranger's arena while ours failed to bind behind our back.
+  const std::filesystem::path pid_file = data_dir / "problem_server.pid";
+  std::filesystem::remove(pid_file, ec);
   process::ChildOptions up_options;
   up_options.stdout_path = log;
   up_options.stderr_path = log;
@@ -1382,14 +1790,23 @@ auto RunPlay() -> int {
     LOG(ERROR) << "cannot start " << self;
     return 1;
   }
-  std::printf("Starting the tournament (log: %s)...\n", log.c_str());
+  std::printf(
+      "Starting the tournament (log: %s).\n"
+      "The first run builds the problem's sandbox image, which takes a "
+      "while.\n",
+      log.c_str());
   std::fflush(stdout);
-  while (!WaitForPort(grpc_port, std::chrono::seconds(1))) {
+  while (!std::filesystem::exists(pid_file)) {
     if (const auto code = up->Poll()) {
       LOG(ERROR) << "the tournament did not start (exit " << *code << "):\n"
                  << TailOf(log, 15);
       return 1;
     }
+    if (g_stop_requested) {
+      up->Stop(std::chrono::seconds(10));
+      return 1;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
 
   // Your kit, rewritten each time so it has the current kit_files.
@@ -1424,10 +1841,11 @@ auto RunPlay() -> int {
       "\n"
       "You are '%s' in your kit at %s.\n"
       "  leaderboard   http://localhost:%d/\n"
-      "  ARENA_SERVER and ARENA_TOKEN are set; see ARENA.md. For example:\n"
-      "    bazel run //:arena_cli -- rules\n"
-      "    bazel run //:arena_cli -- submit --name=try --file=<path> --wait\n"
-      "    bazel run //:arena_cli -- leaderboard\n"
+      "  arena_cli is on your PATH, with ARENA_SERVER and ARENA_TOKEN set;\n"
+      "  see ARENA.md. For example:\n"
+      "    arena_cli rules\n"
+      "    arena_cli submit --name=try --wait\n"
+      "    arena_cli leaderboard\n"
       "  tournament log: %s\n"
       "Leaving this shell stops the tournament.\n\n",
       client_id.c_str(), kit_dir.c_str(), http_port, log.c_str());
@@ -1443,6 +1861,9 @@ auto RunPlay() -> int {
       "ARENA_TOKEN=" + token,
       "ARENA_MCP_AUTHOR=" + client_id,
       "ARENA_KIT=" + kit_dir.string(),
+      // The kit's builtins, ahead of whatever else is called arena_cli.
+      absl::StrCat("PATH=", (kit_dir / ".arena" / "bin").string(), ":",
+                   EnvOr("PATH", "/usr/local/bin:/usr/bin:/bin")),
   };
   auto sh = process::Child::Start(shell, {}, shell_options);
   if (!sh) {

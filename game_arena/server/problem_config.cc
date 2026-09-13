@@ -202,9 +202,13 @@ auto ValidateProblemConfig(const proto::ProblemConfig &config,
     *error = "build.targets must name at least one bazel target";
     return false;
   }
-  if (config.sandbox().image().empty() &&
-      config.sandbox().require_container()) {
-    *error = "sandbox.image is required when sandbox.require_container is set";
+  if (config.sandbox().image().empty()) {
+    // Submitted code is built and run in a container, always. A problem with
+    // no image is a problem whose submissions would have to run as the
+    // worker's own user, and the arena has no mode that does that.
+    *error =
+        "sandbox.image is required: every submission is built and run in a "
+        "container";
     return false;
   }
 

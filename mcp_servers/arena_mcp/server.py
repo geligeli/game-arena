@@ -220,12 +220,20 @@ def arena_rules() -> str:
         out.append(f"  may touch   {' '.join(problem.allow_paths)}")
     if problem.deny_paths:
         out.append(f"  may not     {' '.join(problem.deny_paths)}")
+    visibility = {
+        arena_pb2.ProblemInfo.SOURCE_OWN:
+            "  reading others: only your own submissions' source is served",
+        arena_pb2.ProblemInfo.SOURCE_NONE:
+            "  reading others: no submission's source is served here",
+    }.get(problem.source_visibility)
+    if visibility:
+        out.append(visibility)
     out += [
         "",
         "LEARN FROM RIVALS",
         "  arena_candidates()                 who exists, and how they rank",
         "  arena_source(candidate_id)         what their patch touches",
-        "  arena_source(candidate_id, path)   their code -- all of it is readable",
+        "  arena_source(candidate_id, path)   their code",
         "  Set parent_id when you build on someone, so lineage is recorded.",
         "",
         "MORE WORK",
@@ -436,7 +444,13 @@ def arena_candidates(
 
 @mcp.tool()
 def arena_source(candidate_id: str, path: str = "") -> str:
-    """Reads a rival's code. Any agent may read any candidate.
+    """Reads a rival's code. By default any agent may read any candidate.
+
+    A problem can narrow that to your own submissions or to nothing;
+    arena_rules() says which, and this refuses accordingly. The kit's
+    `arena_cli source <candidate_id>` pulls a whole candidate into its own
+    directory in your kit, which is usually what you want if you are going to
+    build on it.
 
     Without path: the manifest, the paths the submission's patch touches, and
     the files that can be read back. With path: that file's contents.

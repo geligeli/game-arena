@@ -45,14 +45,14 @@ bazel run //game_arena/server:problem_server -- \
 #include "game_arena/server/arena_service.h"
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/client_registry.h"
-#include "game_arena/server/elo_standings.h"
-#include "game_arena/server/elo_store.h"
 #include "game_arena/server/fleet_service.h"
-#include "game_arena/server/game_history.h"
-#include "game_arena/server/http_leaderboard.h"
-#include "game_arena/server/metric_standings.h"
 #include "game_arena/server/problem_config.h"
 #include "game_arena/server/scheduler.h"
+#include "game_arena/standings/elo_standings.h"
+#include "game_arena/standings/elo_store.h"
+#include "game_arena/standings/game_history.h"
+#include "game_arena/standings/http_leaderboard.h"
+#include "game_arena/standings/metric_standings.h"
 
 ABSL_FLAG(std::string, problem_config, "",
           "Path to the problem's .textproto (required). See "
@@ -165,7 +165,6 @@ auto SchedulerConfigFor(const tournament_arena::proto::ProblemConfig &problem)
   config.build_timeout_s = static_cast<int>(problem.build().timeout_s());
   config.build_targets.assign(problem.build().targets().begin(),
                               problem.build().targets().end());
-  config.require_container = problem.sandbox().require_container();
   config.repo_url = problem.repo().url();
   config.bazel_flags.assign(problem.build().bazel_flags().begin(),
                             problem.build().bazel_flags().end());
@@ -346,6 +345,20 @@ auto main(int argc, char **argv) -> int {
     info.add_deny_paths(pattern);
   }
   info.set_files_submit_dir(problem->submission().files_submit_dir());
+  switch (problem->source().visibility()) {
+    case tournament_arena::proto::SourcePolicy::OWN:
+      info.set_source_visibility(
+          tournament_arena::proto::ProblemInfo::SOURCE_OWN);
+      break;
+    case tournament_arena::proto::SourcePolicy::NONE:
+      info.set_source_visibility(
+          tournament_arena::proto::ProblemInfo::SOURCE_NONE);
+      break;
+    default:
+      info.set_source_visibility(
+          tournament_arena::proto::ProblemInfo::SOURCE_ALL);
+      break;
+  }
   if (graded) {
     const auto *primary = tournament_arena::PrimaryMetric(*problem);
     info.set_lower_is_better(primary->direction() ==
@@ -400,6 +413,16 @@ auto main(int argc, char **argv) -> int {
             << ", data dir " << data_dir << ", base commit "
             << problem->repo().base_commit() << ", " << candidates.size()
             << " submission(s) loaded";
+  if (problem->source().visibility() !=
+      tournament_arena::proto::SourcePolicy::ALL) {
+    LOG(INFO) << "Candidate source is "
+              << (problem->source().visibility() ==
+                          tournament_arena::proto::SourcePolicy::OWN
+                      ? "served only to its own author, on a token"
+                      : "served to nobody")
+              << ": the default is that every participant reads every "
+                 "submission";
+  }
   WaitForShutdownSignal(clients.get());
   LOG(INFO) << "Shutting down";
 

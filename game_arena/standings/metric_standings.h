@@ -1,5 +1,5 @@
-#ifndef GAME_ARENA_GAME_ARENA_SERVER_METRIC_STANDINGS_H
-#define GAME_ARENA_GAME_ARENA_SERVER_METRIC_STANDINGS_H
+#ifndef GAME_ARENA_GAME_ARENA_STANDINGS_METRIC_STANDINGS_H
+#define GAME_ARENA_GAME_ARENA_STANDINGS_METRIC_STANDINGS_H
 
 // Standings for a graded problem: a measured number per submission, ranked by
 // the problem's primary metric.
@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-#include "game_arena/server/standings.h"
+#include "game_arena/standings/standings.h"
 
 namespace tournament_arena {
 
@@ -59,4 +59,4 @@ class MetricStandings final : public Standings {
 
 }  // namespace tournament_arena
 
-#endif  // GAME_ARENA_GAME_ARENA_SERVER_METRIC_STANDINGS_H
+#endif  // GAME_ARENA_GAME_ARENA_STANDINGS_METRIC_STANDINGS_H

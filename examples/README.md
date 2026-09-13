@@ -78,9 +78,9 @@ registry), `:config_test`, and three runnable targets:
 
 | | |
 | --- | --- |
-| `bazel run //:play -- [--no_container]` | the tournament in the background, a kit minted for you, and a shell in it; leaving the shell stops everything |
-| `bazel run //:tournament -- [--no_container]` | a coordinator and a local worker, on this checkout |
-| `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, `//:arena_cli`, `//:mcp_server`, a README from the config, and a token |
+| `bazel run //:play` | the tournament in the background, a kit minted for you, and a shell in it; leaving the shell stops everything |
+| `bazel run //:tournament` | a coordinator and a local worker, on this checkout; builds the sandbox image if this daemon lacks it |
+| `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, the arena's kit surface as `./arena`, `arena_cli` as a program, `//:mcp_server`, a README from the config, and a token |
 | `bazel run //:kit -- --mint=bob --server=HOST:PORT --image=TAG` | the same as a docker image: toolchain, kit, everything built; `docker run -it TAG` is a ready environment |
 | `bazel run //:sandbox_image` | the offline sandbox image `sandbox.image` names |
 | `bazel run //:tournament -- --image=TAG` | the coordinator and workers as a docker image, for any host with a docker socket and that sandbox image |
@@ -97,5 +97,6 @@ problem's workspace has to be a repository of its own. These two live inside
 game-arena's tree so they can be read side by side, which means a worker
 cannot clone them as they are. `scripts/new_problem.sh match|graded <dir>`
 copies one out as a standalone repo, pinned to game-arena by commit, with a
-first commit made -- from there `bazel run //:tournament -- --no_container`
-runs end to end.
+first commit made -- from there `bazel run //:play` runs end to end, given a
+`sandbox.image` tag this host can build (every submission is built and run in
+a container; there is no mode that skips that).

@@ -1,5 +1,5 @@
-#ifndef GAME_ARENA_GAME_ARENA_SERVER_HTTP_LEADERBOARD_H
-#define GAME_ARENA_GAME_ARENA_SERVER_HTTP_LEADERBOARD_H
+#ifndef GAME_ARENA_GAME_ARENA_STANDINGS_HTTP_LEADERBOARD_H
+#define GAME_ARENA_GAME_ARENA_STANDINGS_HTTP_LEADERBOARD_H
 
 // Minimal embedded HTTP server (GET only) exposing the leaderboard.
 //
@@ -22,9 +22,9 @@
 #include <string>
 #include <thread>
 
-#include "game_arena/server/candidate_store.h"
-#include "game_arena/server/game_history.h"
-#include "game_arena/server/standings.h"
+#include "game_arena/standings/candidate_view.h"
+#include "game_arena/standings/game_history.h"
+#include "game_arena/standings/standings.h"
 
 namespace tournament_broker {
 
@@ -34,7 +34,7 @@ class HttpLeaderboard {
   // /api/leaderboard 404: the standalone broker has neither and is still
   // usable without them.
   HttpLeaderboard(int port, const GameHistory *history,
-                  const tournament_arena::CandidateStore *candidates = nullptr,
+                  const tournament_arena::CandidateView *candidates = nullptr,
                   const tournament_arena::Standings *standings = nullptr,
                   std::string problem_name = "");
   ~HttpLeaderboard();
@@ -56,7 +56,7 @@ class HttpLeaderboard {
 
   const int port_;
   const GameHistory *history_;  // not owned
-  const tournament_arena::CandidateStore
+  const tournament_arena::CandidateView
       *candidates_;                               // not owned, may be null
   const tournament_arena::Standings *standings_;  // not owned, may be null
   const std::string problem_name_;
@@ -71,4 +71,4 @@ class HttpLeaderboard {
 
 }  // namespace tournament_broker
 
-#endif  // GAME_ARENA_GAME_ARENA_SERVER_HTTP_LEADERBOARD_H
+#endif  // GAME_ARENA_GAME_ARENA_STANDINGS_HTTP_LEADERBOARD_H

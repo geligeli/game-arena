@@ -64,8 +64,8 @@ cc_library(
         ":game_session",
         ":worker_pool",
         "//game_arena/proto:tournament_broker_cc_proto",
-        "//game_arena/server:elo_store",
-        "//game_arena/server:game_history",
+        "//game_arena/standings:elo_store",
+        "//game_arena/standings:game_history",
         "@abseil-cpp//absl/log",
     ],
 )
@@ -81,8 +81,8 @@ cc_library(
         ":game_session",
         ":worker_pool",
         "//game_arena/proto:tournament_broker_cc_proto",
-        "//game_arena/server:elo_store",
-        "//game_arena/server:game_history",
+        "//game_arena/standings:elo_store",
+        "//game_arena/standings:game_history",
         "@abseil-cpp//absl/log",
     ],
 )
@@ -142,8 +142,8 @@ cc_library(
         ":game_registry",
         ":matchmaker",
         "//game_arena/proto:tournament_broker_cc_proto",
-        "//game_arena/server:elo_store",
-        "//game_arena/server:game_history",
+        "//game_arena/standings:elo_store",
+        "//game_arena/standings:game_history",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
         "@abseil-cpp//absl/log",
@@ -166,10 +166,10 @@ cc_library(
         ":broker_service",
         ":game_registry",
         ":matchmaker",
-        "//game_arena/server:elo_standings",
-        "//game_arena/server:elo_store",
-        "//game_arena/server:game_history",
-        "//game_arena/server:http_leaderboard",
+        "//game_arena/standings:elo_standings",
+        "//game_arena/standings:elo_store",
+        "//game_arena/standings:game_history",
+        "//game_arena/standings:http_leaderboard",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
         "@abseil-cpp//absl/log",
@@ -196,4 +196,11 @@ cc_test(
         ":worker_pool",
         "@googletest//:gtest_main",
     ],
+)
+
+# Every file of this package, for the arena a participant's kit builds
+# against: a kit gets these packages whole (see //:kit_surface).
+filegroup(
+    name = "kit_surface_files",
+    srcs = glob(["**"]),
 )
