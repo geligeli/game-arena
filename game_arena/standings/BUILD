@@ -53,6 +53,7 @@ cc_library(
     deps = [
         "//game_arena/proto:tournament_broker_cc_proto",
         "@abseil-cpp//absl/log",
+        "@boost.json",
     ],
 )
 
@@ -100,6 +101,16 @@ cc_test(
     srcs = ["elo_store_test.cc"],
     deps = [
         ":elo_store",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "game_history_test",
+    srcs = ["game_history_test.cc"],
+    deps = [
+        ":game_history",
+        "@boost.json",
         "@googletest//:gtest_main",
     ],
 )

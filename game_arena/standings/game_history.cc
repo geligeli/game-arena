@@ -1,35 +1,17 @@
 #include "game_arena/standings/game_history.h"
 
 #include <algorithm>
+#include <boost/json/object.hpp>
+#include <boost/json/serialize.hpp>
 #include <fstream>
+#include <string>
 #include <utility>
 
 #include "absl/log/log.h"
 
 namespace tournament_broker {
 
-namespace {
-
-// Minimal JSON string escaping (the fields written here are player names,
-// game ids, and fixed vocabularies — no control characters expected, but
-// quotes and backslashes are handled).
-std::string JsonEscape(const std::string &s) {
-  std::string out;
-  out.reserve(s.size());
-  for (const char c : s) {
-    switch (c) {
-      case '"': out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\n': out += "\\n"; break;
-      case '\r': out += "\\r"; break;
-      case '\t': out += "\\t"; break;
-      default: out += c;
-    }
-  }
-  return out;
-}
-
-}  // namespace
+namespace json = boost::json;
 
 GameHistory::GameHistory(std::filesystem::path dir) : dir_(std::move(dir)) {
   std::error_code ec;
@@ -63,19 +45,22 @@ std::filesystem::path GameHistory::Store(const proto::GameRecord &record) {
     }
   }
 
-  std::string line = "{\"game_id\":\"" + JsonEscape(record.game_id()) +
-                     "\",\"game\":\"" + JsonEscape(record.game()) + "\"";
+  // One line of index.jsonl. serialize() never emits a newline of its own --
+  // a name carrying one comes back as \n -- so the object stays on one line
+  // however the players are called.
+  json::object entry{
+      {"game_id", record.game_id()},
+      {"game", record.game()},
+  };
   for (int seat = 0; seat < record.player_names_size(); ++seat) {
-    line += ",\"player" + std::to_string(seat) + "\":\"" +
-            JsonEscape(record.player_names(seat)) + "\"";
+    entry["player" + std::to_string(seat)] = record.player_names(seat);
   }
-  line += ",\"result\":" +
-          std::to_string(static_cast<int>(record.result())) +
-          ",\"winning_player\":" + std::to_string(record.winning_player()) +
-          ",\"reason\":\"" + JsonEscape(record.termination_reason()) + "\"" +
-          ",\"moves\":" + std::to_string(record.steps_size()) +
-          ",\"finished_unix_ms\":" +
-          std::to_string(record.finished_unix_ms()) + "}";
+  entry["result"] = static_cast<int>(record.result());
+  entry["winning_player"] = record.winning_player();
+  entry["reason"] = record.termination_reason();
+  entry["moves"] = record.steps_size();
+  entry["finished_unix_ms"] = record.finished_unix_ms();
+  std::string line = json::serialize(entry);
 
   std::lock_guard lock(mutex_);
   std::ofstream index(dir_ / "index.jsonl", std::ios::app);
