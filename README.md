@@ -87,6 +87,10 @@ its own bazel workspace:
 
 Neither is referenced from anything under `game_arena/`, which is the point.
 Start there if you are adding a problem.
+[`examples/README.md`](examples/README.md#deploying-it-on-another-host) walks
+one of them from a checkout to a tournament on another host: the sandbox and
+tournament images, `docker run` on a box with nothing but docker, a kit image
+per participant, and minting their tokens from inside the container.
 
 ## From a problem to a tournament
 

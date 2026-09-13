@@ -288,6 +288,9 @@ CMD ["bash"]
 # tournament_build: the arena's binaries, built from the problem's workspace
 # so they are the arena the problem depends on. The cache mount keeps bazel's
 # output across builds on one daemon; only the binaries leave this stage.
+# cquery prints execroot-relative paths, and an external repository's sources
+# are only under the execution root -- /src has a bazel-out symlink but no
+# external one -- so every copy below is made from there.
 # --------------------------------------------------------------------------
 FROM with_arena AS tournament_build
 
@@ -304,14 +307,15 @@ RUN --mount=type=cache,target=/var/cache/bazel,sharing=locked \
        @game_arena//game_arena/cli:arena_cli" \
  && $B build --disk_cache=/var/cache/bazel/disk \
       --repository_cache=/var/cache/bazel/repo $T \
+ && EXEC=$($B info execution_root) \
  && FILES=$($B cquery --output=files "set($T)") \
  && for f in $FILES; do \
-      install -D "$f" "/out/$(echo "$f" | sed -E 's#.*/external/game_arena[+~]/##')" || exit 1; \
+      install -D "$EXEC/$f" "/out/$(echo "$f" | sed -E 's#.*external/game_arena[+~]/##')" || exit 1; \
     done \
  && test -x /out/game_arena/server/problem_server \
  && SURFACE=$($B cquery --output=files @game_arena//:kit_surface) \
  && for f in $SURFACE; do \
-      install -D "$f" "/out_src/$(echo "$f" | sed -E 's#.*/external/game_arena[+~]/##')" || exit 1; \
+      install -D "$EXEC/$f" "/out_src/$(echo "$f" | sed -E 's#.*external/game_arena[+~]/##')" || exit 1; \
     done \
  && test -f /out_src/MODULE.bazel \
  && $B shutdown
@@ -363,8 +367,11 @@ RUN ln -s /opt/arena/game_arena/tools/arena_tournament \
           /usr/local/bin/
 
 # The problem, as the workers clone it. Its .git is what matters; the tree
-# beside it is what `up` reads the config from.
+# beside it is what `up` reads the config from. A host's .bazelrc.local does
+# not come along: `up` in here reads it, and a path from the machine that
+# built the image is not a path in the deployment.
 COPY . /opt/arena/problem
+RUN rm -f /opt/arena/problem/.bazelrc.local
 WORKDIR /opt/arena/problem
 
 ARG PROBLEM_ID

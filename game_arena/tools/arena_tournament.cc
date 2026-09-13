@@ -1412,6 +1412,18 @@ int RunKit(const ArenaRunfiles &runfiles) {
     }
   }
 
+  // Priming the kit's cache needs bazel, and a deployed tournament image has
+  // none on purpose: every build it does happens in the sandbox image through
+  // the socket. `kit` there writes the kit (and, with --image, builds an image
+  // that does its own full build) rather than failing after the token is
+  // already minted.
+  bool prime = absl::GetFlag(FLAGS_prime_cache);
+  if (prime && process::ResolveExecutable("bazel").empty()) {
+    LOG(WARNING) << "no bazel on PATH; writing the kit without priming its "
+                    "build cache";
+    prime = false;
+  }
+
   const std::string server = absl::GetFlag(FLAGS_server);
   const std::string http = absl::GetFlag(FLAGS_http);
   const std::string registry = absl::GetFlag(FLAGS_registry).empty()
@@ -1491,7 +1503,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
   std::string local =
       "# Written by arena_tournament kit. This host's paths; not committed,\n"
       "# and not copied into an image of the kit.\n";
-  if (absl::GetFlag(FLAGS_prime_cache)) {
+  if (prime) {
     // Bounded: this lives inside someone's working directory, and a cache
     // that only grows is a surprise they find out about from `df`.
     absl::StrAppend(&local, "build --disk_cache=", cache.string(),
@@ -1540,7 +1552,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
         "participant only.\n");
   }
 
-  if (absl::GetFlag(FLAGS_prime_cache)) {
+  if (prime) {
     std::printf(
         "\nBuilding the kit once, into %s (the first time takes a while; "
         "--prime_cache=false skips it)...\n",

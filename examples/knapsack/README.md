@@ -107,3 +107,37 @@ solution to this problem *is* a standalone program — there is no harness to
 compile it into. That is the degenerate case of the harness field. The
 [connect4](../connect4) example shows the interesting one, where the harness
 owns a protocol and the submission is a single function.
+
+## Putting it on a server
+
+Off this machine, the problem is three docker images and a host with docker on
+it -- no bazel, no checkout:
+
+```sh
+scripts/new_problem.sh graded /srv/src/knapsack      # a repo of its own; workers clone repo.url
+cd /srv/src/knapsack                                 # sandbox.image -> a tag you can push, committed
+bazel run //:sandbox_image -- --push                 # what every submission is built and graded in
+bazel run //:tournament -- --image=registry.example.com/knapsack-arena:1 --push
+
+# on the arena host: docker, a pull of both images, and this
+docker run -d --name knapsack-arena --restart=unless-stopped \
+    -p 50051:50051 -p 8090:8090 \
+    -v /var/run/docker.sock:/var/run/docker.sock -v knapsack-state:/var/arena \
+    registry.example.com/knapsack-arena:1
+
+# one participant: a token, a reload of the registry, and their own image
+docker exec -it knapsack-arena arena_tournament kit --mint=bob \
+    --server=arena.example.com:50051 --http=arena.example.com:8090 \
+    --image=registry.example.com/kit-bob:1 --push
+```
+
+The grader and `cases/` are in the tournament image and in no kit -- the same
+split as locally, now enforced by what a participant can pull. Two things a
+graded problem should think about before it is on more than one machine: the
+score here is deterministic, but a problem whose metric is *time* must set
+`grade.require_machine_class` and start its workers with
+`ARENA_MACHINE_CLASS=<class>`, or the leaderboard measures the fleet rather
+than the submissions; and `grade.repeats` with `aggregate: MIN` is what turns
+a noisy timing into a number. [The full
+walkthrough](../README.md#deploying-it-on-another-host) covers extra workers,
+minting a token without a kit, revoking one, and upgrades.
