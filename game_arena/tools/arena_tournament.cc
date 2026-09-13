@@ -1121,9 +1121,8 @@ constexpr std::array<std::string_view, 7> kKitSurfaceDirs = {
 
 // Root files of the module itself: what MODULE.bazel needs to be usable as a
 // local_path_override, and the bazel it was written for.
-constexpr std::array<std::string_view, 4> kKitSurfaceFiles = {
-    "MODULE.bazel", ".bazelversion", "protobuf_python_dist_build.patch",
-    "protobuf_python_dist_bzl.patch"};
+constexpr std::array<std::string_view, 3> kKitSurfaceFiles = {
+    "MODULE.bazel", ".bazelversion", "protobuf_bzlmod_fixes.patch"};
 
 // A runfiles tree holds a package's sources (symlinks into the checkout) and,
 // beside them, anything built from it that something depends on -- arena_cli's
@@ -1191,15 +1190,14 @@ bool InstallArenaSurface(const ArenaRunfiles &runfiles,
       return false;
     }
   }
-  // The module's root package: the two patches MODULE.bazel names are labels,
+  // The module's root package: the patch MODULE.bazel names is a label,
   // so the package has to exist. The arena's own root BUILD is not copied --
   // it exports files this surface does not have.
   return WriteFile(
       arena / "BUILD",
-      "# The vendored arena's root package: the patches MODULE.bazel names.\n"
+      "# The vendored arena's root package: the patch MODULE.bazel names.\n"
       "exports_files([\n"
-      "    \"protobuf_python_dist_build.patch\",\n"
-      "    \"protobuf_python_dist_bzl.patch\",\n"
+      "    \"protobuf_bzlmod_fixes.patch\",\n"
       "])\n");
 }
 

@@ -6,7 +6,7 @@ module(
 )
 
 bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "rules_python", version = "1.6.3")
+bazel_dep(name = "rules_python", version = "1.9.0")
 bazel_dep(name = "rules_cc", version = "0.2.17")
 
 # game_arena/server:no_problem_code_test is an sh_test.
@@ -16,7 +16,7 @@ bazel_dep(name = "googletest", version = "1.17.0.bcr.1")
 # game_arena/sandbox/worker:build_log parses bazel output with RE2.
 bazel_dep(name = "re2", version = "2025-11-05.bcr.1")
 bazel_dep(name = "abseil-cpp", version = "20250814.1")
-bazel_dep(name = "protobuf", version = "32.1")
+bazel_dep(name = "protobuf", version = "33.0")
 bazel_dep(name = "grpc", version = "1.74.1")
 
 # Already in the graph through grpc and boost.asio; declared directly so the
@@ -35,17 +35,30 @@ bazel_dep(name = "boost.asio", version = "1.90.0.bcr.1")
 bazel_dep(name = "boost.beast", version = "1.90.0.bcr.1")
 bazel_dep(name = "boost.json", version = "1.90.0.bcr.1")
 
-# Workaround for https://github.com/protocolbuffers/protobuf/issues/22386:
-# @protobuf//python/dist loads @protobuf_pip_deps//:requirements.bzl, but that
-# repo is only created by a dev_dependency extension, so it is missing when
-# protobuf is not the root module. The patch drops the load (only used for
-# building protobuf's own wheels, which we don't do).
+# protobuf_bzlmod_fixes.patch works around two bzlmod problems in protobuf
+# 33.0; all hunks only touch machinery Bazel consumers cannot use anyway
+# (building protobuf's own wheels, the unsupported fast-C++-protos extension):
+#
+# - https://github.com/protocolbuffers/protobuf/issues/22386:
+#   @protobuf//python/dist loads @protobuf_pip_deps//:requirements.bzl, but
+#   that repo is only created by a dev_dependency extension, so it is missing
+#   when protobuf is not the root module. Dropped, along with the matching
+#   @system_python//:version.bzl load.
+# - https://github.com/protocolbuffers/protobuf/issues/24084: since 33.0 the
+#   @system_python repo (and the wheel-only @python-3.9.0 / @nuget_python_*
+#   header repos) come from a dev_dependency extension, but
+#   //python:protobuf_python -- the runtime of every py_proto_library --
+#   reaches targets that reference them through select()s, and deps() queries
+#   (//game_arena:kit_surface_deps) resolve every branch. Defining the repo in
+#   this MODULE.bazel does not help: bzlmod repo visibility is per-module, so
+#   @@protobuf+ cannot see the root module's repos (verified empirically). The
+#   patch drops the references instead.
+# - 33.0 also marks RepeatedPtrField(Arena*) deprecated while map_field.h
+#   still uses it, which our -Werror builds cannot include; wrapped in a
+#   diagnostic pragma. Fixed upstream in 34.1.
 single_version_override(
     module_name = "protobuf",
-    patches = [
-        "//:protobuf_python_dist_build.patch",
-        "//:protobuf_python_dist_bzl.patch",
-    ],
+    patches = ["//:protobuf_bzlmod_fixes.patch"],
     patch_strip = 1,
 )
 

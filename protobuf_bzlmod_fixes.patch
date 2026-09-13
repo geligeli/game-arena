@@ -1,0 +1,151 @@
+diff --git a/python/dist/BUILD.bazel b/python/dist/BUILD.bazel
+--- a/python/dist/BUILD.bazel
++++ b/python/dist/BUILD.bazel
+@@ -7,12 +7,11 @@
+ 
+ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+ load("@bazel_skylib//lib:selects.bzl", "selects")
+-load("@protobuf_pip_deps//:requirements.bzl", "requirement")
+ load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
+ load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+ load("@rules_python//python:packaging.bzl", "py_wheel")
+ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+-load("@system_python//:version.bzl", "SYSTEM_PYTHON_VERSION")
++SYSTEM_PYTHON_VERSION = "312"  # patched: rules_python >= 1.5 interpreter repos have no version.bzl
+ load("//:protobuf_version.bzl", "PROTOBUF_PYTHON_VERSION")
+ load(":dist.bzl", "py_dist", "py_dist_module")
+ load(":py_proto_library.bzl", "py_proto_library")
+@@ -304,7 +303,7 @@
+ sh_binary(
+     name = "setup_wrapper",
+     srcs = ["setup_wrapper.sh"],
+-    data = [requirement("setuptools")],
++    data = [],
+     visibility = ["//visibility:private"],
+ )
+ 
+diff --git a/python/dist/dist.bzl b/python/dist/dist.bzl
+--- a/python/dist/dist.bzl
++++ b/python/dist/dist.bzl
+@@ -1,7 +1,7 @@
+ """Rules to create python distribution files and properly name them"""
+ 
+ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+-load("@system_python//:version.bzl", "SYSTEM_PYTHON_VERSION")
++SYSTEM_PYTHON_VERSION = "312"  # patched: rules_python >= 1.5 interpreter repos have no version.bzl
+ 
+ def _get_suffix(limited_api, python_version, cpu):
+     """Computes an ABI version tag for an extension module per PEP 3149."""
+diff --git a/python/BUILD.bazel b/python/BUILD.bazel
+--- a/python/BUILD.bazel
++++ b/python/BUILD.bazel
+@@ -104,8 +104,6 @@
+ 
+ _message_target_compatible_with = {
+     "@platforms//os:windows": ["@platforms//:incompatible"],
+-    "@system_python//:none": ["@platforms//:incompatible"],
+-    "@system_python//:unsupported": ["@platforms//:incompatible"],
+     "//conditions:default": [],
+ }
+ 
+diff --git a/python/build_targets.bzl b/python/build_targets.bzl
+--- a/python/build_targets.bzl
++++ b/python/build_targets.bzl
+@@ -100,7 +100,6 @@
+         ],
+         deps = select({
+             "//conditions:default": [],
+-            ":use_fast_cpp_protos": ["@system_python//:python_headers"],
+         }),
+     )
+ 
+@@ -153,7 +152,6 @@
+             "@abseil-cpp//absl/strings",
+         ] + select({
+             "//conditions:default": [],
+-            ":use_fast_cpp_protos": ["@system_python//:python_headers"],
+         }),
+     )
+ 
+@@ -478,7 +476,6 @@
+             "//src/google/protobuf/io",
+             "@abseil-cpp//absl/log:absl_check",
+             "@abseil-cpp//absl/status",
+-            "@system_python//:python_headers",
+         ],
+     )
+ 
+@@ -492,7 +489,6 @@
+         env = {"PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python"},
+         failure_list = "//conformance:failure_list_python.txt",
+         target_compatible_with = select({
+-            "@system_python//:none": ["@platforms//:incompatible"],
+             ":use_fast_cpp_protos": ["@platforms//:incompatible"],
+             "//conditions:default": [],
+         }),
+@@ -507,7 +503,6 @@
+         env = {"PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "cpp"},
+         failure_list = "//conformance:failure_list_python_cpp.txt",
+         target_compatible_with = select({
+-            "@system_python//:none": ["@platforms//:incompatible"],
+             ":use_fast_cpp_protos": [],
+             "//conditions:default": ["@platforms//:incompatible"],
+         }),
+@@ -521,7 +516,6 @@
+         env = {"PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "upb"},
+         failure_list = "//conformance:failure_list_python_upb.txt",
+         target_compatible_with = select({
+-            "@system_python//:none": ["@platforms//:incompatible"],
+             ":use_fast_cpp_protos": ["@platforms//:incompatible"],
+             "//conditions:default": [],
+         }),
+diff --git a/python/internal.bzl b/python/internal.bzl
+--- a/python/internal.bzl
++++ b/python/internal.bzl
+@@ -154,7 +154,6 @@
+             "@com_google_absl_py//absl/testing:parameterized",
+         ],
+         target_compatible_with = select({
+-            "@system_python//:supported": [],
+             "//conditions:default": ["@platforms//:incompatible"],
+         }),
+         **kwargs
+diff --git a/python/py_extension.bzl b/python/py_extension.bzl
+--- a/python/py_extension.bzl
++++ b/python/py_extension.bzl
+@@ -27,14 +27,8 @@
+         }),
+         linkshared = True,
+         linkstatic = True,
+-        deps = deps + select({
+-            "//python:limited_api_3.9": ["@python-3.9.0//:python_headers"],
+-            "//python:full_api_3.9_win32": ["@nuget_python_i686_3.9.0//:python_full_api"],
+-            "//python:full_api_3.9_win64": ["@nuget_python_x86-64_3.9.0//:python_full_api"],
+-            "//python:limited_api_3.10_win32": ["@nuget_python_i686_3.10.0//:python_limited_api"],
+-            "//python:limited_api_3.10_win64": ["@nuget_python_x86-64_3.10.0//:python_limited_api"],
+-            "//conditions:default": ["@system_python//:python_headers"],
+-        }),
++        # # patched: protobuf marks its system-python extension dev_dependency, so @system_python (and the wheel-only header repos) do not exist for consumer modules; these branches are only used when building protobuf's own wheels,
++        deps = deps,
+         **kwargs
+     )
+ 
+diff --git a/src/google/protobuf/map_field.h b/src/google/protobuf/map_field.h
+--- a/src/google/protobuf/map_field.h
++++ b/src/google/protobuf/map_field.h
+@@ -412,8 +412,15 @@
+ 
+   class ReflectionPayload {
+    public:
++// patched: protobuf 33.0 deprecates RepeatedPtrField(Arena*) but still uses it
++// here; wrap its own use so consumers building with -Werror (and without -w on
++// external headers) can include this header. Fixed upstream in 34.1 by
++// switching the member to Arena::Create.
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+     ReflectionPayload(Arena* arena, const Message* prototype)
+         : repeated_field_(arena), prototype_(prototype) {}
++#pragma GCC diagnostic pop
+ 
+     RepeatedPtrField<Message>& repeated_field() { return repeated_field_; }
+ 

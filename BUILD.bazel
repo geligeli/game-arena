@@ -14,8 +14,7 @@ filegroup(
     srcs = [
         ".bazelversion",
         "MODULE.bazel",
-        "protobuf_python_dist_build.patch",
-        "protobuf_python_dist_bzl.patch",
+        "protobuf_bzlmod_fixes.patch",
         "//game_arena/cli:kit_surface_files",
         "//game_arena/client:kit_surface_files",
         "//game_arena/common/kv_options:kit_surface_files",
