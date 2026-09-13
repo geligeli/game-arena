@@ -103,11 +103,14 @@ tree, and a worker clones `repo.url`, so scaffold one first):
 
 ```sh
 scripts/new_problem.sh match /tmp/c4 --id=c4 && cd /tmp/c4
-bazel run //:tournament -- --no_container          # foreground; Ctrl-C stops it
-bazel run //:kit -- --out=/tmp/kit --mint=alice --check
-cd /tmp/kit && . ./arena.env && \
-  bazel run //:arena_cli -- submit --name=ref --file=bots/reference/strategy.h --wait
+bazel run //:play -- --no_container                # tournament + your kit + a shell in it
+bazel run //:arena_cli -- submit --name=ref --file=bots/reference/strategy.h --wait
+exit                                               # stops the tournament
 ```
+
+Or the pieces `play` runs: `bazel run //:tournament -- --no_container` in one
+shell, `bazel run //:kit -- --out=/tmp/kit --mint=alice --check` in another,
+then `. ./arena.env` in the kit.
 
 - Sanitizer / tuning configs in `.bazelrc` (each gets its own output dir):
   `--config=asan`, `--config=tsan`, `--config=ubsan`, `--config=msan`,

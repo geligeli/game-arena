@@ -2,7 +2,8 @@
 // a kit to enter it.
 /*
 bazel run //:tournament -- [--no_container] [--workers=2]
-bazel run //:kit -- --out=/srv/kits/alice --server=arena:50051 --mint=alice
+bazel run //:play -- [--no_container]        # all of it, and a shell in your
+kit bazel run //:kit -- --out=/srv/kits/alice --server=arena:50051 --mint=alice
 bazel run //:kit -- --mint=bob --server=arena:50051 --image=registry/kit-bob
 bazel run //:tournament -- --image=registry/c4-arena --push
 bazel run //:sandbox_image -- [--push]
@@ -29,6 +30,9 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 //           :config_test runs.
 //   image   the problem's sandbox image: toolchain + vendored deps, so builds
 //           run with no network.
+//   play    up, in the background with its logs in a file, a kit minted for
+//           you, and a shell in it with the arena's address and your token in
+//           the environment. Leaving the shell stops everything. The dev loop.
 //
 // Inside the tournament image the tool runs installed, not under bazel:
 // ARENA_HOME points at the arena's files laid out as in its tree, and
@@ -128,6 +132,10 @@ ABSL_FLAG(std::string, image, "",
           "up: instead of running, build a docker image of the tournament "
           "with this tag: the coordinator, the workers and the problem, for "
           "any host with a docker socket. --push pushes either");
+
+// play
+ABSL_FLAG(std::string, shell, "",
+          "play: the shell to drop into the kit. Default: $SHELL, else bash");
 
 // image
 ABSL_FLAG(std::string, tag, "",
@@ -1270,11 +1278,216 @@ auto RunImage(const ArenaRunfiles &runfiles) -> int {
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// play
+// ---------------------------------------------------------------------------
+
+// The value of KEY=... in a shell-style env file (`export KEY=value` lines).
+auto EnvFileValue(const std::filesystem::path &file,
+                  std::string_view key) -> std::string {
+  const auto text = ReadFile(file);
+  if (!text) {
+    return "";
+  }
+  for (std::string_view line : absl::StrSplit(*text, '\n')) {
+    line = absl::StripPrefix(line, "export ");
+    if (absl::ConsumePrefix(&line, key) && absl::ConsumePrefix(&line, "=")) {
+      return std::string(absl::StripAsciiWhitespace(line));
+    }
+  }
+  return "";
+}
+
+auto TailOf(const std::filesystem::path &file, int lines) -> std::string {
+  const auto text = ReadFile(file);
+  if (!text) {
+    return "";
+  }
+  std::size_t pos = text->size();
+  for (int i = 0; i <= lines && pos != std::string::npos && pos > 0; ++i) {
+    pos = text->rfind('\n', pos - 1);
+  }
+  return text->substr(pos == std::string::npos ? 0 : pos + 1);
+}
+
+// `up` and `kit` are run as this binary's own subprocesses rather than called:
+// they already have the flags, the checks and the messages, and the shell is
+// the only thing new here.
+auto RunPlay() -> int {
+  std::filesystem::path config_path;
+  const auto config = LoadConfig(&config_path);
+  if (!config) {
+    return 1;
+  }
+  std::error_code ec;
+  const std::filesystem::path self =
+      std::filesystem::read_symlink("/proc/self/exe", ec);
+  if (ec) {
+    LOG(ERROR) << "cannot find myself: " << ec.message();
+    return 1;
+  }
+  const std::filesystem::path data_dir =
+      absl::GetFlag(FLAGS_data_dir).empty()
+          ? StateDir(config->problem_id())
+          : Resolve(absl::GetFlag(FLAGS_data_dir));
+  const std::filesystem::path clients =
+      absl::GetFlag(FLAGS_clients).empty()
+          ? data_dir / "clients.textproto"
+          : Resolve(absl::GetFlag(FLAGS_clients));
+  const std::string client_id = absl::GetFlag(FLAGS_mint).empty()
+                                    ? EnvOr("USER", "player")
+                                    : absl::GetFlag(FLAGS_mint);
+  const std::filesystem::path kit_dir = absl::GetFlag(FLAGS_out).empty()
+                                            ? data_dir / "kits" / client_id
+                                            : Resolve(absl::GetFlag(FLAGS_out));
+  const int grpc_port = absl::GetFlag(FLAGS_grpc_port);
+  const int http_port = absl::GetFlag(FLAGS_http_port);
+
+  // Your token, if a kit of yours is here already: minting again would be
+  // refused (one client id, one entry) and would orphan the old one anyway.
+  std::string token = EnvFileValue(kit_dir / "arena.env", "ARENA_TOKEN");
+  if (token.empty()) {
+    const auto registry = ReadFile(clients);
+    if (registry && registry->find(absl::StrCat("client_id: \"", client_id,
+                                                "\"")) != std::string::npos) {
+      LOG(ERROR) << "'" << client_id << "' is in " << clients
+                 << " but there is no kit at " << kit_dir
+                 << " holding its token. Pass --mint=<another id>, or remove "
+                    "that client's block from the registry";
+      return 1;
+    }
+  }
+
+  // The tournament, in the background, its logs in a file: a shell over a
+  // stream of worker logs is no shell.
+  const std::filesystem::path log = data_dir / "logs" / "tournament.log";
+  std::filesystem::create_directories(log.parent_path(), ec);
+  std::vector<std::string> up_args = {
+      "up",
+      "--problem_config=" + config_path.string(),
+      "--data_dir=" + data_dir.string(),
+      "--clients=" + clients.string(),
+      absl::StrCat("--grpc_port=", grpc_port),
+      absl::StrCat("--http_port=", http_port),
+      absl::StrCat("--workers=", absl::GetFlag(FLAGS_workers)),
+  };
+  if (absl::GetFlag(FLAGS_no_container)) {
+    up_args.push_back("--no_container");
+  }
+  process::ChildOptions up_options;
+  up_options.stdout_path = log;
+  up_options.stderr_path = log;
+  auto up = process::Child::Start(self.string(), up_args, up_options);
+  if (!up) {
+    LOG(ERROR) << "cannot start " << self;
+    return 1;
+  }
+  std::printf("Starting the tournament (log: %s)...\n", log.c_str());
+  std::fflush(stdout);
+  while (!WaitForPort(grpc_port, std::chrono::seconds(1))) {
+    if (const auto code = up->Poll()) {
+      LOG(ERROR) << "the tournament did not start (exit " << *code << "):\n"
+                 << TailOf(log, 15);
+      return 1;
+    }
+  }
+
+  // Your kit, rewritten each time so it has the current kit_files.
+  std::vector<std::string> kit_args = {
+      "kit",
+      "--problem_config=" + config_path.string(),
+      "--out=" + kit_dir.string(),
+      "--clients=" + clients.string(),
+      absl::StrCat("--server=localhost:", grpc_port),
+      absl::StrCat("--http=localhost:", http_port),
+      "--force",
+      token.empty() ? "--mint=" + client_id : "--token=" + token,
+  };
+  if (!absl::GetFlag(FLAGS_arena_override).empty()) {
+    kit_args.push_back("--arena_override=" +
+                       absl::GetFlag(FLAGS_arena_override));
+  }
+  if (RunInherit(self.string(), kit_args, WorkspaceRoot()) != 0) {
+    up->Stop(std::chrono::seconds(10));
+    return 1;
+  }
+  if (token.empty()) {
+    token = EnvFileValue(kit_dir / "arena.env", "ARENA_TOKEN");
+  }
+
+  struct sigaction action {};
+  action.sa_handler = OnStopSignal;
+  ::sigaction(SIGINT, &action, nullptr);
+  ::sigaction(SIGTERM, &action, nullptr);
+
+  std::printf(
+      "\n"
+      "You are '%s' in your kit at %s.\n"
+      "  leaderboard   http://localhost:%d/\n"
+      "  ARENA_SERVER and ARENA_TOKEN are set; see ARENA.md. For example:\n"
+      "    bazel run //:arena_cli -- rules\n"
+      "    bazel run //:arena_cli -- submit --name=try --file=<path> --wait\n"
+      "    bazel run //:arena_cli -- leaderboard\n"
+      "  tournament log: %s\n"
+      "Leaving this shell stops the tournament.\n\n",
+      client_id.c_str(), kit_dir.c_str(), http_port, log.c_str());
+  std::fflush(stdout);
+
+  const std::string shell = absl::GetFlag(FLAGS_shell).empty()
+                                ? EnvOr("SHELL", "bash")
+                                : absl::GetFlag(FLAGS_shell);
+  process::ChildOptions shell_options;
+  shell_options.cwd = kit_dir;
+  shell_options.extra_env = {
+      absl::StrCat("ARENA_SERVER=localhost:", grpc_port),
+      "ARENA_TOKEN=" + token,
+      "ARENA_MCP_AUTHOR=" + client_id,
+      "ARENA_KIT=" + kit_dir.string(),
+  };
+  auto sh = process::Child::Start(shell, {}, shell_options);
+  if (!sh) {
+    LOG(ERROR) << "cannot start " << shell;
+    up->Stop(std::chrono::seconds(10));
+    return 1;
+  }
+  // The shell gets the terminal: Ctrl-C then reaches its jobs, not us. A
+  // background process group writing to the terminal is fine; changing its
+  // owner from one is not, hence SIGTTOU ignored for the hand-back below.
+  const bool tty = ::isatty(STDIN_FILENO) != 0;
+  if (tty) {
+    ::signal(SIGTTOU, SIG_IGN);
+    ::tcsetpgrp(STDIN_FILENO, sh->pid());
+  }
+
+  bool tournament_died = false;
+  while (!g_stop_requested && !sh->Poll()) {
+    if (const auto code = up->Poll(); code && !tournament_died) {
+      tournament_died = true;
+      std::fprintf(stderr,
+                   "\n[arena] the tournament exited with %d; see %s. "
+                   "`exit` to leave.\n",
+                   *code, log.c_str());
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+  if (g_stop_requested) {
+    sh->Stop(std::chrono::seconds(2));
+  }
+  if (tty) {
+    ::tcsetpgrp(STDIN_FILENO, ::getpgrp());
+  }
+  std::printf("Stopping the tournament...\n");
+  std::fflush(stdout);
+  const int status = up->Stop(std::chrono::seconds(20));
+  return tournament_died ? 1 : (status == 0 ? 0 : 1);
+}
+
 void PrintUsage() {
   std::fprintf(stderr,
-               "usage: arena_tournament <up|kit|check|image> "
+               "usage: arena_tournament <up|kit|check|image|play> "
                "--problem_config=<path> [flags]\n"
                "  up      run a coordinator and local workers (--image)\n"
+               "  play    up in the background, a kit for you, a shell in it\n"
                "  kit     write a participant's workspace (--out, --mint, "
                "--image)\n"
                "  check   validate the config\n"
@@ -1305,6 +1518,9 @@ auto main(int argc, char **argv) -> int {
   }
   if (command == "image") {
     return RunImage(runfiles);
+  }
+  if (command == "play") {
+    return RunPlay();
   }
   PrintUsage();
   return 2;

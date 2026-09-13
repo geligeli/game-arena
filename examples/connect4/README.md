@@ -115,6 +115,7 @@ genrule, and a genrule runs arbitrary code at build time.
 ## Running the tournament, and what a participant gets
 
 ```sh
+bazel run //:play -- --no_container              # all of the below, and a shell in your kit
 bazel run //:tournament -- --no_container        # coordinator + a local worker
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
 ```

@@ -101,6 +101,7 @@ That defines everything the two examples run:
 
 ```sh
 bazel test //...                                     # the rules, and the config
+bazel run //:play -- --no_container                  # all of it, and a shell in your kit
 bazel run //:tournament -- --no_container            # a coordinator + a local worker
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
 bazel run //:kit -- --mint=bob --server=$(hostname):50051 --image=REG/kit-bob --push

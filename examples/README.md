@@ -78,6 +78,7 @@ registry), `:config_test`, and three runnable targets:
 
 | | |
 | --- | --- |
+| `bazel run //:play -- [--no_container]` | the tournament in the background, a kit minted for you, and a shell in it; leaving the shell stops everything |
 | `bazel run //:tournament -- [--no_container]` | a coordinator and a local worker, on this checkout |
 | `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, `//:arena_cli`, `//:mcp_server`, a README from the config, and a token |
 | `bazel run //:kit -- --mint=bob --server=HOST:PORT --image=TAG` | the same as a docker image: toolchain, kit, everything built; `docker run -it TAG` is a ready environment |

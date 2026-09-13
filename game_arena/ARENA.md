@@ -41,6 +41,7 @@ From a problem repository that calls `arena_problem()` (see
 `game_arena/rules/problem.bzl` and the examples), the whole thing is:
 
 ```sh
+bazel run //:play                            # the tournament, a kit for you, a shell in it
 bazel run //:tournament                      # a coordinator and a local worker
 bazel run //:tournament -- --no_container    # the same on a host without docker
 bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
@@ -48,6 +49,11 @@ bazel run //:kit -- --mint=bob --image=TAG   # the same, as a docker image
 bazel run //:sandbox_image                   # the image sandbox.image names
 bazel run //:tournament -- --image=TAG       # the tournament, as a docker image
 ```
+
+`play` is the dev loop: `tournament` in the background with its log in
+`~/.arena/<problem_id>/logs/tournament.log`, a kit minted for `$USER` (the
+token is reused on the next run), and a shell in that kit with
+`ARENA_SERVER` and `ARENA_TOKEN` set; leaving the shell stops everything.
 
 `tournament` writes the effective config and all state under
 `~/.arena/<problem_id>` (`$ARENA_STATE_DIR` to move it), starts

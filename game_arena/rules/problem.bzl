@@ -26,6 +26,10 @@ That call defines, in the calling package:
                    runs sandboxed. `--image=TAG` builds the same as a docker
                    image, toolchain included and everything built, to
                    `docker run` wherever they work
+  :play            `bazel run //:play -- [--no_container]` -- the tournament in
+                   the background, a kit minted for you, and a shell in it with
+                   ARENA_SERVER and ARENA_TOKEN set. Leaving the shell stops
+                   everything. The dev loop
   :sandbox_image   `bazel run //:sandbox_image` -- the problem's offline sandbox
                    image, from sandbox.image in the config
   :<name>          a filegroup of every binary a tournament needs, so
@@ -126,6 +130,14 @@ def arena_problem(name, config, registry = None, kit_files = [], visibility = No
         srcs = [run],
         data = base_data + kit_files,
         args = base_args + ["kit", config_arg],
+        env = kit_env,
+        visibility = visibility,
+    )
+    sh_binary(
+        name = "play",
+        srcs = [run],
+        data = base_data + kit_files,
+        args = base_args + ["play", config_arg],
         env = kit_env,
         visibility = visibility,
     )
