@@ -1,112 +1,56 @@
 #include "game_arena/standings/http_leaderboard.h"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
-
-#include <algorithm>
-#include <cstdio>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/json/array.hpp>
+#include <boost/json/object.hpp>
+#include <boost/json/parse.hpp>
+#include <boost/json/serialize.hpp>
+#include <boost/json/value.hpp>
+#include <chrono>
 #include <optional>
 #include <sstream>
-#include <vector>
+#include <string>
+#include <string_view>
+#include <utility>
 
 #include "absl/log/log.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_replace.h"
 
 namespace tournament_broker {
 
 using tournament_arena::Standing;
 
+namespace beast = boost::beast;
+namespace http = beast::http;
+namespace json = boost::json;
+namespace net = boost::asio;
+using tcp = net::ip::tcp;
+
 namespace {
 
-// A client that connects and then goes silent must not wedge the single
-// accept/serve thread: bound both directions of every accepted connection.
-constexpr int kClientTimeoutSeconds = 5;
+// A client that connects and then goes silent must not wedge the single serve
+// coroutine, which takes one connection at a time: bound every operation on it.
+constexpr auto kClientTimeout = std::chrono::seconds(5);
 
-void SetSocketTimeouts(int fd) {
-  timeval tv{.tv_sec = kClientTimeoutSeconds, .tv_usec = 0};
-  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-}
+// Error codes come back in the completion tuple instead of as exceptions.
+constexpr auto kAsTuple = net::as_tuple(net::use_awaitable);
 
-auto HtmlEscape(const std::string &s) -> std::string {
-  std::string out;
-  out.reserve(s.size());
-  for (const char c : s) {
-    switch (c) {
-      case '<':
-        out += "&lt;";
-        break;
-      case '>':
-        out += "&gt;";
-        break;
-      case '&':
-        out += "&amp;";
-        break;
-      case '"':
-        out += "&quot;";
-        break;
-      default:
-        out += c;
-    }
-  }
-  return out;
-}
-
-auto JsonEscape(const std::string &s) -> std::string {
-  std::string out;
-  out.reserve(s.size());
-  for (const char c : s) {
-    switch (c) {
-      case '"':
-        out += "\\\"";
-        break;
-      case '\\':
-        out += "\\\\";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\r':
-        out += "\\r";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
-      default:
-        out += c;
-    }
-  }
-  return out;
-}
-
-struct LeaderboardRow {
-  std::string game;
-  std::string player;
-  proto::Rating rating;
-};
-
-void WriteAll(int fd, const std::string &data) {
-  size_t sent = 0;
-  while (sent < data.size()) {
-    const ssize_t n = send(fd, data.data() + sent, data.size() - sent, 0);
-    if (n <= 0) {
-      return;
-    }
-    sent += static_cast<size_t>(n);
-  }
-}
-
-void Respond(int fd, int status, const std::string &status_text,
-             const std::string &content_type, const std::string &body) {
-  std::ostringstream head;
-  head << "HTTP/1.1 " << status << ' ' << status_text << "\r\n"
-       << "Content-Type: " << content_type << "\r\n"
-       << "Content-Length: " << body.size() << "\r\n"
-       << "Connection: close\r\n\r\n";
-  WriteAll(fd, head.str());
-  WriteAll(fd, body);
+// One pass, so the order of these pairs does not matter: StrReplaceAll never
+// rescans what it just substituted, which is what makes escaping '&' safe
+// alongside the entities that contain one.
+std::string HtmlEscape(std::string_view s) {
+  return absl::StrReplaceAll(s, {{"&", "&amp;"},
+                                 {"<", "&lt;"},
+                                 {">", "&gt;"},
+                                 {"\"", "&quot;"},
+                                 {"'", "&#39;"}});
 }
 
 }  // namespace
@@ -123,109 +67,114 @@ HttpLeaderboard::HttpLeaderboard(
 
 HttpLeaderboard::~HttpLeaderboard() { Stop(); }
 
-auto HttpLeaderboard::Start() -> bool {
-  const int fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) {
-    LOG(ERROR) << "HTTP leaderboard: socket() failed";
+bool HttpLeaderboard::Start() {
+  const tcp::endpoint endpoint(tcp::v4(), static_cast<unsigned short>(port_));
+  beast::error_code ec;
+  acceptor_.open(endpoint.protocol(), ec);
+  if (!ec) acceptor_.set_option(net::socket_base::reuse_address(true), ec);
+  if (!ec) acceptor_.bind(endpoint, ec);
+  if (!ec) acceptor_.listen(net::socket_base::max_listen_connections, ec);
+  if (ec) {
+    LOG(ERROR) << "HTTP leaderboard: cannot bind port " << port_ << ": "
+               << ec.message();
+    // open() may well have succeeded; leaving the acceptor open would make
+    // bound_port() answer 0 for a server that never started.
+    beast::error_code ignored;
+    acceptor_.close(ignored);
     return false;
   }
-  const int one = 1;
-  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  addr.sin_port = htons(static_cast<uint16_t>(port_));
-  if (bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0 ||
-      listen(fd, 16) < 0) {
-    LOG(ERROR) << "HTTP leaderboard: cannot bind port " << port_;
-    close(fd);
-    return false;
-  }
-  // Published before the serve thread starts and cleared only after it joins.
-  listen_fd_.store(fd);
-  thread_ = std::thread(&HttpLeaderboard::ServeLoop, this);
+  net::co_spawn(ioc_, Serve(), net::detached);
+  thread_ = std::thread([this] { ioc_.run(); });
   return true;
 }
 
-auto HttpLeaderboard::bound_port() const -> int {
-  const int fd = listen_fd_.load();
-  if (fd < 0) {
-    return -1;
-  }
-  sockaddr_in addr{};
-  socklen_t len = sizeof(addr);
-  if (getsockname(fd, reinterpret_cast<sockaddr *>(&addr), &len) < 0) {
-    return -1;
-  }
-  return ntohs(addr.sin_port);
+int HttpLeaderboard::bound_port() const {
+  beast::error_code ec;
+  const tcp::endpoint endpoint = acceptor_.local_endpoint(ec);
+  return ec ? -1 : endpoint.port();
 }
 
 void HttpLeaderboard::Stop() {
-  stop_ = true;
-  const int fd = listen_fd_.load();
-  if (fd >= 0) {
-    // Wake accept() without closing yet: the serve thread may still be using
-    // the descriptor, and a closed fd number can be handed straight back out
-    // to another thread's socket().
-    shutdown(fd, SHUT_RDWR);
+  if (!thread_.joinable()) {
+    return;
   }
-  if (thread_.joinable()) {
-    thread_.join();
-  }
-  if (listen_fd_.exchange(-1) >= 0) {
-    close(fd);
-  }
+  // Closing the acceptor here would race the coroutine sitting in
+  // async_accept; posting it runs the close on the io thread instead, where
+  // the pending accept then completes with an error. A connection already
+  // being served finishes first, bounded by kClientTimeout.
+  net::post(ioc_, [this] {
+    beast::error_code ignored;
+    acceptor_.close(ignored);
+  });
+  thread_.join();
 }
 
-void HttpLeaderboard::ServeLoop() {
-  // Stable for the thread's whole life: Stop() joins before clearing it.
-  const int listen_fd = listen_fd_.load();
-  while (!stop_) {
-    const int fd = accept(listen_fd, nullptr, nullptr);
-    if (fd < 0) {
-      if (!stop_) {
-        LOG(ERROR) << "HTTP leaderboard: accept() failed";
-      }
-      return;
+net::awaitable<void> HttpLeaderboard::Serve() {
+  for (;;) {
+    auto [accept_ec, socket] = co_await acceptor_.async_accept(kAsTuple);
+    if (accept_ec) {
+      co_return;  // Stop() closed the acceptor.
     }
-    SetSocketTimeouts(fd);
-    HandleConnection(fd);
-    close(fd);
+    beast::tcp_stream stream(std::move(socket));
+    stream.expires_after(kClientTimeout);
+
+    beast::flat_buffer buffer;
+    http::request<http::string_body> request;
+    [[maybe_unused]] auto [read_ec, read_bytes] =
+        co_await http::async_read(stream, buffer, request, kAsTuple);
+    if (read_ec) {
+      continue;
+    }
+
+    http::response<http::string_body> response;
+    response.version(request.version());
+    response.keep_alive(false);
+    const auto target = request.target();
+    if (request.method() != http::verb::get) {
+      response.result(http::status::method_not_allowed);
+      response.set(http::field::content_type, "text/plain");
+      response.body() = "GET only\n";
+    } else if (auto routed = Route({target.data(), target.size()})) {
+      response.result(http::status::ok);
+      response.set(http::field::content_type, routed->first);
+      response.body() = std::move(routed->second);
+    } else {
+      response.result(http::status::not_found);
+      response.set(http::field::content_type, "text/plain");
+      response.body() = "not found\n";
+    }
+    response.prepare_payload();
+
+    [[maybe_unused]] auto [write_ec, write_bytes] =
+        co_await http::async_write(stream, response, kAsTuple);
+    beast::error_code ignored;
+    stream.socket().shutdown(tcp::socket::shutdown_send, ignored);
   }
 }
 
-void HttpLeaderboard::HandleConnection(int fd) {
-  char buffer[4096];
-  const ssize_t n = recv(fd, buffer, sizeof(buffer) - 1, 0);
-  if (n <= 0) {
-    return;
-  }
-  buffer[n] = '\0';
-  std::string method, path;
-  std::istringstream request(buffer);
-  request >> method >> path;
-  if (method != "GET") {
-    Respond(fd, 405, "Method Not Allowed", "text/plain", "GET only\n");
-    return;
-  }
+std::optional<std::pair<std::string, std::string>> HttpLeaderboard::Route(
+    std::string_view target) const {
+  constexpr std::string_view kHtml = "text/html; charset=utf-8";
+  constexpr std::string_view kJson = "application/json";
   // The standings and candidate store come from the arena. A standalone broker
   // has neither, and 404 is the honest answer there rather than an empty table
   // that looks like nobody has scored yet.
-  const bool has_arena = standings_ != nullptr;
-  if ((path == "/" || path == "/index.html") && has_arena) {
-    Respond(fd, 200, "OK", "text/html; charset=utf-8", RenderLeaderboardHtml());
-  } else if (path == "/api/leaderboard" && has_arena) {
-    Respond(fd, 200, "OK", "application/json", RenderLeaderboardJson());
-  } else if (path == "/api/games") {
-    Respond(fd, 200, "OK", "application/json", RenderGamesJson());
-  } else if (path == "/api/candidates" && candidates_ != nullptr) {
-    Respond(fd, 200, "OK", "application/json", RenderCandidatesJson());
-  } else {
-    Respond(fd, 404, "Not Found", "text/plain", "not found\n");
+  if ((target == "/" || target == "/index.html") && standings_ != nullptr) {
+    return std::pair(std::string(kHtml), RenderLeaderboardHtml());
   }
+  if (target == "/api/leaderboard" && standings_ != nullptr) {
+    return std::pair(std::string(kJson), RenderLeaderboardJson());
+  }
+  if (target == "/api/games") {
+    return std::pair(std::string(kJson), RenderGamesJson());
+  }
+  if (target == "/api/candidates" && candidates_ != nullptr) {
+    return std::pair(std::string(kJson), RenderCandidatesJson());
+  }
+  return std::nullopt;
 }
 
-auto HttpLeaderboard::RenderLeaderboardHtml() const -> std::string {
+std::string HttpLeaderboard::RenderLeaderboardHtml() const {
   const std::string title =
       problem_name_.empty() ? "Leaderboard" : problem_name_;
   const std::string score = standings_->score_label();
@@ -264,12 +213,9 @@ auto HttpLeaderboard::RenderLeaderboardHtml() const -> std::string {
         candidate.has_value() ? candidate->display_name() : row.candidate_id;
     const std::string author =
         candidate.has_value() ? candidate->author() : std::string("-");
-    char score_text[32];
-    std::snprintf(score_text, sizeof(score_text), graded ? "%.3f" : "%.1f",
-                  row.score);
     html << "<tr><td>" << rank++ << "</td><td class=\"l\">" << HtmlEscape(name)
          << "</td><td class=\"l\">" << HtmlEscape(author) << "</td><td>"
-         << score_text << "</td>";
+         << absl::StrFormat("%.*f", graded ? 3 : 1, row.score) << "</td>";
     if (graded) {
       html << "<td>" << row.runs << "</td><td class=\"d l\">"
            << HtmlEscape(row.machine_class.empty() ? "-" : row.machine_class)
@@ -286,78 +232,81 @@ auto HttpLeaderboard::RenderLeaderboardHtml() const -> std::string {
   return html.str();
 }
 
-auto HttpLeaderboard::RenderCandidatesJson() const -> std::string {
-  std::ostringstream json;
-  json << "[";
-  bool first = true;
+std::string HttpLeaderboard::RenderCandidatesJson() const {
+  json::array candidates;
   for (const auto &candidate : candidates_->List()) {
-    if (!first) json << ",";
-    first = false;
-    const tournament_arena::Standing row =
-        standings_ != nullptr ? standings_->Get(candidate.candidate_id())
-                              : tournament_arena::Standing{};
-    json << "{\"candidate_id\":\"" << JsonEscape(candidate.candidate_id())
-         << "\",\"display_name\":\"" << JsonEscape(candidate.display_name())
-         << "\",\"author\":\"" << JsonEscape(candidate.author())
-         << "\",\"game\":\"" << JsonEscape(candidate.game())
-         << "\",\"parent_id\":\"" << JsonEscape(candidate.parent_id())
-         << "\",\"status\":\""
-         << tournament_arena::proto::Candidate::Status_Name(candidate.status())
-         << "\",\"score\":" << row.score << ",\"wins\":" << row.wins
-         << ",\"draws\":" << row.draws << ",\"losses\":" << row.losses
-         << ",\"submitted_unix_ms\":" << candidate.submitted_unix_ms() << "}";
+    const Standing row = standings_ != nullptr
+                             ? standings_->Get(candidate.candidate_id())
+                             : Standing{};
+    candidates.push_back(json::object{
+        {"candidate_id", candidate.candidate_id()},
+        {"display_name", candidate.display_name()},
+        {"author", candidate.author()},
+        {"game", candidate.game()},
+        {"parent_id", candidate.parent_id()},
+        {"status", tournament_arena::proto::Candidate::Status_Name(
+                       candidate.status())},
+        {"score", row.score},
+        {"wins", row.wins},
+        {"draws", row.draws},
+        {"losses", row.losses},
+        {"submitted_unix_ms", candidate.submitted_unix_ms()},
+    });
   }
-  json << "]";
-  return json.str();
+  return json::serialize(candidates);
 }
 
-auto HttpLeaderboard::RenderLeaderboardJson() const -> std::string {
-  std::ostringstream json;
-  json << "{\"score_label\":\"" << JsonEscape(standings_->score_label())
-       << "\",\"rows\":[";
-  bool first = true;
+std::string HttpLeaderboard::RenderLeaderboardJson() const {
+  json::array rows;
   int rank = 1;
   for (const Standing &row : standings_->Rank(0)) {
     const auto candidate = candidates_ != nullptr
                                ? candidates_->Get(row.candidate_id)
                                : std::nullopt;
-    if (!first) json << ",";
-    first = false;
-    json << "{\"rank\":" << rank++ << ",\"player\":\""
-         << JsonEscape(row.candidate_id) << "\",\"candidate_id\":\""
-         << JsonEscape(row.candidate_id) << "\",\"display_name\":\""
-         << JsonEscape(candidate.has_value() ? candidate->display_name()
-                                             : row.candidate_id)
-         << "\",\"author\":\""
-         << JsonEscape(candidate.has_value() ? candidate->author() : "-")
-         << "\",\"score\":" << row.score << ",\"wins\":" << row.wins
-         << ",\"draws\":" << row.draws << ",\"losses\":" << row.losses
-         << ",\"runs\":" << row.runs << ",\"worker_id\":\""
-         << JsonEscape(row.worker_id) << "\",\"machine_class\":\""
-         << JsonEscape(row.machine_class) << "\",\"metrics\":{";
-    bool first_metric = true;
+    json::object metrics;
     for (const auto &[name, value] : row.metrics) {
-      if (!first_metric) json << ",";
-      first_metric = false;
-      json << "\"" << JsonEscape(name) << "\":" << value;
+      metrics[name] = value;
     }
-    json << "}}";
+    rows.push_back(json::object{
+        {"rank", rank++},
+        {"player", row.candidate_id},
+        {"candidate_id", row.candidate_id},
+        {"display_name", candidate.has_value() ? candidate->display_name()
+                                               : row.candidate_id},
+        {"author",
+         candidate.has_value() ? candidate->author() : std::string("-")},
+        {"score", row.score},
+        {"wins", row.wins},
+        {"draws", row.draws},
+        {"losses", row.losses},
+        {"runs", row.runs},
+        {"worker_id", row.worker_id},
+        {"machine_class", row.machine_class},
+        {"metrics", std::move(metrics)},
+    });
   }
-  json << "]}";
-  return json.str();
+  return json::serialize(json::object{
+      {"score_label", standings_->score_label()},
+      {"rows", std::move(rows)},
+  });
 }
 
-auto HttpLeaderboard::RenderGamesJson() const -> std::string {
-  std::ostringstream json;
-  json << "[";
-  bool first = true;
-  for (const auto &line : history_->RecentGames(100)) {
-    if (!first) json << ",";
-    first = false;
-    json << line;  // Already a JSON object.
+std::string HttpLeaderboard::RenderGamesJson() const {
+  json::array games;
+  for (const std::string &line : history_->RecentGames(100)) {
+    // Each index line is already a JSON object. Re-parsing rather than
+    // concatenating costs little at this size and means one unreadable line
+    // drops out on its own instead of corrupting the whole document.
+    boost::system::error_code ec;
+    json::value game = json::parse(line, ec);
+    if (ec) {
+      LOG(WARNING) << "HTTP leaderboard: skipping unparseable game index line: "
+                   << ec.message();
+      continue;
+    }
+    games.push_back(std::move(game));
   }
-  json << "]";
-  return json.str();
+  return json::serialize(games);
 }
 
 }  // namespace tournament_broker

@@ -1,7 +1,7 @@
 #ifndef GAME_ARENA_GAME_ARENA_STANDINGS_HTTP_LEADERBOARD_H
 #define GAME_ARENA_GAME_ARENA_STANDINGS_HTTP_LEADERBOARD_H
 
-// Minimal embedded HTTP server (GET only) exposing the leaderboard.
+// Embedded HTTP server (GET only) exposing the leaderboard.
 //
 // It renders whatever the problem scores by without knowing which that is: the
 // score column's heading comes from the standings, so a graded problem shows
@@ -11,16 +11,23 @@
 //   GET /api/leaderboard  same as JSON
 //   GET /api/games        recent games (JSON array, from the history index)
 //   GET /api/candidates   submitted strategies and their status (JSON array)
-// Hand-rolled over POSIX sockets: one accept thread, ~100 lines, no extra
-// dependency.
+//
+// Boost.Beast over Boost.Asio owns the socket, the request parser and the
+// response framing; one coroutine on one thread accepts and serves connections
+// in turn, which is all a status page polled every five seconds needs.
 //
 // Read-only on purpose. Submitting a candidate or scheduling a match goes
 // through the Arena gRPC service, so there is exactly one write path to
 // secure later.
 
-#include <atomic>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 
 #include "game_arena/standings/candidate_view.h"
 #include "game_arena/standings/game_history.h"
@@ -40,19 +47,26 @@ class HttpLeaderboard {
   ~HttpLeaderboard();
 
   // Starts the accept thread. Returns false when the port cannot be bound.
-  auto Start() -> bool;
+  bool Start();
   void Stop();
 
   // The actual bound port (after Start); useful when constructed with port 0.
-  auto bound_port() const -> int;
+  int bound_port() const;
 
  private:
-  void ServeLoop();
-  void HandleConnection(int fd);
-  auto RenderLeaderboardHtml() const -> std::string;
-  auto RenderLeaderboardJson() const -> std::string;
-  auto RenderGamesJson() const -> std::string;
-  auto RenderCandidatesJson() const -> std::string;
+  // Accepts and serves connections until Stop() closes the acceptor.
+  boost::asio::awaitable<void> Serve();
+
+  // The content type and body for a GET of |target|, or nullopt for 404.
+  // Routing returns strings rather than a response so that Beast's HTTP
+  // message types stay inside the .cc.
+  std::optional<std::pair<std::string, std::string>> Route(
+      std::string_view target) const;
+
+  std::string RenderLeaderboardHtml() const;
+  std::string RenderLeaderboardJson() const;
+  std::string RenderGamesJson() const;
+  std::string RenderCandidatesJson() const;
 
   const int port_;
   const GameHistory *history_;  // not owned
@@ -60,12 +74,11 @@ class HttpLeaderboard {
       *candidates_;                               // not owned, may be null
   const tournament_arena::Standings *standings_;  // not owned, may be null
   const std::string problem_name_;
-  // Atomic: Stop() runs on the caller's thread while ServeLoop() sits in
-  // accept(). Stop() only shuts the socket down to wake accept(); the close()
-  // happens after the serve thread is joined, so the descriptor can never be
-  // closed (and its number reused) while accept() still holds it.
-  std::atomic<int> listen_fd_{-1};
-  std::atomic<bool> stop_{false};
+  // Single-threaded: every operation on the acceptor and on accepted sockets
+  // runs on thread_. Stop() reaches it by posting the close, so nothing touches
+  // the acceptor from two threads at once.
+  boost::asio::io_context ioc_{1};
+  boost::asio::ip::tcp::acceptor acceptor_{ioc_};
   std::thread thread_;
 };
 

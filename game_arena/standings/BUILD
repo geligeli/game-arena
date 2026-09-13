@@ -87,6 +87,11 @@ cc_library(
         ":game_history",
         ":standings",
         "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/strings:str_format",
+        "@boost.asio",
+        "@boost.beast",
+        "@boost.json",
     ],
 )
 
@@ -95,6 +100,17 @@ cc_test(
     srcs = ["elo_store_test.cc"],
     deps = [
         ":elo_store",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "http_leaderboard_test",
+    srcs = ["http_leaderboard_test.cc"],
+    deps = [
+        ":http_leaderboard",
+        "@boost.asio",
+        "@boost.beast",
         "@googletest//:gtest_main",
     ],
 )
