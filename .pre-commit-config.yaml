@@ -21,10 +21,3 @@ repos:
       # it runs as a Bazel aspect over the whole graph (tools/cpp_format.sh
       # check|diff|fix, configured by cpp_format.yaml) and is far too slow to
       # put in front of every commit. Run it before sending a change up.
-
-      # - id: clang-tidy
-      #   name: Clang Tidy
-      #   entry: clang-tidy -p . "$@"' --
-      #   language: system
-      #   types: [c++]
-      #   exclude: \.inl$

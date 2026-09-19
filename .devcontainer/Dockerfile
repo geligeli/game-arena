@@ -21,23 +21,24 @@ RUN rm -f /etc/apt/apt.conf.d/docker-clean \
 
 # One apt layer, --no-install-recommends, lists and .debs in cache mounts.
 #
-# --no-install-recommends means anything the toolchain needs has to be named
-# here explicitly. The non-obvious entries:
-#   g++            not bazel's compiler any more (that is the hermetic-llvm
-#                  module in MODULE.bazel); kept for scripts and pip packages
-#                  that build native code outside bazel. It used to arrive
-#                  only as a *recommendation* of python3-pip (via
-#                  build-essential), which also pulled ~35MB of system python
-#                  headers that the hermetic rules_python toolchain makes
-#                  unnecessary.
+# No compiler: bazel's is the hermetic-llvm module in MODULE.bazel, and .bazelrc
+# sets BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN so it never looks for a host one. A g++
+# or clang here could only hide a build that is not hermetic. For the same
+# reason there is no clang-tidy: it depends on a whole clang-18, and linting is
+# cpp_format's job (tools/cpp_format.sh). What is left of LLVM is the two tools
+# that run outside bazel: clang-format for the pre-commit hook, and clangd,
+# which reads the hermetic toolchain's flags and headers out of the
+# compile_commands.json that `tools/cpp_format.sh compile_commands` writes.
+#
+# --no-install-recommends means anything the tooling needs has to be named here
+# explicitly. The non-obvious entries:
 #   less, patch,   git recommendations the tooling actually relies on: pagers,
 #   openssh-client bazel's patch fallback for single_version_override, and
-#                  git-over-SSH (.devcontainer/ssh_config).
-#   make           lost with build-essential; ~1MB, kept for convenience.
-#
-# clang-tidy is what --no-install-recommends pays for most: it pulls clang-18,
-# which only *recommends* llvm-18-dev, and that plus llvm-18 and libicu-dev is
-# ~490MB of build-an-LLVM-tool material that clang-tidy never needs to run.
+#                  git-over-SSH.
+#   python3        outside bazel only (the hermetic rules_python toolchain
+#                  covers the build): pre-commit's fix_guards hook,
+#                  scripts/new_problem.sh, and process_test, which spawns
+#                  /usr/bin/python3.
 #
 # The docker CLI is deliberately absent: the docker-outside-of-docker feature in
 # devcontainer.json installs it (plus buildx and compose), so installing
@@ -48,10 +49,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       clang-format \
-      clang-tidy \
       clangd \
       curl \
-      g++ \
       gdb \
       git \
       gnupg \
@@ -60,7 +59,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       linux-tools-common \
       linux-tools-generic \
       locales \
-      make \
       openssh-client \
       patch \
       python3 \

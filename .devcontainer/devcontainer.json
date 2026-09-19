@@ -1,5 +1,4 @@
 {
-    // "image": "takumi.city/jax-cpu-training",
     "build": {
         "dockerfile": "Dockerfile"
     },
@@ -27,12 +26,10 @@
     // Runs on the host before the container is created: a bind mount whose
     // source is missing gets created by docker as root, which the container's
     // ubuntu user could not then write to.
-    "initializeCommand": "mkdir -p /large_nfs/bazel-cache/disk /large_nfs/bazel-cache/repo",
     "mounts": [
         // Shared bazel disk + repository cache (see .bazelrc). Mounted at the
         // same path it has on the host, so the paths committed in .bazelrc
         // resolve identically inside and outside the container.
-        "source=/large_nfs/bazel-cache,target=/large_nfs/bazel-cache,type=bind",
         "source=${localEnv:HOME}/.cache,target=/home/ubuntu/.cache,type=bind",
         // Share the host's Claude Code credentials + settings with the container.
         "source=${localEnv:HOME}/.claude,target=/home/ubuntu/.claude,type=bind",
