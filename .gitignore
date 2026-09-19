@@ -4,6 +4,7 @@
 **/.nfs*
 **/bazel-**
 .cache
+.claude
 __pycache__
 compile_commands.json
 
