@@ -146,9 +146,9 @@ bazel run //:sandbox_image -- --push                                  # the tag 
 bazel run //:tournament -- --image=registry.example.com/connect4-arena:1 --push
 ```
 
-`sandbox_image` builds `sandbox.image` itself: the toolchain plus every
-external repository the problem resolves, vendored, so a worker builds
-submissions in it with no network at all. (`--tag=other:1` builds under a
+`sandbox_image` builds `sandbox.image` itself: every external repository
+the problem resolves, the C++ toolchain among them, vendored, so a worker
+builds submissions in it with no network at all. (`--tag=other:1` builds under a
 different name for a scratch run -- but what gets deployed has to match the
 config.)
 

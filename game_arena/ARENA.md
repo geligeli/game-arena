@@ -231,14 +231,18 @@ What is enforced above that, at submit time:
 - **A problem that lets patches touch BUILD files has given that last one up**,
   deliberately, and must rely on the sandbox instead.
 
-The image is still trusted — it carries bazel and the toolchain — and the
-network being closed means the image must carry the repo's external
-dependencies, since a module fetch will fail. That failure is correct: it is
-a submission depending on something the problem did not offer.
+The image is still trusted — it carries bazel — and the network being
+closed means the image must carry the repo's external dependencies, since a
+module fetch will fail. That failure is correct: it is a submission depending
+on something the problem did not offer. The C++ toolchain is one of those
+dependencies: the arena depends on hermetic-llvm, a bazel module carrying
+clang, libc++ and compiler-rt, so the compiler is pinned by
+`MODULE.bazel.lock` rather than by whatever the image's distro ships, and a
+kit, a developer's checkout and the sandbox all build with the same one.
 `bazel run //:sandbox_image` builds such an image from the `sandbox` target
-of `game_arena/image/Dockerfile`: a small toolchain base, `bazel vendor`
-of the problem's `MODULE.bazel` into `/opt/arena/vendor`, and a system
-bazelrc pointing bazel at it. A `game_arena` overridden with a local path is
+of `game_arena/image/Dockerfile`: a small base with bazel and no compiler,
+`bazel vendor` of the problem's `MODULE.bazel` into `/opt/arena/vendor`, and
+a system bazelrc pointing bazel at it. A `game_arena` overridden with a local path is
 copied into the image too, with a warning, because `bazel vendor` only
 symlinks local overrides.
 

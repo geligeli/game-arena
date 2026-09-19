@@ -151,8 +151,8 @@ Or the pieces `play` runs: `bazel run //:tournament` in one shell,
 `. ./arena.env` in the kit.
 
 - Sanitizer / tuning configs in `.bazelrc` (each gets its own output dir):
-  `--config=asan`, `--config=tsan`, `--config=ubsan`, `--config=msan`,
-  `--config=native`.
+  `--config=asan`, `--config=tsan`, `--config=ubsan`, `--config=native`.
+  No msan: the toolchain has no msan-instrumented libc++ (see `.bazelrc`).
 - Headers are included with the full repo-relative path, e.g.
   `#include "game_arena/referee/game_session.h"`.
 - The MCP server in `mcp_servers/arena_mcp` needs the arena running;
@@ -161,7 +161,14 @@ Or the pieces `play` runs: `bazel run //:tournament` in one shell,
 ## C++ conventions
 
 - C++23, `-Wall -Wextra -Werror` for project files; third-party under
-  `external/` is silenced with `-w`, never "fix" warnings there.
+  `external/` is silenced with `-w`, never "fix" warnings there. A warning
+  clang raises *inside* an external header included from project code is
+  disabled by category in `.bazelrc`, not by editing the dependency.
+- The compiler is the hermetic-llvm module in `MODULE.bazel` (clang, libc++,
+  compiler-rt; no sysroot, nothing from the host). Registered by the arena so
+  every consumer, kit and sandbox builds with the same one; that is why the
+  sandbox image installs no compiler. Sanitizer configs use its
+  `--@llvm//config:<san>=true` settings rather than raw `-fsanitize` flags.
 - Format: Google style, `clang-format -i -style=google` (pre-commit hook).
 - Header guards, never `#pragma once`. Guard form is repo name + path:
   `GAME_ARENA_GAME_ARENA_REFEREE_GAME_SESSION_H`. `scripts/fix_guards.py`

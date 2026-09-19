@@ -154,7 +154,7 @@ outside the BCR.
 ```sh
 bazel build //...
 bazel test //...
-bazel test --config=asan //...   # also tsan / ubsan / msan; see .bazelrc
+bazel test --config=asan //...   # also tsan / ubsan; see .bazelrc
 ```
 
 ## Try it

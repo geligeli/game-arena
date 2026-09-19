@@ -203,8 +203,9 @@ message BuildSpec {
 
 message SandboxSpec {
   // Image every container starts from. Must carry bazel matching the repo's
-  // MODULE.bazel.lock, a C++ toolchain, and a warm repository cache -- builds
-  // run without egress, so a module fetch is a build failure, not a retry.
+  // MODULE.bazel.lock and every external repository the lock resolves, the
+  // C++ toolchain among them -- builds run without egress, so a module fetch
+  // is a build failure, not a retry.
   string image = 1;
 
   // Caps on the containers that run the solution -- a bot, a graded command.

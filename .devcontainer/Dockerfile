@@ -23,11 +23,13 @@ RUN rm -f /etc/apt/apt.conf.d/docker-clean \
 #
 # --no-install-recommends means anything the toolchain needs has to be named
 # here explicitly. The non-obvious entries:
-#   g++            bazel's default C++ toolchain shells out to /usr/bin/gcc.
-#                  It used to arrive only as a *recommendation* of python3-pip
-#                  (via build-essential), which also pulled ~35MB of system
-#                  python headers that the hermetic rules_python toolchain in
-#                  MODULE.bazel makes unnecessary.
+#   g++            not bazel's compiler any more (that is the hermetic-llvm
+#                  module in MODULE.bazel); kept for scripts and pip packages
+#                  that build native code outside bazel. It used to arrive
+#                  only as a *recommendation* of python3-pip (via
+#                  build-essential), which also pulled ~35MB of system python
+#                  headers that the hermetic rules_python toolchain makes
+#                  unnecessary.
 #   less, patch,   git recommendations the tooling actually relies on: pagers,
 #   openssh-client bazel's patch fallback for single_version_override, and
 #                  git-over-SSH (.devcontainer/ssh_config).

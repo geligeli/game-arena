@@ -284,7 +284,6 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   for (process::InputStreamProcess &step : background) {
     step.Wait();
   }
-  int index = 0;
   for (const proto::Step &step : phase.background()) {
     proto::StepResult *background_result = result->add_steps();
     background_result->set_name(step.name());
@@ -294,7 +293,6 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     if (!peers[step.name()].empty()) {
       background_result->set_peer_address(peers[step.name()]);
     }
-    ++index;
   }
 
   std::vector<const proto::Step *> all;

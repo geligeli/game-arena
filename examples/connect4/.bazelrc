@@ -1,3 +1,7 @@
+# The C++ toolchain comes with game_arena (hermetic-llvm); bazel must not
+# autoconfigure one from the host as well -- the sandbox image has none.
+common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
+
 build --cxxopt='-std=c++23'
 build --host_cxxopt='-std=c++23'
 build --copt=-fdiagnostics-color=always
@@ -11,6 +15,15 @@ build --host_cxxopt=-Wextra
 build --host_cxxopt=-Werror
 build --per_file_copt='external/.*@-w'
 build --host_per_file_copt='external/.*@-w'
+build --cxxopt=-Wno-deprecated-attributes
+build --host_cxxopt=-Wno-deprecated-attributes
+# protobuf 33.0's map_field.h uses a constructor it deprecates in the same
+# release, and every proto header pulls it in. game_arena patches that in its
+# own build, but a single_version_override only acts in the root module and a
+# patch cannot be borrowed from another one; left as a warning it would print
+# for nearly every file in a kit. Off until protobuf is bumped past 34.1.
+build --cxxopt=-Wno-deprecated-declarations
+build --host_cxxopt=-Wno-deprecated-declarations
 
 # Nothing host-specific above: this file is read inside the sandbox image and
 # in every participant's kit. A shared disk cache, a local game_arena override

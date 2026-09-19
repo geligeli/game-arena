@@ -9,6 +9,16 @@ bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "rules_python", version = "1.9.0")
 bazel_dep(name = "rules_cc", version = "0.2.17")
 
+# The C++ toolchain: hermetic-llvm (clang + libc++ + compiler-rt, no sysroot).
+# Registered here rather than in each consumer so that a problem repo, a kit
+# and the sandbox image all compile with the same pinned compiler: ratings are
+# only comparable across submissions built the same way, and this makes the
+# compiler part of MODULE.bazel.lock instead of whatever the image's distro
+# ships. A root module's own registrations take precedence, so a consumer can
+# still override it.
+bazel_dep(name = "llvm", version = "0.8.21")
+register_toolchains("@llvm//toolchain:all")
+
 # game_arena/server:no_problem_code_test is an sh_test.
 bazel_dep(name = "rules_shell", version = "0.7.1")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.1")
@@ -87,7 +97,7 @@ use_repo(pip, "arena_mcp_pip_deps")
 # @cpp_format_bin, so nothing in the build graph misses it.
 bazel_dep(name = "cpp_formatting", version = "0.1.0", dev_dependency = True)
 
-CPP_FORMAT_VERSION = "20260913-85f1346"
+CPP_FORMAT_VERSION = "20260919-32e9dc2"
 
 archive_override(
     module_name = "cpp_formatting",

@@ -54,26 +54,27 @@ ARG DOCKER_VERSION=29.8.0
 ARG BUILDX_VERSION=0.37.1
 
 # --------------------------------------------------------------------------
-# base: the toolchain. Deliberately small -- no editors, no agent CLIs.
+# base: bazel and what it needs to run. Deliberately small -- no editors, no
+# agent CLIs, and no compiler: the C++ toolchain is a bazel module the arena
+# depends on (hermetic-llvm, see game_arena's MODULE.bazel), fetched and
+# vendored like any other dependency, so the sandbox, a kit and a developer's
+# checkout compile with the same pinned clang whatever their distro ships.
 # --------------------------------------------------------------------------
 FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
 
-# g++: bazel's default C++ toolchain shells out to /usr/bin/gcc.
 # patch: bazel applies single_version_override patches with it.
 # python3: rules_python's bootstrap, and problems' own scripts.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
-      g++ \
       git \
       patch \
       python3 \
       unzip \
-      zlib1g-dev \
  && rm -rf /var/lib/apt/lists/*
 
 ARG BAZEL_VERSION
@@ -84,8 +85,12 @@ RUN curl -fsSL --retry 3 --retry-delay 2 -o /usr/local/bin/bazel \
 # ubuntu:24.04 ships a user "ubuntu" (uid 1000), the usual run_as_user. Both
 # the vendored deps and the pre-extracted install base live under /opt/arena,
 # readable by everyone: which uid the sandbox runs as is the problem's choice.
+# There is no compiler in this image, and bazel must not go looking for one:
+# without this it autoconfigures a host toolchain repository it never uses and
+# fails when there is nothing to find.
 RUN mkdir -p /opt/arena && chown ubuntu:ubuntu /opt/arena \
- && touch /etc/bazel.bazelrc
+ && echo 'common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1' \
+      > /etc/bazel.bazelrc
 
 # --------------------------------------------------------------------------
 # game_arena: the optional copy of a locally overridden game_arena module (see
@@ -123,24 +128,28 @@ WORKDIR /src
 # .bazelrc.local, which is not here, and none should be born here.
 # --output_user_root off /src so nothing bazel writes lands in the tree that
 # is about to be discarded: the vendor directory is the only thing kept.
+# The chmod is in this RUN, not a later one: a mode change in a layer of its
+# own makes overlayfs copy every file up again, and with the toolchain in the
+# tree that took six times longer than the vendoring itself (12 minutes
+# against 2). Readable by whoever the sandbox runs as: that is the problem's
+# choice, and even root there has dropped every capability, so a file bazel
+# vendored with owner-only permissions is a file the build cannot read.
 RUN rm -f /src/.bazelrc.local \
  && bazel --output_user_root=/tmp/bazel_vendor \
       vendor --disk_cache= --repository_cache= \
       --vendor_dir=/opt/arena/vendor //... \
  && bazel --output_user_root=/tmp/bazel_vendor shutdown \
- && rm -rf /tmp/bazel_vendor
+ && rm -rf /tmp/bazel_vendor \
+ && chmod -R a+rX /opt/arena
 
 # --------------------------------------------------------------------------
-# sandbox: the toolchain, the vendored deps, and a bazelrc that uses them.
+# sandbox: the vendored deps (the toolchain among them) and a bazelrc that
+# uses them.
 # --------------------------------------------------------------------------
 FROM base AS sandbox
 
 COPY --from=vendor /etc/bazel.bazelrc /etc/bazel.bazelrc
 COPY --from=vendor /opt/arena /opt/arena
-# Readable by whoever the sandbox runs as. That is the problem's choice, and
-# even root there has dropped every capability, so a file bazel vendored with
-# owner-only permissions is a file the build cannot read.
-RUN chmod -R a+rX /opt/arena
 
 # System rc rather than the problem's bazel_flags: a worker's bazel invocation
 # is the problem's business, and this is the image's. Bazel's own installation
@@ -323,7 +332,8 @@ RUN --mount=type=cache,target=/var/cache/bazel,sharing=locked \
 # --------------------------------------------------------------------------
 # tournament: no toolchain. git for the workers' clones, the docker CLI for
 # their containers, and the binaries laid out as in the arena's tree under
-# /opt/arena, which is what ARENA_HOME tells arena_tournament.
+# /opt/arena, which is what ARENA_HOME tells arena_tournament. The binaries
+# link libc++ statically and need nothing beyond glibc.
 # --------------------------------------------------------------------------
 FROM ubuntu:24.04 AS tournament
 
@@ -335,7 +345,6 @@ RUN apt-get update \
       ca-certificates \
       curl \
       git \
-      libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 
 # The CLI for the workers' containers, and buildx so `kit --image` in here can
