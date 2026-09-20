@@ -171,7 +171,7 @@ tree, and a worker clones `repo.url`, so scaffold one first):
 
 ```sh
 scripts/new_problem.sh match /tmp/c4 --id=c4 && cd /tmp/c4
-# Edit sandbox.image to a tag you can build, then:
+# sandbox.image is a local tag (c4-sandbox:1); play makes it the first time.
 bazel run //:play              # tournament + your kit + a shell in it
 arena_cli submit --name=ref --wait   # the kit's builtin; arena.env is sourced
 exit                           # stops the tournament

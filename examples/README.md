@@ -123,9 +123,10 @@ Three things about the copy you deploy that `play` did not care about:
   workers clone `repo.url`, and in the tournament image that is the copy of
   this repo baked in at `/opt/arena/problem`.
 - **`sandbox.image` has to be a tag you can push and the arena host can
-  pull.** Both examples ship a placeholder; change it in `problem.textproto`
-  to something like `registry.example.com/connect4-sandbox:1` and **commit
-  it**. That name, not a flag, is what a worker asks its daemon for. Bump the
+  pull.** Both examples ship a local tag (`connect4-sandbox:1`), which is all
+  `play` needs; change it in `problem.textproto` to something like
+  `registry.example.com/connect4-sandbox:1` and **commit it**. Never a tag
+  something else already owns: `sandbox_image` writes to whatever it names. That name, not a flag, is what a worker asks its daemon for. Bump the
   tag when the toolchain changes: submissions are only comparable if they were
   built in the same image, and a moving `:latest` quietly breaks that.
 - **Commit `MODULE.bazel.lock` once it settles.** A worker clones the

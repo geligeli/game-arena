@@ -64,6 +64,8 @@ sed -i -e "s/^    name = \"${example}_problem\",/    name = \"${id}_problem\",/"
     "${dest}/MODULE.bazel"
 sed -i -e "s/^problem_id: \"${example}\"/problem_id: \"${id}\"/" \
        -e "s/^display_name: \".*\"/display_name: \"${id}\"/" \
+       -e "s#^  image: \"${example}-sandbox:\\(.*\\)\"#  image: \"${id}-sandbox:\\1\"#" \
+       -e "s#(registry.example.com/${example}-sandbox:1)#(registry.example.com/${id}-sandbox:1)#" \
     "${dest}/problem.textproto"
 
 # Pin game_arena. local_path_override in the examples is relative to
@@ -150,6 +152,7 @@ Next:
   bazel run //:kit -- --out=/tmp/kit --mint=me      # what a participant gets
   bazel run //:sandbox_image                        # the sandbox image, by hand
 
-Every submission is built and run in a container: set sandbox.image to a tag
-you can build or pull, and play builds it for you the first time.
+Every submission is built and run in a container: sandbox.image is
+${id}-sandbox:1, a local tag play makes for you the first time. To deploy,
+change it to one the arena host can pull, and commit that.
 MSG

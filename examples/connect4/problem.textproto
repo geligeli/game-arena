@@ -67,7 +67,13 @@ build {
 }
 
 sandbox {
-  image: "takumi.city/jax-cpu-training:latest"
+  # A tag of this problem's own, and a local one: `bazel run //:sandbox_image`
+  # makes it on this host, and `play` does that for you the first time. To
+  # deploy, name it where the arena host can pull it from
+  # (registry.example.com/connect4-sandbox:1) and commit that -- this name, not a
+  # flag, is what a worker asks its daemon for. Never a tag something else
+  # already owns: `sandbox_image` writes to whatever this names.
+  image: "connect4-sandbox:1"
   memory_limit_mb: 4096
   # The two bots must reach their referee, and nothing else.
   network: NETWORK_INTERNAL_BRIDGE

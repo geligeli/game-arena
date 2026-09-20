@@ -2,7 +2,7 @@
 // inside a throwaway docker container.
 /*
 bazel run //game_arena/sandbox/runner:sandbox_runner -- \
-  --port=50052 --docker_image=takumi.city/jax-cpu-training:latest \
+  --port=50052 --docker_image=nim-sandbox:1 \
   --repo_dir=/large_nfs/game-mcts --timeout_s=1800
 */
 //
