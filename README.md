@@ -115,7 +115,7 @@ bazel test //...                                     # the rules, and the config
 bazel run //:play                                    # all of it, and a shell in your kit
 bazel run //:tournament                              # a coordinator + a local worker
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
-bazel run //:kit -- --mint=bob --server=$(hostname):50051 --image=REG/kit-bob --push
+bazel run //:kit_image -- --mint=bob --server=$(hostname):50051 --image=REG/kit-bob --push
 bazel run //:sandbox_image                           # the offline sandbox image
 bazel run //:tournament -- --image=REG/c4-arena --push   # the tournament, deployable
 bazel build //:connect4                              # every binary a tournament needs
@@ -128,13 +128,17 @@ address and the token), `arena.textproto` saying what that CLI does by
 default, an MCP server as `bazel run //:mcp_server`, and a README generated
 from the config. The grader, the cases, the tournament config and the rest of
 the arena stay behind. By default the kit is built once as it is written, so
-the participant's first build is warm. `--image=TAG` also builds that
-workspace into a docker image with the toolchain, vendored dependencies and a
-completed build, so a participant (or their agent) starts with `docker run -it
-TAG` and is ready to submit; `docker run -i TAG bazel run //:mcp_server` is
-the MCP server on stdio. A problem that needs more in that image names its own
-`kit.dockerfile`. `tournament --image`
-does the same for the coordinator and its workers: one image to `docker run`
+the participant's first build is warm. `kit_image` makes the same workspace
+into an image with the toolchain, its dependencies vendored and its cache
+primed, so a participant (or their agent) starts with `docker run -it TAG` and
+is ready to submit; `docker run -i TAG bazel run //:mcp_server` is the MCP
+server on stdio. That image is layered by bazel (rules_oci) onto a base pulled
+by digest, not built by docker: nothing runs inside it while it is made, so
+making and pushing one needs no daemon. The base is the one Dockerfile that
+is built by hand, `docker/base/Dockerfile`; a problem that needs more in its
+kits layers its own `oci_image` on `//game_arena/image:kit_base` and names it
+as `arena_problem(kit_base = ...)`. `tournament --image` is still a docker
+build, of the coordinator and its workers: one image to `docker run`
 on any host with a docker socket and the sandbox image, with `docker exec ...
 arena_tournament kit --mint=bob` to admit participants from inside. See
 `game_arena/ARENA.md`. `scripts/new_problem.sh match|graded <dir>` scaffolds a

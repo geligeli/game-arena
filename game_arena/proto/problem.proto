@@ -141,6 +141,13 @@ message KitSpec {
   // contents, the builtins and the build still come from the arena's
   // Dockerfile after it, so this cannot change what a kit *is*, only what is
   // available inside it.
+  //
+  // Only the docker build of a kit image reads this, which is the one a
+  // deployed tournament does from inside its container. From a checkout a kit
+  // image is layered by bazel, where there is no Dockerfile to extend and
+  // `kit_image` refuses a problem that sets this: the same addition is an
+  // oci_image on @game_arena//game_arena/image:kit_base, named as
+  // arena_problem(kit_base = ...).
   string dockerfile = 3;
 
   // Leave the kit image's bazel able to fetch from the network. Off by

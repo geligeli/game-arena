@@ -19,6 +19,28 @@ bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "llvm", version = "0.8.21")
 register_toolchains("@llvm//toolchain:all")
 
+# A kit image is layered by bazel, not built by docker: rules_oci stacks tars
+# on a base it pulls by digest and never runs anything inside it, so making
+# one needs no daemon. (The sandbox and tournament images still run bazel
+# inside themselves as they are made, and stay docker builds:
+# game_arena/image/Dockerfile.) The one thing that does need a container to be made
+# -- `apt-get`, and the bazel binary beside it -- is the base itself,
+# docker/base/Dockerfile, built by hand and rarely and pinned here. The tag is
+# for people; only the digest is used. Pulled lazily: nothing fetches it but a
+# target that layers on it (//game_arena/image:kit_base), and those are tagged
+# manual so that `//...` -- a consumer's, a kit's, a sandbox's `bazel vendor`
+# -- never needs the registry.
+bazel_dep(name = "rules_oci", version = "2.3.0")
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+oci.pull(
+    name = "arena_base",
+    digest = "sha256:e65008b7817ed904b2ca07c744703283edd92166d0d004e6590d839b22321b2d",
+    image = "takumi.city/game-arena-base",
+    # tag = "noble-bazel8.8.0"
+)
+use_repo(oci, "arena_base")
+
 # game_arena/server:no_problem_code_test is an sh_test.
 bazel_dep(name = "rules_shell", version = "0.7.1")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.1")

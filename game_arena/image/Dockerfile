@@ -9,7 +9,12 @@
 #       dependency the repo resolves, vendored, so workers build and run
 #       submissions in it with no network. Context: the problem repo.
 #
-#   --target kit         `arena_tournament kit --image=TAG`
+#   --target kit         `arena_tournament kit --image=TAG`, installed only
+#       That is, from inside a tournament container, which has a docker
+#       socket and no bazel. From a checkout a kit image is not built here at
+#       all: bazel layers it onto //game_arena/image:kit_base (rules_oci) and
+#       nothing runs inside it. The two make the same image by different
+#       means, and `base` below is docker/base/Dockerfile's twin.
 #       One participant's development environment: the kit the subcommand
 #       wrote (their files, the arena's kit surface vendored beside them, the
 #       builtin CLI), the toolchain, vendored dependencies and a completed

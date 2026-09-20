@@ -136,16 +136,18 @@ arena_cli source <candidate_id>           # a rival, pulled into rivals/<id>/
 
 The `kit` section of `problem.textproto` is what shapes that: `submit_files`
 is what `arena_cli submit` sends when the participant names nothing,
-`source_dir` is where pulled rivals land, and `dockerfile` (unused here) would
-name a Dockerfile of this repo's own to layer into the kit image -- `FROM
-kit_base`, plus whatever this problem's participants need installed. What they
+`source_dir` is where pulled rivals land. A problem whose participants need
+more installed than bazel, git and python3 layers its own `oci_image` on
+`@game_arena//game_arena/image:kit_base` and names it as
+`arena_problem(kit_base = ...)`; this one does not. What they
 may read of each other is the separate `source` section; the default, and what
 this problem does, is that every submission is readable.
 
-Add `--image=TAG` to the `kit` command for the same as a docker image with the
-toolchain and everything already built: `docker run -it TAG` is a shell in the
-kit, ready to submit, and `docker run -i TAG bazel run //:mcp_server` is the
-MCP server for an agent.
+`bazel run //:kit_image -- --mint=alice --server=... --image=TAG [--push]` is
+the same kit as an image with the toolchain, its dependencies vendored and its
+cache primed: `docker run -it TAG` is a shell in the kit, ready to submit, and
+`docker run -i TAG bazel run //:mcp_server` is the MCP server for an agent.
+Bazel layers it onto a pinned base; no docker is involved in making it.
 
 This directory is inside game-arena's git tree, which a worker cannot clone;
 `scripts/new_problem.sh match <dir>` copies it out as a repository of its own.

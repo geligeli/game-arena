@@ -23,8 +23,10 @@ game_arena/client/     the generic reference client
 game_arena/testgame/   Nim: the arena's own game and reference registry
 game_arena/problems/   nim.textproto
 game_arena/rules/      arena_problem, the macro a problem repo calls
-game_arena/image/      the Dockerfile a problem's three images come from:
-                       sandbox, a participant's kit, the tournament itself
+game_arena/image/      the Dockerfile the sandbox and tournament images come
+                       from, and kit_base: what bazel layers a kit image onto
+docker/base/           the base image's Dockerfile: the one image built by
+                       hand, pinned by digest in MODULE.bazel
 game_arena/cli/        arena_cli: the participant's client, a kit's builtin
 game_arena/tools/      arena_admin, arena_tournament (operator tooling)
 game_arena/common/     subprocess wrapper
@@ -116,6 +118,16 @@ they need to work on the problem.**
   participant may edit -- the coordinator enforces the problem's policy on
   whatever arrives, so a widened kit config changes what is sent, never what
   is accepted.
+- A kit image is layered, not built: `//:kit_image` stacks the kit on
+  `//game_arena/image:kit_base` with rules_oci's regctl, and no container
+  runs while it is made. So whatever a Dockerfile would `RUN` happens on the
+  host first -- `bazel vendor`, then the build that primes `.arena/cache` --
+  with `--nohome_rc --nosystem_rc` and a strict action env, because a cache
+  hits only for the build that filled it. The token goes on at run time, by
+  the tool: never make it an input of a bazel action, where a remote cache
+  keeps it. Everything that pulls the base is tagged `manual`; `//...` must
+  not need a registry, and a sandbox's `bazel vendor //...` must not carry an
+  image.
 - What of each other participants may read is `SourcePolicy` in the problem
   config, enforced in `arena_service.cc` on `GetSource` and on the patch bytes
   of every manifest. The default is that everything is readable; that is the

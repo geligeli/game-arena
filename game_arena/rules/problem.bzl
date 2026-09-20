@@ -25,9 +25,16 @@ That call defines, in the calling package:
                    surface vendored as ./arena, arena_cli as a program, an MCP
                    server, a README and a token. Their own environment, with
                    whatever access they give it; only what they submit runs
-                   sandboxed. `--image=TAG` builds the same as a docker image,
-                   toolchain included and everything built, to `docker run`
-                   wherever they work
+                   sandboxed
+  :kit_image       `bazel run //:kit_image -- --mint=ID --server=HOST:PORT
+                   --image=TAG [--push]` -- the same kit as an image, to
+                   `docker run` wherever they work: the toolchain, the kit,
+                   its dependencies vendored and its cache primed. Layered by
+                   bazel onto `kit_base` rather than built by docker, so
+                   making one needs no daemon -- only, the first time, the
+                   registry the base is pulled from. Without --push it is
+                   loaded into the local daemon if there is one, else left
+                   as an archive
   :play            `bazel run //:play` -- the tournament in
                    the background, a kit minted for you, and a shell in it with
                    ARENA_SERVER and ARENA_TOKEN set. Leaving the shell stops
@@ -53,6 +60,8 @@ _RUN = Label("//game_arena/rules:run_tool.sh")
 _REFEREE_MAIN = Label("//game_arena/referee:referee_main")
 _BROKER_MAIN = Label("//game_arena/referee:broker_server_main")
 _RANDOM_CLIENT_MAIN = Label("//game_arena/client:random_client_main")
+_KIT_BASE = Label("//game_arena/image:kit_base")
+_REGCTL = Label("//game_arena/image:regctl")
 _TOURNAMENT_BINARIES = [
     Label("//game_arena/server:problem_server"),
     Label("//game_arena/sandbox/worker:sandbox_worker"),
@@ -61,7 +70,7 @@ _TOURNAMENT_BINARIES = [
     Label("//mcp_servers/arena_mcp:server"),
 ]
 
-def arena_problem(name, config, registry = None, kit_files = [], visibility = None):
+def arena_problem(name, config, registry = None, kit_files = [], kit_base = None, visibility = None):
     """Defines the tournament targets for one problem. See the module docstring.
 
     Args:
@@ -73,6 +82,12 @@ def arena_problem(name, config, registry = None, kit_files = [], visibility = No
         solution is written against, the harness, a reference solution, and the
         BUILD files that build them. Nothing else leaves the repo. Filegroups
         and globs work; every file must be a source file of this repository.
+      kit_base: label of the OCI image layout a kit image is layered onto.
+        Default: the arena's, which is bazel, git and python3 and nothing of a
+        problem. A problem whose participants need more builds its own
+        `oci_image` with `base = "@game_arena//game_arena/image:kit_base"`
+        and names it here; it has to keep that base's user (uid 1000), who
+        owns /kit.
       visibility: applied to every generated target.
     """
     tool = str(_TOOL)
@@ -133,6 +148,24 @@ def arena_problem(name, config, registry = None, kit_files = [], visibility = No
         data = base_data + kit_files,
         args = base_args + ["kit", config_arg],
         env = kit_env,
+        visibility = visibility,
+    )
+    # manual: this is the one target that needs a registry -- the base is
+    # pulled the first time it is built -- and `//...` must not. That covers
+    # `bazel test //...` here, and the `bazel vendor //...` a sandbox image is
+    # made with, which would otherwise carry the base's layers into every
+    # sandbox.
+    base = kit_base or str(_KIT_BASE)
+    sh_binary(
+        name = "kit_image",
+        srcs = [run],
+        data = base_data + kit_files + [base, str(_REGCTL)],
+        args = base_args + ["kit", config_arg],
+        env = kit_env | {
+            "ARENA_KIT_BASE": "$(rootpath %s)" % base,
+            "ARENA_REGCTL": "$(rootpath %s)" % _REGCTL,
+        },
+        tags = ["manual"],
         visibility = visibility,
     )
     sh_binary(

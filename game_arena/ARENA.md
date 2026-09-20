@@ -44,7 +44,7 @@ From a problem repository that calls `arena_problem()` (see
 bazel run //:play                            # the tournament, a kit for you, a shell in it
 bazel run //:tournament                      # a coordinator and a local worker
 bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
-bazel run //:kit -- --mint=bob --image=TAG   # the same, as a docker image
+bazel run //:kit_image -- --mint=bob --image=TAG   # the same, as an image; no docker needed
 bazel run //:sandbox_image                   # the image sandbox.image names
 bazel run //:tournament -- --image=TAG       # the tournament, as a docker image
 ```
@@ -64,6 +64,22 @@ a README generated from the config. It builds the kit once as it writes it,
 keeping a bazel disk cache inside it (`--prime_cache=false` to skip), so the
 participant's first build is warm and a missing `kit_files` entry is found
 here rather than by them.
+
+`kit_image` is the same kit as an image, and the one image here that docker
+does not build. It is layered: `//game_arena/image:kit_base` is the arena's
+base image (`docker/base/Dockerfile`, pulled by digest) with a kit's user,
+directory and `PATH` set on it by rules_oci, and the kit goes on top as a tar.
+Nothing runs inside an image made that way, so what a Dockerfile would `RUN`
+happens on this host first: `bazel vendor` into `.arena/vendor`, then the
+build into `.arena/cache`. Both are run with `--nohome_rc --nosystem_rc` and
+the kit carries `--incompatible_strict_action_env`, because a cache only hits
+for the build that filled it -- a remote executor's platform properties in a
+`~/.bazelrc`, or this shell's `PATH`, are part of every action's key, and the
+container has neither. The token, the address and the last few files are added
+by the tool with `regctl` after the build, never as a bazel action: an
+action's inputs end up in a remote cache. `--push` goes straight to the
+registry with the logins docker keeps; without it the image is loaded into
+the local daemon when there is one, and left as an archive when there is not.
 
 `tournament` writes the effective config and all state under
 `~/.arena/<problem_id>` (`$ARENA_STATE_DIR` to move it), starts

@@ -4,7 +4,8 @@
 bazel run //:tournament -- [--workers=2]
 bazel run //:play                            # all of it, and a shell in your
 kit bazel run //:kit -- --out=/srv/kits/alice --server=arena:50051 --mint=alice
-bazel run //:kit -- --mint=bob --server=arena:50051 --image=registry/kit-bob
+bazel run //:kit_image -- --mint=bob --server=arena:50051 \
+    --image=registry/kit-bob --push
 bazel run //:tournament -- --image=registry/c4-arena --push
 bazel run //:sandbox_image -- [--push]
 bazel test //:config_test
@@ -25,8 +26,11 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 //   kit     a participant's workspace: the files the problem names, the
 //           arena's CLI and MCP server reachable through @game_arena, a README
 //           from the config, and a freshly minted token. With --image, the
-//           same as a docker image with the toolchain and everything built,
-//           ready to `docker run` wherever the participant works.
+//           same as an image with the toolchain, the dependencies vendored
+//           and the cache primed, ready to `docker run` wherever the
+//           participant works. Under bazel that image is layered onto a base
+//           rules_oci built (the macro's kit_image target) and no docker is
+//           involved; installed, it is a docker build through the socket.
 //   check   the config parses and is consistent with the tree. What
 //           :config_test runs.
 //   image   the problem's sandbox image: toolchain + vendored deps, so builds
@@ -130,11 +134,20 @@ ABSL_FLAG(bool, prime_cache, true,
           "warm and a missing kit file is found here rather than by them");
 ABSL_FLAG(bool, force, false, "kit: write into a non-empty --out");
 ABSL_FLAG(std::string, image, "",
-          "kit: also build a docker image of the kit with this tag: the "
-          "toolchain, the kit, and a completed `bazel build //...`. "
+          "kit: also make an image of the kit with this tag: the toolchain, "
+          "the kit, its dependencies vendored and its build cache primed. "
+          "Layered by bazel onto --kit_base, with no docker involved; run it "
+          "as //:kit_image, the target that carries the base. "
           "up: instead of running, build a docker image of the tournament "
           "with this tag: the coordinator, the workers and the problem, for "
           "any host with a docker socket. --push pushes either");
+ABSL_FLAG(std::string, kit_base, "",
+          "kit --image: the OCI layout the kit is layered onto, as rules_oci "
+          "builds one. Supplied by the arena_problem macro's kit_image "
+          "target; default $ARENA_KIT_BASE");
+ABSL_FLAG(std::string, regctl, "",
+          "kit --image: the regctl binary that does the layering and the "
+          "push. Supplied with --kit_base; default $ARENA_REGCTL");
 
 // play
 ABSL_FLAG(std::string, shell, "",
@@ -1097,6 +1110,68 @@ std::string JsonEscape(std::string_view s) {
   return out;
 }
 
+// mcp.json for a kit at |kit|: the path an agent's MCP client starts the
+// server in, which is this host's for a directory and /kit inside an image.
+std::string KitMcpJson(const std::filesystem::path &kit,
+                       const std::string &server, const std::string &token,
+                       const std::string &client_id) {
+  std::string mcp = absl::StrCat(
+      "{\n"
+      "  \"mcpServers\": {\n"
+      "    \"arena\": {\n"
+      "      \"command\": \"bazel\",\n"
+      "      \"args\": [\"run\", \"//:mcp_server\"],\n"
+      "      \"cwd\": \"",
+      JsonEscape(kit.string()),
+      "\",\n"
+      "      \"env\": {\n"
+      "        \"ARENA_MCP_TARGET\": \"",
+      JsonEscape(server), "\"");
+  if (!token.empty()) {
+    absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_TOKEN\": \"",
+                    JsonEscape(token), "\"");
+  }
+  if (!client_id.empty()) {
+    absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_AUTHOR\": \"",
+                    JsonEscape(client_id), "\"");
+  }
+  absl::StrAppend(&mcp, ",\n        \"ARENA_KIT\": \"",
+                  JsonEscape(kit.string()), "\"");
+  absl::StrAppend(&mcp, "\n      }\n    }\n  }\n}\n");
+  return mcp;
+}
+
+// The build settings a kit at |kit| keeps in its .bazelrc.local: absolute
+// paths, because bazel does not expand %workspace% inside a flag's value.
+//
+// |portable| is what makes a cache primed on this host hit inside an image of
+// the kit. An action's key covers its environment, so PATH has to be bazel's
+// fixed one rather than whoever-ran-it's, and a kit that is primed for an
+// image carries the flag on the host too: the two builds have to be the same
+// build. |vendored| points bazel at the dependencies `bazel vendor` copied
+// into the kit, so that builds need no network and resolve exactly what the
+// sandbox will.
+std::string KitBuildSettings(const std::filesystem::path &kit, bool cached,
+                             bool portable, bool vendored) {
+  std::string rc;
+  if (cached) {
+    // Bounded: this lives inside someone's working directory, and a cache
+    // that only grows is a surprise they find out about from `df`.
+    absl::StrAppend(&rc,
+                    "build --disk_cache=", (kit / ".arena" / "cache").string(),
+                    "\ncommon --experimental_disk_cache_gc_max_size=",
+                    absl::GetFlag(FLAGS_cache_limit), "\n");
+  }
+  if (portable) {
+    absl::StrAppend(&rc, "build --incompatible_strict_action_env\n");
+  }
+  if (vendored) {
+    absl::StrAppend(&rc, "common --vendor_dir=",
+                    (kit / ".arena" / "vendor").string(), "\n");
+  }
+  return rc;
+}
+
 // The arena a kit builds against: the packages a participant's workspace
 // actually compiles against, and nothing else.
 //
@@ -1209,8 +1284,9 @@ bool InstallArenaSurface(const ArenaRunfiles &runfiles,
 // distraction -- the arena's build is not their problem. The binary is copied
 // out of this tool's own runfiles, so it is the arena they are entering.
 //
-// A kit image builds its own copy instead (see the Dockerfile): this one was
-// linked against the host's libraries, and the image is not this host.
+// A layered kit image carries this same binary: the toolchain is hermetic and
+// links libc++ statically, so it runs on any glibc the base is likely to have.
+// The docker build of a kit image (the installed path) still builds its own.
 bool InstallBuiltins(const ArenaRunfiles &runfiles,
                      const std::filesystem::path &out) {
   const std::filesystem::path cli = runfiles.Locate("game_arena/cli/arena_cli");
@@ -1276,6 +1352,265 @@ std::string KitConfigText(const proto::ProblemConfig &config,
       text);
 }
 
+// ---------------------------------------------------------------------------
+// kit --image
+// ---------------------------------------------------------------------------
+
+// What a kit is layered onto and what does the layering, when this is the
+// macro's kit_image target: an OCI layout rules_oci built (the arena's base
+// with a kit's user, directory and PATH set on it) and the regctl it built it
+// with. Both arrive as paths into runfiles, relative to where `bazel run`
+// started this.
+struct KitImageTools {
+  std::filesystem::path base;
+  std::filesystem::path regctl;
+};
+
+std::optional<KitImageTools> FindKitImageTools() {
+  const std::string base = absl::GetFlag(FLAGS_kit_base).empty()
+                               ? EnvOr("ARENA_KIT_BASE", "")
+                               : absl::GetFlag(FLAGS_kit_base);
+  const std::string regctl = absl::GetFlag(FLAGS_regctl).empty()
+                                 ? EnvOr("ARENA_REGCTL", "")
+                                 : absl::GetFlag(FLAGS_regctl);
+  if (base.empty() || regctl.empty()) {
+    return std::nullopt;
+  }
+  return KitImageTools{std::filesystem::absolute(base),
+                       std::filesystem::absolute(regctl)};
+}
+
+// The manifest a layout holds. rules_oci writes index.json with one manifest
+// and no tag on it, so the digest is the only name the image has.
+std::optional<std::string> LayoutManifestDigest(
+    const std::filesystem::path &layout) {
+  const auto index = ReadFile(layout / "index.json");
+  if (!index) {
+    return std::nullopt;
+  }
+  static const std::regex kDigest(
+      R"re("digest"\s*:\s*"(sha256:[0-9a-f]{64})")re");
+  std::smatch match;
+  if (!std::regex_search(*index, match, kDigest)) {
+    return std::nullopt;
+  }
+  return match[1].str();
+}
+
+// The files of a kit that say whose it is and where it is: two small layers'
+// worth of difference between one participant's image and the next, kept out
+// of the layer that holds everything else so that layer is the same bytes for
+// everyone.
+constexpr std::array<std::string_view, 5> kKitParticipantFiles = {
+    "arena.env", "arena.textproto", "ARENA.md", "mcp.json", ".bazelrc.local"};
+
+// The kit at |kit| as an image tagged |image|: layered onto the base with
+// regctl, then pushed, or loaded into the local daemon when there is one. No
+// step of this runs a container, which is what lets it work where there is
+// no daemon at all; and none of it is a bazel action, because the token is in
+// here and an action's inputs end up in a remote cache.
+//
+// Two layers. /kit itself -- the files, the vendored arena and dependencies,
+// the primed cache -- and then the participant's own few files on top, with
+// the paths in them rewritten for a kit that lives at /kit. The address and
+// the token go into the image's environment as well, so the tools work
+// without sourcing arena.env and `docker run -e ARENA_SERVER=...` moves the
+// kit to another coordinator.
+int LayerKitImage(const KitImageTools &tools, std::filesystem::path kit,
+                  const std::string &image, const std::string &server,
+                  const std::string &http, const std::string &token,
+                  const std::string &client_id, bool cached, bool vendored) {
+  if (kit.filename().empty()) {
+    kit = kit.parent_path();
+  }
+  const auto digest = LayoutManifestDigest(tools.base);
+  if (!digest) {
+    LOG(ERROR) << tools.base << " is not an OCI layout with a manifest in it";
+    return 1;
+  }
+  // GNU tar: --transform puts the tree under kit/ without staging a copy of
+  // it, and its S flag keeps that rewrite off the targets of the relative
+  // symlinks a vendored repository is full of.
+  const auto tar_version = Capture("tar", {"--version"}, kit);
+  if (!tar_version || tar_version->find("GNU tar") == std::string::npos) {
+    LOG(ERROR) << "layering a kit image needs GNU tar on PATH";
+    return 1;
+  }
+
+  // Beside the kit rather than inside it: it is as large as the kit again,
+  // and it holds the token, so it does not outlive this function.
+  const std::filesystem::path stage =
+      kit.parent_path() / (kit.filename().string() + ".image");
+  std::error_code ec;
+  std::filesystem::remove_all(stage, ec);
+  const std::filesystem::path participant = stage / "participant" / "kit";
+  std::filesystem::create_directories(participant, ec);
+  if (ec) {
+    LOG(ERROR) << "cannot create " << stage << ": " << ec.message();
+    return 1;
+  }
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      std::filesystem::remove_all(path, ignored);
+    }
+  } cleanup{stage};
+
+  // uid 1000 is "ubuntu" in the arena's base, and the user kit_base runs as:
+  // the kit is theirs to write to, the vendored tree and the cache included.
+  const std::vector<std::string> owner = {"--owner=1000", "--group=1000",
+                                          "--numeric-owner"};
+  std::printf("\nLayering %s onto %s...\n", image.c_str(),
+              tools.base.filename().c_str());
+  std::fflush(stdout);
+
+  // bazel-* and vendor/bazel-external are symlinks into this host's output
+  // base; bazel makes its own in the image. The participant's files go in the
+  // second layer.
+  std::vector<std::string> kit_tar = {"--create", "--file",
+                                      (stage / "kit.tar").string()};
+  kit_tar.insert(kit_tar.end(), owner.begin(), owner.end());
+  kit_tar.insert(kit_tar.end(),
+                 {"--anchored", "--exclude=./bazel-*", "--exclude=./.git",
+                  "--exclude=./.arena/vendor/bazel-external"});
+  for (const std::string_view file : kKitParticipantFiles) {
+    kit_tar.push_back(absl::StrCat("--exclude=./", file));
+  }
+  kit_tar.insert(kit_tar.end(), {"--transform=s,^\\.,kit,S", "--directory",
+                                 kit.string(), "."});
+  if (RunInherit("tar", kit_tar, kit) != 0) {
+    LOG(ERROR) << "cannot archive " << kit;
+    return 1;
+  }
+
+  // The same files as the kit's, except the two that name where it is.
+  std::vector<std::string> participant_tar = {
+      "--create", "--file", (stage / "participant.tar").string()};
+  participant_tar.insert(participant_tar.end(), owner.begin(), owner.end());
+  participant_tar.insert(participant_tar.end(),
+                         {"--directory", participant.parent_path().string()});
+  const std::filesystem::path in_image = "/kit";
+  for (const std::string_view name : kKitParticipantFiles) {
+    const std::string file(name);
+    if (file == "mcp.json") {
+      WriteFile(participant / file,
+                KitMcpJson(in_image, server, token, client_id));
+    } else if (file == ".bazelrc.local") {
+      WriteFile(participant / file,
+                absl::StrCat("# Written by arena_tournament kit, for the kit "
+                             "at /kit in this image.\n",
+                             KitBuildSettings(in_image, cached,
+                                              /*portable=*/true, vendored)));
+    } else {
+      std::filesystem::copy_file(kit / file, participant / file, ec);
+      if (ec) {
+        LOG(ERROR) << "cannot copy " << file << ": " << ec.message();
+        return 1;
+      }
+    }
+    participant_tar.push_back("kit/" + file);
+  }
+  if (RunInherit("tar", participant_tar, stage) != 0) {
+    LOG(ERROR) << "cannot archive the participant's files";
+    return 1;
+  }
+
+  const std::string regctl = tools.regctl.string();
+  const std::string layered =
+      absl::StrCat("ocidir://", (stage / "layout").string(), ":kit");
+  std::vector<std::string> finish = {
+      "image",
+      "mod",
+      layered,
+      "--replace",
+      "--layer-add",
+      "tar=" + (stage / "participant.tar").string(),
+      "--env",
+      "ARENA_SERVER=" + server,
+      "--label",
+      "org.opencontainers.image.title=arena kit for " +
+          (client_id.empty() ? "a participant" : client_id),
+      "--label",
+      absl::StrCat("org.opencontainers.image.description=Development "
+                   "environment for one participant of an arena tournament at ",
+                   server, " (leaderboard: http://", http, "/)")};
+  if (!token.empty()) {
+    finish.insert(finish.end(), {"--env", "ARENA_TOKEN=" + token});
+  }
+  if (!client_id.empty()) {
+    finish.insert(finish.end(), {"--env", "ARENA_MCP_AUTHOR=" + client_id});
+  }
+  // Compressing the kit's layer is most of the time this takes.
+  if (RunInherit(regctl,
+                 {"image", "mod",
+                  absl::StrCat("ocidir://", tools.base.string(), "@", *digest),
+                  "--create", layered, "--layer-add",
+                  "tar=" + (stage / "kit.tar").string()},
+                 stage) != 0 ||
+      RunInherit(regctl, finish, stage) != 0) {
+    LOG(ERROR) << "regctl could not layer the kit onto " << tools.base;
+    return 1;
+  }
+
+  if (absl::GetFlag(FLAGS_push)) {
+    std::printf("Pushing %s...\n", image.c_str());
+    std::fflush(stdout);
+    if (RunInherit(regctl, {"image", "copy", layered, image}, stage) != 0) {
+      LOG(ERROR) << "cannot push " << image
+                 << "; regctl reads the registry logins docker keeps "
+                    "(~/.docker/config.json)";
+      return 1;
+    }
+    return 0;
+  }
+  // Not pushed: an archive `docker load` and `podman load` both read, and
+  // loaded here when there is a daemon to load it into.
+  const std::filesystem::path archive =
+      kit.parent_path() / (kit.filename().string() + ".image.tar");
+  if (RunInherit(
+          regctl,
+          {"image", "export", "--name", image, layered, archive.string()},
+          stage) != 0) {
+    LOG(ERROR) << "cannot write " << archive;
+    return 1;
+  }
+  const std::string docker = absl::GetFlag(FLAGS_docker);
+  if (!process::ResolveExecutable(docker).empty() &&
+      RunInherit(docker, {"load", "--input", archive.string()}, stage) == 0) {
+    std::filesystem::remove(archive, ec);
+    return 0;
+  }
+  std::printf(
+      "No docker daemon to load it into; the image is in %s (it holds the "
+      "token):\n\n  docker load --input %s\n",
+      archive.c_str(), archive.c_str());
+  return 0;
+}
+
+// What to do with a kit image, once there is one.
+void PrintKitImageUsage(const std::string &image) {
+  std::printf(
+      "\nMade %s%s. It is one participant's environment, token "
+      "included; run it wherever they work:\n\n",
+      image.c_str(), absl::GetFlag(FLAGS_push) ? " and pushed it" : "");
+  std::printf(
+      "  docker run -it %s                          # a shell in "
+      "/kit, everything built\n",
+      image.c_str());
+  std::printf(
+      "  docker run -it %s arena_cli leaderboard      # the builtin, on "
+      "PATH\n",
+      image.c_str());
+  std::printf(
+      "  docker run -i %s bazel run //:mcp_server   # the MCP "
+      "server on stdio, for an agent\n",
+      image.c_str());
+  std::printf(
+      "  docker run -e ARENA_SERVER=<host:port> ...   # the same kit "
+      "against another coordinator\n");
+}
+
 int RunKit(const ArenaRunfiles &runfiles) {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
@@ -1284,6 +1619,38 @@ int RunKit(const ArenaRunfiles &runfiles) {
   }
   const std::filesystem::path root = WorkspaceRoot();
 
+  // How an image of the kit gets made, settled before a token is minted for
+  // a kit that then cannot be delivered. Under bazel it is layered onto a
+  // base the kit_image target carries. Installed -- the tournament image,
+  // which has a docker socket and no bazel -- it is still a docker build.
+  const std::string image = absl::GetFlag(FLAGS_image);
+  const std::optional<KitImageTools> image_tools = FindKitImageTools();
+  const bool layered = image_tools.has_value();
+  if (layered && image.empty()) {
+    LOG(ERROR) << "kit_image makes an image of the kit: pass --image=TAG "
+                  "(and --push), or run //:kit for the directory alone";
+    return 1;
+  }
+  if (!image.empty() && !layered && !runfiles.installed()) {
+    LOG(ERROR) << "--image needs the base a kit is layered onto, which the "
+                  "kit_image target carries: bazel run //:kit_image -- "
+                  "--image="
+               << image << " ...";
+    return 1;
+  }
+  if (layered && !config->kit().dockerfile().empty()) {
+    LOG(ERROR) << "kit.dockerfile (" << config->kit().dockerfile()
+               << ") is a docker build, and a kit image is layered without "
+                  "one. Put what it installs into an oci_image on "
+                  "@game_arena//game_arena/image:kit_base and name that as "
+                  "arena_problem(kit_base = ...)";
+    return 1;
+  }
+  if (layered && !absl::GetFlag(FLAGS_arena_override).empty()) {
+    LOG(ERROR) << "--arena_override points a kit at a checkout on this host; "
+                  "an image builds against the arena it carries";
+    return 1;
+  }
   // The files, from the macro's environment (rootpaths, space-separated) plus
   // any positional arguments.
   std::vector<std::string> files =
@@ -1421,6 +1788,16 @@ int RunKit(const ArenaRunfiles &runfiles) {
                     "build cache";
     prime = false;
   }
+  // An image's dependencies are vendored into the kit unless the problem lets
+  // a kit's builds fetch: a dependency that resolves in the kit but not in the
+  // sandbox is a submission that fails after it was tested. Part of priming,
+  // so --prime_cache=false leaves an image that fetches and builds cold.
+  const bool vendored =
+      layered && prime && !config->kit().allow_network_builds();
+  if (layered && !prime) {
+    LOG(WARNING) << "the image is not primed: its first build fetches every "
+                    "dependency and compiles all of it";
+  }
 
   const std::string server = absl::GetFlag(FLAGS_server);
   const std::string http = absl::GetFlag(FLAGS_http);
@@ -1454,30 +1831,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
     return 1;
   }
 
-  std::string mcp = absl::StrCat(
-      "{\n"
-      "  \"mcpServers\": {\n"
-      "    \"arena\": {\n"
-      "      \"command\": \"bazel\",\n"
-      "      \"args\": [\"run\", \"//:mcp_server\"],\n"
-      "      \"cwd\": \"",
-      JsonEscape(out.string()),
-      "\",\n"
-      "      \"env\": {\n"
-      "        \"ARENA_MCP_TARGET\": \"",
-      JsonEscape(server), "\"");
-  if (!token.empty()) {
-    absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_TOKEN\": \"",
-                    JsonEscape(token), "\"");
-  }
-  if (!client_id.empty()) {
-    absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_AUTHOR\": \"",
-                    JsonEscape(client_id), "\"");
-  }
-  absl::StrAppend(&mcp, ",\n        \"ARENA_KIT\": \"",
-                  JsonEscape(out.string()), "\"");
-  absl::StrAppend(&mcp, "\n      }\n    }\n  }\n}\n");
-  WriteFile(out / "mcp.json", mcp);
+  WriteFile(out / "mcp.json", KitMcpJson(out, server, token, client_id));
 
   // bazel-* are symlinks the priming build leaves behind; .bazelrc.local
   // names this host's paths; .arena/cache is a bazel disk cache, which an
@@ -1498,16 +1852,11 @@ int RunKit(const ArenaRunfiles &runfiles) {
   // inside a flag's value, and uncommitted, because it names this machine.
   const std::string arena_override = absl::GetFlag(FLAGS_arena_override);
   const std::filesystem::path cache = out / ".arena" / "cache";
-  std::string local =
+  const std::filesystem::path vendor = out / ".arena" / "vendor";
+  std::string local = absl::StrCat(
       "# Written by arena_tournament kit. This host's paths; not committed,\n"
-      "# and not copied into an image of the kit.\n";
-  if (prime) {
-    // Bounded: this lives inside someone's working directory, and a cache
-    // that only grows is a surprise they find out about from `df`.
-    absl::StrAppend(&local, "build --disk_cache=", cache.string(),
-                    "\ncommon --experimental_disk_cache_gc_max_size=",
-                    absl::GetFlag(FLAGS_cache_limit), "\n");
-  }
+      "# and not copied into an image of the kit.\n",
+      KitBuildSettings(out, prime, /*portable=*/layered, vendored));
   if (!arena_override.empty()) {
     absl::StrAppend(&local, "common --override_module=game_arena=",
                     Resolve(arena_override).string(), "\n");
@@ -1519,6 +1868,10 @@ int RunKit(const ArenaRunfiles &runfiles) {
     for (std::string_view line : absl::StrSplit(*existing, '\n')) {
       if (line.empty() || line.front() == '#' ||
           line.find("--disk_cache=" + cache.string()) !=
+              std::string_view::npos ||
+          line.find("--vendor_dir=" + vendor.string()) !=
+              std::string_view::npos ||
+          line.find("--incompatible_strict_action_env") !=
               std::string_view::npos ||
           line.find("--override_module=game_arena=") !=
               std::string_view::npos) {
@@ -1551,12 +1904,38 @@ int RunKit(const ArenaRunfiles &runfiles) {
   }
 
   if (prime) {
+    // For an image, the build that fills the cache has to be the build the
+    // image will run, or nothing in it hits. This host's own rc files are
+    // what would make it a different one -- a remote executor's platform
+    // properties are part of every action's key, and a container has no
+    // ~/.bazelrc -- so they are left out, and the kit's .bazelrc.local
+    // carries the rest (KitBuildSettings).
+    const std::vector<std::string> startup =
+        layered ? std::vector<std::string>{"--nohome_rc", "--nosystem_rc"}
+                : std::vector<std::string>{};
+    const auto bazel = [&](std::vector<std::string> command) {
+      command.insert(command.begin(), startup.begin(), startup.end());
+      return RunInherit("bazel", command, out);
+    };
+    if (vendored) {
+      std::printf("\nVendoring the kit's dependencies into %s...\n",
+                  vendor.c_str());
+      std::fflush(stdout);
+      if (bazel({"vendor", "//..."}) != 0) {
+        LOG(ERROR) << "cannot vendor the kit's dependencies";
+        return 1;
+      }
+    }
     std::printf(
         "\nBuilding the kit once, into %s (the first time takes a while; "
         "--prime_cache=false skips it)...\n",
         cache.c_str());
     std::fflush(stdout);
-    const int code = RunInherit("bazel", {"build", "//..."}, out);
+    const int code = bazel({"build", "//..."});
+    if (layered) {
+      // One server per kit otherwise, each holding this build in memory.
+      bazel({"shutdown"});
+    }
     if (code != 0) {
       LOG(ERROR) << "the kit does not build (exit " << code
                  << "); kit_files is probably missing a BUILD file or a "
@@ -1566,14 +1945,8 @@ int RunKit(const ArenaRunfiles &runfiles) {
     std::printf("Kit builds, and its cache is warm.\n");
   }
 
-  const std::string image = absl::GetFlag(FLAGS_image);
   if (image.empty()) {
     return 0;
-  }
-  const std::filesystem::path dockerfile =
-      runfiles.Locate("game_arena/image/Dockerfile");
-  if (dockerfile.empty()) {
-    return 1;
   }
   if (server.rfind("localhost", 0) == 0 || server.rfind("127.", 0) == 0) {
     LOG(WARNING) << "--server=" << server
@@ -1581,6 +1954,24 @@ int RunKit(const ArenaRunfiles &runfiles) {
                     "is the container itself; pass --server=<host>:<port> "
                     "as the coordinator is reached from where the kit runs, "
                     "or override with `docker run -e ARENA_SERVER=...`";
+  }
+  if (layered) {
+    if (const int code =
+            LayerKitImage(*image_tools, out, image, server, http, token,
+                          client_id, /*cached=*/prime, vendored);
+        code != 0) {
+      return code;
+    }
+    PrintKitImageUsage(image);
+    return 0;
+  }
+  // Installed: the tournament image has a docker socket and no bazel, so
+  // there is nothing here to vendor or prime a kit with, and the image does
+  // its own build as it is made.
+  const std::filesystem::path dockerfile =
+      runfiles.Locate("game_arena/image/Dockerfile");
+  if (dockerfile.empty()) {
+    return 1;
   }
   // The problem's own layer, if it has one: built first, from the problem's
   // repo, and passed in to replace the empty kit_extras stage. Its Dockerfile
@@ -1627,25 +2018,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
                    /*with_arena_context=*/false)) {
     return 1;
   }
-  std::printf(
-      "\nBuilt %s%s. It is one participant's environment, token "
-      "included; run it wherever they work:\n\n",
-      image.c_str(), absl::GetFlag(FLAGS_push) ? " and pushed it" : "");
-  std::printf(
-      "  docker run -it %s                          # a shell in "
-      "/kit, everything built\n",
-      image.c_str());
-  std::printf(
-      "  docker run -it %s arena_cli leaderboard      # the builtin, on "
-      "PATH\n",
-      image.c_str());
-  std::printf(
-      "  docker run -i %s bazel run //:mcp_server   # the MCP "
-      "server on stdio, for an agent\n",
-      image.c_str());
-  std::printf(
-      "  docker run -e ARENA_SERVER=<host:port> ...   # the same kit "
-      "against another coordinator\n");
+  PrintKitImageUsage(image);
   return 0;
 }
 

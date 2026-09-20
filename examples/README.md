@@ -81,7 +81,7 @@ registry), `:config_test`, and three runnable targets:
 | `bazel run //:play` | the tournament in the background, a kit minted for you, and a shell in it; leaving the shell stops everything |
 | `bazel run //:tournament` | a coordinator and a local worker, on this checkout; builds the sandbox image if this daemon lacks it |
 | `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, the arena's kit surface as `./arena`, `arena_cli` as a program, `//:mcp_server`, a README from the config, and a token |
-| `bazel run //:kit -- --mint=bob --server=HOST:PORT --image=TAG` | the same as a docker image: toolchain, kit, everything built; `docker run -it TAG` is a ready environment |
+| `bazel run //:kit_image -- --mint=bob --server=HOST:PORT --image=TAG [--push]` | the same as an image: toolchain, kit, dependencies vendored, cache primed; `docker run -it TAG` is a ready environment. Layered by bazel, so making it needs no docker |
 | `bazel run //:sandbox_image` | the offline sandbox image `sandbox.image` names |
 | `bazel run //:tournament -- --image=TAG` | the coordinator and workers as a docker image, for any host with a docker socket and that sandbox image |
 
@@ -234,6 +234,14 @@ docker run -it registry.example.com/kit-bob:1                        # a shell i
 docker run -i  registry.example.com/kit-bob:1 bazel run //:mcp_server  # the same, as MCP, for an agent
 docker run -it -e ARENA_SERVER=other:50051 registry.example.com/kit-bob:1
 ```
+
+That is a docker build, through the socket, because the container has no
+bazel: the image vendors and builds the kit as it is made, which takes a
+while per participant. From a checkout of the problem the same image is
+`bazel run //:kit_image -- --mint=bob ... --image=... --push`, which needs no
+docker at all -- the kit is primed on the build host and layered onto a
+pinned base -- but mints into the registry of the tournament running *there*
+(`--clients=`), not into this container's.
 
 A kit image is one participant's credential: build one per client id, and push
 it somewhere only they can pull. A kit `docker cp`'d out of the container is
