@@ -33,11 +33,9 @@ proto::WorkOrder MatchOrder() {
   proto::WorkOrder order;
   order.set_order_id("ok-1");
   order.set_game("nim");
-  order.set_base_commit("abc123");
   order.set_referee_target("//testgame:match_referee");
   order.set_opponent_spec("builtin:random");
   order.set_num_games(2);
-  order.set_repo_url("/repo");
   proto::SandboxOrder *sandbox = order.mutable_sandbox();
   sandbox->set_image("img:1");
   sandbox->set_memory_limit_mb(4096);
@@ -201,7 +199,8 @@ TEST(JobForOrderTest, AContainerNeedsNoCapabilities) {
   ASSERT_EQ(job.isolation().tmpfs_size(), 1);
   EXPECT_EQ(job.isolation().tmpfs(0).target(), "/tmp");
   EXPECT_EQ(job.workspace().patch(), sx::Workspace::PATCH_IN_ENTRYPOINT);
-  EXPECT_EQ(job.workspace().tree_dir(), "/w/slot0/repo");
+  // The tree is the image's: the engine is handed none to copy in.
+  EXPECT_TRUE(job.workspace().tree_dir().empty());
 }
 
 TEST(JobForOrderTest, PersistentStateLivesInVolumesUnlessTheHostBindsIt) {
@@ -218,6 +217,18 @@ TEST(JobForOrderTest, PersistentStateLivesInVolumesUnlessTheHostBindsIt) {
   ASSERT_EQ(build.mounts_size(), 1);
   EXPECT_EQ(build.mounts(0).kind(), sx::Mount::VOLUME);
   EXPECT_EQ(build.mounts(0).source(), "arena-disk_cache");
+
+  // And per sandbox user: what root left in a cache, another user cannot
+  // replace.
+  proto::WorkOrder as_user = MatchOrder();
+  as_user.mutable_sandbox()->set_run_as_user("1000:1000");
+  sx::Job owned;
+  ASSERT_TRUE(JobForOrder(1, as_user, Config(), ContainerCapabilities(), &owned,
+                          &error));
+  EXPECT_EQ(owned.workspace().mounts(0).source(),
+            "arena-slot1-output_base-u1000-1000");
+  EXPECT_EQ(owned.phases(0).foreground().mounts(0).source(),
+            "arena-disk_cache-u1000-1000");
 
   // The opt-in: host directories, as the daemon resolves them.
   OrderJobConfig bound = Config();

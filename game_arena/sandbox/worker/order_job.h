@@ -56,7 +56,6 @@ struct OrderJobConfig {
   std::filesystem::path bind_disk_cache_dir;
 
   std::string git = "git";
-  std::string tar = "tar";
   // The build tool. A path for the process engine; inside a container it is
   // whatever the image calls bazel.
   std::string bazel = "bazel";

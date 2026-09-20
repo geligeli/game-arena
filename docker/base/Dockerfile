@@ -2,7 +2,7 @@
 #
 # The arena's base image: bazel and what it needs to run, and nothing of the
 # arena or of any problem. It is the one image here that docker builds, by
-# hand and rarely; every other -- a kit, the sandbox, the tournament -- is
+# hand and rarely; every other -- a kit, the sandbox -- is
 # layered on top of it by bazel (rules_oci), which pulls this by digest and
 # never runs anything inside it. That split is the point: `apt-get` needs a
 # container to run in, and nothing else an arena image is made of does.

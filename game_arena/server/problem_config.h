@@ -31,8 +31,8 @@ std::optional<proto::ProblemConfig> ParseProblemConfigText(
 // know what zero means. Idempotent.
 void ApplyProblemDefaults(proto::ProblemConfig *config);
 
-// Internal consistency: an id that is safe as a store key, a repo and build to
-// point at, exactly one evaluation mode, and a ranking that matches it. Returns
+// Internal consistency: an id that is safe as a store key, a build to point
+// at, exactly one evaluation mode, and a ranking that matches it. Returns
 // false with *error naming the offending field.
 //
 // Expects defaults to have been applied; a bare parse result will trip checks
@@ -40,16 +40,7 @@ void ApplyProblemDefaults(proto::ProblemConfig *config);
 bool ValidateProblemConfig(const proto::ProblemConfig &config,
                            std::string *error);
 
-// A repo.url that is a relative filesystem path is taken relative to the
-// directory holding the config file, so a problem repo can say `url: "."` and
-// stay true wherever it is checked out. URLs -- anything with a scheme, or
-// scp-style "git@host:path" -- and absolute paths are left alone.
-// LoadProblemConfig applies this; exposed so a config built by hand can too.
-void ResolveRelativeRepoUrl(proto::ProblemConfig *config,
-                            const std::filesystem::path &config_dir);
-
-// Read + parse + default + validate, with repo.url resolved against the
-// config's directory. The one entry point main() should use.
+// Read + parse + default + validate. The one entry point main() should use.
 std::optional<proto::ProblemConfig> LoadProblemConfig(
     const std::filesystem::path &path, std::string *error);
 

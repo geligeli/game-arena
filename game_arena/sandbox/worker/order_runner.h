@@ -37,8 +37,8 @@ class OrderRunner {
               std::string machine_class = {});
 
   // Prepares per-slot state up front, so the first order does not pay for
-  // it: one clone per slot, and the bind-mount sources docker would
-  // otherwise conjure up as empty directories. Here rather than on the
+  // it: the bind-mount sources docker would otherwise conjure up as empty
+  // directories. Here rather than on the
   // engine because a slot is an arena concept -- the engine is handed paths,
   // it does not know how many of them there will be.
   bool Warmup(int slots, std::string *error);

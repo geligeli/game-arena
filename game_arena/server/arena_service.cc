@@ -11,15 +11,13 @@
 namespace tournament_arena {
 
 ArenaService::ArenaService(CandidateStore *candidates, Scheduler *scheduler,
-                           Standings *standings, std::string base_commit,
-                           bool graded, std::string game,
+                           Standings *standings, bool graded, std::string game,
                            proto::ProblemInfo problem_info,
                            const ClientRegistry *clients,
                            int default_list_limit)
     : candidates_(candidates),
       scheduler_(scheduler),
       standings_(standings),
-      base_commit_(std::move(base_commit)),
       graded_(graded),
       game_(std::move(game)),
       problem_info_(std::move(problem_info)),
@@ -96,7 +94,6 @@ grpc::Status ArenaService::GetProblem(
   // Filled here rather than at startup: the score label belongs to the
   // standings, and asking them keeps one source of truth for it.
   response->set_score_label(standings_->score_label());
-  response->set_base_commit(base_commit_);
   response->set_graded(graded_);
   return grpc::Status::OK;
 }
@@ -152,7 +149,7 @@ grpc::Status ArenaService::Submit(grpc::ServerContext *context,
     attributed.set_game(game_);
   }
 
-  const auto candidate = candidates_->Create(attributed, base_commit_, &error);
+  const auto candidate = candidates_->Create(attributed, &error);
   if (!candidate.has_value()) {
     // Rejections are the agent's to fix, so the message is the whole payload.
     // The reservation goes back when it falls out of scope here.

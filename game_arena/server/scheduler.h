@@ -60,12 +60,11 @@ struct SchedulerConfig {
   // to the referee untouched. The coordinator never reads these: what they
   // mean is known only to the registry linked into the referee.
   google::protobuf::Map<std::string, std::string> registry_options;
-  // The rest of the sandbox, where the tree comes from, and the build's extra
-  // flags. All on every order because a worker has none of its own to
-  // disagree with: two submissions are only comparable if they were built the
-  // same way, which is the argument base_commit already makes.
+  // The rest of the sandbox -- its image is where the tree is -- and the
+  // build's extra flags. All on every order because a worker has none of its
+  // own to disagree with: two submissions are only comparable if they were
+  // built the same way.
   proto::SandboxOrder sandbox;
-  std::string repo_url;
   std::vector<std::string> bazel_flags;
   // How the referee bounds a game. Forwarded rather than left to the
   // referee's own flag defaults, which is what used to happen.

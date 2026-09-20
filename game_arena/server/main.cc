@@ -2,7 +2,7 @@
 /*
 bazel run //game_arena/server:problem_server -- \
     --problem_config=game_arena/problems/nim.textproto \
-    --data_dir=tournament_data --base_commit=$(git rev-parse HEAD)
+    --data_dir=tournament_data
 */
 //
 // It accepts submissions, stores them, schedules their evaluation onto the
@@ -62,11 +62,6 @@ ABSL_FLAG(int, grpc_port, 50051,
 ABSL_FLAG(int, http_port, 8090, "Port for the HTTP leaderboard");
 ABSL_FLAG(std::string, data_dir, "tournament_data",
           "Directory for submissions, ratings.pb and games/");
-ABSL_FLAG(std::string, base_commit, "",
-          "Overrides the config's repo.base_commit. Pass an explicit sha -- "
-          "e.g. --base_commit=$(git rev-parse HEAD) -- so every submission is "
-          "built against one known tree; ratings from different trees are not "
-          "comparable. Empty: the config's value");
 ABSL_FLAG(std::string, clients, "",
           "Path to the client registry (.textproto). Writes require an "
           "x-arena-token header naming a client in it; reads never do. Empty "
@@ -130,32 +125,6 @@ void WaitForShutdownSignal(tournament_arena::ClientRegistry *clients) {
   }
 }
 
-// The sha |url|'s HEAD names, via `git ls-remote`, which works the same for a
-// path and a URL. Empty when git cannot say.
-std::string ResolveRemoteHead(const std::string &url) {
-  const std::filesystem::path out =
-      std::filesystem::temp_directory_path() /
-      ("problem_server_ls_remote_" + std::to_string(::getpid()));
-  process::RunOptions options;
-  options.stdout_path = out;
-  options.timeout = std::chrono::seconds(60);
-  const process::RunResult result =
-      process::RunCommand("git", {"ls-remote", url, "HEAD"}, options);
-  std::string line;
-  {
-    std::ifstream in(out);
-    std::getline(in, line);
-  }
-  std::error_code ec;
-  std::filesystem::remove(out, ec);
-  if (!result.started || result.exit_code != 0) {
-    return "";
-  }
-  const std::size_t tab = line.find('\t');
-  const std::string sha = line.substr(0, tab);
-  return sha.size() == 40 ? sha : "";
-}
-
 // Turns the problem's evaluation spec into the scheduler's knobs. The scheduler
 // stays problem-agnostic: it knows about orders and timeouts, not about games
 // or benchmarks.
@@ -165,7 +134,6 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
   config.build_timeout_s = static_cast<int>(problem.build().timeout_s());
   config.build_targets.assign(problem.build().targets().begin(),
                               problem.build().targets().end());
-  config.repo_url = problem.repo().url();
   config.bazel_flags.assign(problem.build().bazel_flags().begin(),
                             problem.build().bazel_flags().end());
 
@@ -247,27 +215,6 @@ int main(int argc, char **argv) {
     LOG(ERROR) << error;
     return 2;
   }
-  if (!absl::GetFlag(FLAGS_base_commit).empty()) {
-    problem->mutable_repo()->set_base_commit(absl::GetFlag(FLAGS_base_commit));
-  }
-  if (problem->repo().base_commit() == "HEAD") {
-    // Resolved once, here, so every submission is built against one tree: a
-    // worker's clone has a HEAD of its own that never moves, and two workers
-    // could otherwise build two different trees and the ratings would not
-    // say so. Left as the warning below only if the repo cannot be asked.
-    const std::string sha = ResolveRemoteHead(problem->repo().url());
-    if (!sha.empty()) {
-      LOG(INFO) << "repo.base_commit HEAD is " << sha << " at startup";
-      problem->mutable_repo()->set_base_commit(sha);
-    } else {
-      LOG(WARNING) << "repo.base_commit is \"HEAD\" and "
-                   << problem->repo().url()
-                   << " could not be asked what that is: workers will each "
-                      "build their clone's tip, and ratings from different "
-                      "trees are not comparable. Pass --base_commit=<sha>";
-    }
-  }
-
   const std::filesystem::path data_dir = absl::GetFlag(FLAGS_data_dir);
   std::error_code ec;
   std::filesystem::create_directories(data_dir, ec);
@@ -366,9 +313,9 @@ int main(int argc, char **argv) {
   }
 
   tournament_arena::ArenaService arena(
-      &candidates, &scheduler, standings.get(), problem->repo().base_commit(),
-      graded, problem->has_match() ? problem->match().game() : "",
-      std::move(info), clients.get());
+      &candidates, &scheduler, standings.get(), graded,
+      problem->has_match() ? problem->match().game() : "", std::move(info),
+      clients.get());
   tournament_arena::FleetService fleet(&scheduler);
 
   grpc::ServerBuilder builder;
@@ -410,8 +357,8 @@ int main(int argc, char **argv) {
             << (problem->has_match() ? "match" : "grade")
             << ") on :" << absl::GetFlag(FLAGS_grpc_port) << ", leaderboard on "
             << "http://localhost:" << absl::GetFlag(FLAGS_http_port)
-            << ", data dir " << data_dir << ", base commit "
-            << problem->repo().base_commit() << ", " << candidates.size()
+            << ", data dir " << data_dir << ", sandbox image "
+            << problem->sandbox().image() << ", " << candidates.size()
             << " submission(s) loaded";
   if (problem->source().visibility() !=
       tournament_arena::proto::SourcePolicy::ALL) {

@@ -90,21 +90,6 @@ TEST_F(WorkspaceTest, WritesStagedFilesAndRefusesAnEscapingOne) {
   EXPECT_EQ(refused.code(), proto::Status::INVALID_JOB);
 }
 
-TEST_F(WorkspaceTest, HeadMeansTheSourcesTipNotTheClones) {
-  proto::Workspace ws = BaseWorkspace();
-  ws.set_git(FakeTool("git", 0));
-  ws.set_base_commit("HEAD");
-
-  proto::Status status;
-  ASSERT_TRUE(PrepareWorkspace(ws, root_ / "logs", &status))
-      << status.message();
-  // A clone's own HEAD never moves; after the fetch, the tip is origin/HEAD.
-  EXPECT_NE(ToolLog().find("git checkout --force origin/HEAD"),
-            std::string::npos)
-      << ToolLog();
-  EXPECT_NE(ToolLog().find("git clean -fdx"), std::string::npos);
-}
-
 TEST_F(WorkspaceTest, CreatesTheScratchDir) {
   proto::Workspace ws = BaseWorkspace();
   proto::Status status;

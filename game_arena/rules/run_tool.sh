@@ -7,6 +7,7 @@
 # surface through the runfiles library, which needs RUNFILES_DIR: `bazel
 # run` and `bazel test` set it in different ways, so both are covered here.
 set -euo pipefail
+set -x
 
 if [[ -z "${RUNFILES_DIR:-}" ]]; then
   if [[ -n "${TEST_SRCDIR:-}" ]]; then

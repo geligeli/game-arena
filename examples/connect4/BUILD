@@ -14,4 +14,10 @@ arena_problem(
         "//bots:kit",
         "//game:kit",
     ],
+    # The rest of the tree a submission is built on, package by package.
+    tree = [
+        "//bots:tree",
+        "//bots/submissions:tree",
+        "//game:tree",
+    ],
 )

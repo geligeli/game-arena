@@ -88,9 +88,8 @@ its own bazel workspace:
 Neither is referenced from anything under `game_arena/`, which is the point.
 Start there if you are adding a problem.
 [`examples/README.md`](examples/README.md#deploying-it-on-another-host) walks
-one of them from a checkout to a tournament on another host: the sandbox and
-tournament images, `docker run` on a box with nothing but docker, a kit image
-per participant, and minting their tokens from inside the container.
+one of them from a checkout to a tournament on another host: the sandbox
+image, more workers, a kit image per participant, and minting their tokens.
 
 ## From a problem to a tournament
 
@@ -117,9 +116,7 @@ bazel run //:tournament                              # a coordinator + a local w
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
 bazel build //:kit_image                             # the kit as an image: a build output
 bazel run //:kit_image_issue -- --mint=bob --image=REG/kit-bob --push   # + a primed cache, + bob's token
-bazel run //:sandbox_image                           # the offline sandbox image
-bazel build //:tournament_image                      # the tournament, as an image
-bazel run //:tournament_image_bundle -- --image=REG/c4-arena --push   # + the repo its workers clone
+bazel build //:sandbox_image                         # the sandbox image: the problem's tree, on the arena's base
 bazel build //:connect4                              # every binary a tournament needs
 ```
 
@@ -145,17 +142,13 @@ problem that needs more in its kits layers its own `oci_image` on
 `//game_arena/image:kit_base` and names it as `arena_problem(kit_base =
 ...)`.
 
-The other two images follow the same split. `bazel build //:tournament_image`
-is the coordinator and its workers -- the arena's binaries, the docker CLI, the
-kit image, the problem's config and kit files -- to `docker run` on any host
-with a docker socket and the sandbox image; `tournament_image_bundle` adds the
-repository the workers clone, which a build cannot hold, for a problem whose
-`repo.url` is a path. Inside, `docker exec ... arena_tournament kit --mint=bob
---image=...` admits a participant in about a second, because the image carries
-the built kit image and only the token is added. `bazel run //:sandbox_image`
-is the arena's sandbox base with every dependency the problem resolves added
-to it -- the result of `bazel vendor`, so that one is a `run`. None of the
-three is a docker build, and making any of them needs no daemon. See
+The other image follows the same split. `bazel build //:sandbox_image`
+is the arena's sandbox base with the arena's sources and the problem's tree
+added to it. A worker has no repository: each job's fresh volume is filled
+from the tree in that image, and the first build in a slot fetches what the
+problem resolves. Neither is a docker build, and making either needs no
+daemon. The coordinator and the workers are not images at all: they are
+processes, and only what they build and run is in a container. See
 `game_arena/ARENA.md`. `scripts/new_problem.sh match|graded <dir>` scaffolds a
 new repo from an example.
 

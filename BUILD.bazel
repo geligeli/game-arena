@@ -25,3 +25,14 @@ filegroup(
     ],
     visibility = ["//visibility:public"],
 )
+
+# The arena a sandbox image carries, which its bazelrc overrides game_arena
+# to: what a participant's kit has, and the macro a problem's root BUILD loads.
+filegroup(
+    name = "sandbox_surface",
+    srcs = [
+        ":kit_surface",
+        "//game_arena/rules:sandbox_surface_files",
+    ],
+    visibility = ["//visibility:public"],
+)

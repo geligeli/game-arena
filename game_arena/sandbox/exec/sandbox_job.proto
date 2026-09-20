@@ -88,16 +88,15 @@ message StagedFile {
 
 // The tree a job runs against.
 //
-// A container engine never bind-mounts it: the tree is exported with tar and
-// copied into a per-job volume through the daemon, and every other path here
-// is one this process reads or writes itself. A process engine runs in
-// tree_dir directly.
+// A container engine never bind-mounts it. Every job gets a fresh volume at
+// the workspace's mount point, and docker fills a fresh volume from what the
+// image has there: so a tree the image carries needs nothing from here. A
+// tree_dir is exported with tar and copied into that volume through the
+// daemon instead. A process engine runs in tree_dir directly.
 message Workspace {
-  string source_repo = 1;  // git URL or local path; empty: nothing to clone
-  string tree_dir = 2;     // the engine's clone, or the tree itself
-  string base_commit = 3;  // empty: leave the tree where it is
-  string git = 4;          // empty -> "git"
-  string tar = 5;          // empty -> "tar"; how a container engine exports it
+  string tree_dir = 2;  // the tree; empty: the image's own
+  string git = 4;       // empty -> "git"; applies the patches
+  string tar = 5;       // empty -> "tar"; how a container engine exports it
 
   // Process engines: the writable directory a step collects files from.
   // Container engines keep scratch in a volume and ignore this.
@@ -229,7 +228,7 @@ message Status {
     OK = 0;
     INVALID_JOB = 1;       // no phases, no image, a staged path that escapes
     TOOL_MISSING = 2;      // the docker/git binary could not be run
-    WORKSPACE_FAILED = 3;  // clone, checkout, export, staging, patch, load
+    WORKSPACE_FAILED = 3;  // export, staging, patch, load
     NETWORK_FAILED = 4;    // the phase bridge could not be created
     START_FAILED = 5;      // the sandbox would not start
     ENDPOINT_FAILED = 6;   // a peer never published an address

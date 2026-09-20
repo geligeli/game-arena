@@ -46,9 +46,7 @@ bazel run //:tournament                      # a coordinator and a local worker
 bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
 bazel build //:kit_image                     # the same, as an image: a build output, no docker
 bazel run //:kit_image_issue -- --mint=bob --image=TAG   # that image + a primed cache + bob's token
-bazel run //:sandbox_image                   # the image sandbox.image names
-bazel build //:tournament_image              # the tournament, as an image
-bazel run //:tournament_image_bundle -- --image=TAG   # + the repo its workers clone
+bazel build //:sandbox_image                 # the image sandbox.image names: this tree, on the arena's base
 ```
 
 `play` is the dev loop: `tournament` in the background with its log in
@@ -99,56 +97,33 @@ remote cache reachable from inside the image, say, in a `~/.bazelrc` its own
 need a token, and `kit --mint` adds one and has the coordinator reload),
 waits for the port, starts `--workers` local `sandbox_worker`s, and forwards
 Ctrl-C to all of them. It needs docker and the problem's `sandbox.image`, and
-makes that image when the daemon does not have it, by running
-`//:sandbox_image` -- which is the slow part of a first run. There is no flag that runs a tournament without a sandbox:
+from a checkout makes that image every time, by running
+`//:sandbox_image_load` -- a cached build. There is no flag that runs a tournament without a sandbox:
 `sandbox.image` is required by the config, and a worker links no engine that
 could run an order outside a container.
 
-`tournament_image` is the same thing as an image instead of a process, and a
-build output: the arena's binaries built from the problem's workspace, the
-docker CLI, the built kit image and regctl, and the problem's config and kit
-files, stacked on the arena's base by rules_oci. What it cannot hold is the
-repository the workers clone -- a git history is not a build input -- so for a
-problem whose `repo.url` is a path, `tournament_image_bundle` adds a clean
-clone of the committed tree as one more layer, at the path `"."` resolves to
-inside. A problem whose `repo.url` is a remote uses the built image as it is.
-It runs on any host with a docker socket and the sandbox image on that
-daemon:
-
-```sh
-docker run -d --name c4-arena --restart=unless-stopped -p 50051:50051 -p 8090:8090 \
-    -v /var/run/docker.sock:/var/run/docker.sock -v c4-arena:/var/arena TAG
-docker exec -it c4-arena arena_tournament kit --mint=bob --server=HOST:50051 \
-    --image=REG/kit-bob --push                   # a participant, from inside
-docker run -d -v /var/run/docker.sock:/var/run/docker.sock \
-    -e ARENA_VOLUME_PREFIX=w2 TAG sandbox_worker --server=HOST:50051   # more capacity
-```
-
-Inside, `arena_tournament up` is what `docker run` starts, and `kit` works
-because the image carries `kit_files` and the registry label in its
-environment. `kit --image` there adds the participant's token to the kit image
-the tournament image carries, with regctl -- about a second, and not a build
-of anything; a kit with a primed cache is made from a checkout
-(`kit_image_issue`), because priming is a full build and a coordinator's
-container is not where that belongs. State is the `/var/arena` volume. Or by hand, which is what all
-of those run:
+The problem's tree is not the checkout a worker sees: a submission is built on
+the one the sandbox image carries at `/workspace`, which docker copies into
+each job's fresh volume, so a worker has no repository, runs no git, and
+resets nothing between jobs. The coordinator and the workers are processes,
+never containers: only what a worker builds and runs is in one. By hand, which
+is what `tournament` runs:
 
 ```sh
 # 1. The coordinator. One server per problem; --problem_config says which.
 bazel run //game_arena/server:problem_server -- \
     --problem_config=game_arena/problems/nim.textproto \
-    --data_dir=tournament_data --base_commit=$(git rev-parse HEAD)
+    --data_dir=tournament_data
 
-# 2. One or more workers, here or on any other host with bazel and docker.
+# 2. One or more workers, here or on any other host with docker.
 bazel run //game_arena/sandbox/worker:sandbox_worker -- \
     --server=<arena-host>:50051
 ```
 
-**A worker takes one flag.** Which repository to build, which image to build it
-in, what the sandbox may do, how long a turn may take -- all of it arrives on
-each order, from the problem's config. The reason is the one
-`WorkOrder.base_commit` already gives: two submissions are only comparable if
-they were built the same way, and a fleet whose hosts were each configured by
+**A worker takes one flag.** Which image to build in -- and that image is
+where the tree is -- what the sandbox may do, how long a turn may take: all of
+it arrives on each order, from the problem's config. Two submissions are only
+comparable if they were built the same way, and a fleet whose hosts were each configured by
 hand is a fleet that cannot promise that. A worker with its own `--docker_image`
 could quietly rate one problem's submissions against two different toolchains.
 
@@ -163,7 +138,7 @@ the environment so that the flag surface stays at one:
 |---|---|
 | `ARENA_MACHINE_CLASS` | what kind of host this is, e.g. `bench-c7i`. Nothing can derive a semantic label, and a graded problem can require one -- unset, this worker refuses those orders |
 | `ARENA_SLOTS` | orders at once; how much of this box to lend the arena. Default 2 |
-| `ARENA_WORK_DIR` | where per-slot checkouts live, and the process engine's output bases and cache. Default `/tmp/arena_sandbox`. Keep it off the repo: a work dir inside makes `bazel test //...` descend into the worker's own clone |
+| `ARENA_WORK_DIR` | where per-slot logs and staged patches live. Default `/tmp/arena_sandbox` |
 | `ARENA_VOLUME_PREFIX` | names the docker volumes a container's bazel output bases and disk cache persist in (`<prefix>-slot<N>-output_base`, `<prefix>-disk_cache`). Default `arena-<hostname>`; two workers on one daemon must differ |
 | `ARENA_BIND_OUTPUT_BASE`, `ARENA_BIND_DISK_CACHE` | optional. Host directories, as the docker daemon resolves them, to bind-mount for those caches instead of volumes -- a local disk you can inspect or share with your own builds. Nothing needs them; they are a performance choice |
 
@@ -203,9 +178,9 @@ bazel run //game_arena/testgame:random_client -- \
    `genrule`, and a `genrule` runs arbitrary code at build time.
 2. The scheduler queues a **placement series** — by default two games each
    against `builtin:random` and `builtin:mcts`.
-3. A worker picks up the order, checks out `base_commit` in its slot's
-   checkout, `git apply`s the patch (both sides, for a candidate-vs-candidate
-   match), and builds the problem's targets.
+3. A worker picks up the order, starts from the tree in the sandbox image,
+   `git apply`s the patch (both sides, for a candidate-vs-candidate match),
+   and builds the problem's targets.
 4. The worker starts a `match_referee` and the bot(s) beside it, on a private
    network. The referee plays the games and prints one `RESULT` line.
 5. The tally flows back over the fleet stream; the coordinator updates ELO.
@@ -269,22 +244,22 @@ What is enforced above that, at submit time:
 - **A problem that lets patches touch BUILD files has given that last one up**,
   deliberately, and must rely on the sandbox instead.
 
-The image is still trusted — it carries bazel — and the network being
-closed means the image must carry the repo's external dependencies, since a
-module fetch will fail. That failure is correct: it is a submission depending
-on something the problem did not offer. The C++ toolchain is one of those
-dependencies: the arena depends on hermetic-llvm, a bazel module carrying
+The image is still trusted — it carries bazel. It does not carry the
+problem's external dependencies: nothing is vendored into it, so a problem
+sets `sandbox.allow_build_network` and the first build in a slot fetches them
+into that slot's output-base volume, where they stay. That is a trade for
+simplicity -- a build that can fetch can also exfiltrate -- and a problem that
+cannot make it needs an image of its own with the dependencies in it. The C++
+toolchain is one of those dependencies: the arena depends on hermetic-llvm, a bazel module carrying
 clang, libc++ and compiler-rt, so the compiler is pinned by
 `MODULE.bazel.lock` rather than by whatever the image's distro ships, and a
 kit, a developer's checkout and the sandbox all build with the same one.
-`bazel run //:sandbox_image` makes such an image:
+`bazel build //:sandbox_image` makes the image:
 `//game_arena/image:sandbox_base` -- a small base with bazel and no compiler,
-and a system bazelrc pointing bazel at `/opt/arena/vendor` -- with `bazel
-vendor` of the problem's `MODULE.bazel` added to it as a layer. The vendoring
-runs on the host, since running bazel is not something a build action or a
-layered image can do, and nothing else about it needs docker. A `game_arena`
-overridden with a local path is copied into the image too, with a warning,
-because `bazel vendor` leaves local overrides where they are.
+and a system bazelrc that overrides `game_arena` to `/opt/arena/src` -- with
+the arena's sources there and the problem's tree at `/workspace`. The fetch
+unpacks archives, which as root restores their owners and a sandbox cannot,
+so such a problem also sets `sandbox.run_as_user`.
 
 ## Slots, checkouts and build cost
 

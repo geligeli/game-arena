@@ -8,7 +8,6 @@
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/common/step.h"
 #include "game_arena/sandbox/common/text.h"
-#include "game_arena/sandbox/exec/checkout.h"
 
 namespace sandbox_exec {
 
@@ -109,19 +108,9 @@ bool PrepareWorkspace(const proto::Workspace &ws,
   std::error_code ec;
   std::filesystem::create_directories(log_dir, ec);
 
-  if (!ws.source_repo().empty()) {
-    std::string error;
-    if (!EnsureClone(GitOf(ws), ws.source_repo(), ws.tree_dir(), log_dir,
-                     &error)) {
-      return Fail(status, proto::Status::WORKSPACE_FAILED, error);
-    }
-  }
-  if (!ws.base_commit().empty()) {
-    std::string error;
-    if (!SyncToCommit(GitOf(ws), ws.tree_dir(), ws.base_commit(), log_dir,
-                      &error)) {
-      return Fail(status, proto::Status::WORKSPACE_FAILED, error);
-    }
+  // A process engine's tree is its caller's to fill; it only has to exist.
+  if (!ws.tree_dir().empty()) {
+    std::filesystem::create_directories(ws.tree_dir(), ec);
   }
   // Where a process engine's steps collect files from; a container engine
   // keeps its scratch in a volume and leaves this empty.
@@ -143,8 +132,8 @@ bool ExportTree(const proto::Workspace &ws,
                 const std::filesystem::path &log_dir, proto::Status *status) {
   std::error_code ec;
   std::filesystem::create_directories(archive.parent_path(), ec);
-  // Without .git: the sandbox builds a tree, it does not need the history,
-  // and for a --local clone the objects are hardlinks into the source repo.
+  // Without .git, if the tree happens to be a checkout: the sandbox builds a
+  // tree, it does not need the history.
   const sandbox_common::StepResult exported = sandbox_common::RunStep(
       TarOf(ws),
       {"--exclude=./.git", "-cf", archive.string(), "-C", ws.tree_dir(), "."},

@@ -41,20 +41,6 @@ oci.pull(
 )
 use_repo(oci, "arena_base")
 
-# The docker CLI a tournament image carries: its workers start every build and
-# every match as a container on the daemon whose socket is mounted in. A static
-# binary, so a layer like any other; the archive's daemon and containerd are
-# left behind. Fetched only by a target that builds a tournament image.
-http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-
-http_archive(
-    name = "arena_docker_cli",
-    build_file_content = 'exports_files(["docker"])',
-    sha256 = "cc21815cf1e2efed867dc9c8b96b46ffed8ea176ffab32b0aacb54726ded8f25",
-    strip_prefix = "docker",
-    urls = ["https://download.docker.com/linux/static/stable/x86_64/docker-29.8.0.tgz"],
-)
-
 # game_arena/server:no_problem_code_test is an sh_test.
 bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.1")
@@ -133,7 +119,7 @@ use_repo(pip, "arena_mcp_pip_deps")
 # @cpp_format_bin, so nothing in the build graph misses it.
 bazel_dep(name = "cpp_formatting", version = "0.1.0", dev_dependency = True)
 
-CPP_FORMAT_VERSION = "20260920-d26f1b4"
+CPP_FORMAT_VERSION = "20260920-45a9031"
 
 archive_override(
     module_name = "cpp_formatting",

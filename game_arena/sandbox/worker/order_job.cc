@@ -117,6 +117,12 @@ sx::Mount PersistentMount(const std::filesystem::path &bind_dir,
   return mount;
 }
 
+// A cache is its writer's: what root left in one, another user cannot replace.
+std::string OwnerSuffix(const proto::WorkOrder &order) {
+  const std::string &user = order.sandbox().run_as_user();
+  return user.empty() ? "" : "-u" + sandbox_common::SanitizeContainerName(user);
+}
+
 std::vector<const proto::Side *> SidesOf(const proto::WorkOrder &order) {
   std::vector<const proto::Side *> sides = {&order.candidate()};
   if (order.has_opponent()) {
@@ -131,11 +137,7 @@ std::optional<sx::Workspace> WorkspaceFor(const proto::WorkOrder &order,
                                           std::string *error) {
   const std::filesystem::path slot_dir = SlotDir(config, slot);
   sx::Workspace ws;
-  ws.set_source_repo(order.repo_url());
-  ws.set_tree_dir((slot_dir / "repo").string());
-  ws.set_base_commit(order.base_commit());
   ws.set_git(config.git);
-  ws.set_tar(config.tar);
   ws.set_staging_dir((slot_dir / "patches").string());
 
   for (const proto::Side *side : SidesOf(order)) {
@@ -152,9 +154,10 @@ std::optional<sx::Workspace> WorkspaceFor(const proto::WorkOrder &order,
   }
 
   if (container) {
-    // The engine copies the tree in; git applies the patches inside the
-    // sandbox, so the workspace the build sees is the one the patch was
-    // checked against.
+    // The tree is the image's: no tree_dir, so the job's fresh volume is
+    // filled from what the order's image has at the workspace. git applies
+    // the patches inside the sandbox, so the workspace the build sees is the
+    // one the patch was checked against.
     ws.set_patch(sx::Workspace::PATCH_IN_ENTRYPOINT);
     ws.set_sandbox_work_dir(sandbox_common::kWorkspace);
 
@@ -165,13 +168,16 @@ std::optional<sx::Workspace> WorkspaceFor(const proto::WorkOrder &order,
         PersistentMount(config.bind_output_base_dir.empty()
                             ? std::filesystem::path()
                             : config.bind_output_base_dir / slot_name,
-                        config.volume_prefix + "-" + slot_name + "-output_base",
+                        config.volume_prefix + "-" + slot_name +
+                            "-output_base" + OwnerSuffix(order),
                         sandbox_common::kOutputBaseMount);
     return ws;
   }
 
-  // No sandbox: the step runs in the checkout itself, and git applies the
-  // patches on the host before anything builds.
+  // No sandbox: the step runs in the slot's tree itself, which is its
+  // caller's to fill, and git applies the patches on the host before anything
+  // builds.
+  ws.set_tree_dir((slot_dir / "repo").string());
   ws.set_scratch_dir((slot_dir / "scratch").string());
   ws.set_patch(sx::Workspace::PATCH_HOST);
   return ws;
@@ -203,9 +209,10 @@ void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
     // The shared cache reaches the build and nothing after it: the thing it
     // built has no business seeing it. (The staged patches reach the build
     // the same way, arranged by the engine for the step that applies them.)
-    *build->add_mounts() = PersistentMount(config.bind_disk_cache_dir,
-                                           config.volume_prefix + "-disk_cache",
-                                           sandbox_common::kDiskCacheMount);
+    *build->add_mounts() = PersistentMount(
+        config.bind_disk_cache_dir,
+        config.volume_prefix + "-disk_cache" + OwnerSuffix(order),
+        sandbox_common::kDiskCacheMount);
   }
   build->set_timeout_s(order.build_timeout_s() > 0 ? order.build_timeout_s()
                                                    : kDefaultTimeoutS);

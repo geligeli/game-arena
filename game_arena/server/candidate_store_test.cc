@@ -67,11 +67,10 @@ class CandidateStoreTest : public ::testing::Test {
 
 TEST_F(CandidateStoreTest, StoresSourcesAsReadableFiles) {
   std::string error;
-  const auto candidate = store_->Create(MakeRequest(), "abc123", &error);
+  const auto candidate = store_->Create(MakeRequest(), &error);
   ASSERT_TRUE(candidate.has_value()) << error;
 
   EXPECT_EQ(candidate->display_name(), "My Bot");
-  EXPECT_EQ(candidate->base_commit(), "abc123");
   EXPECT_EQ(candidate->status(), proto::Candidate::PENDING);
   EXPECT_EQ(candidate->candidate_id().rfind("my-bot-", 0), 0u)
       << candidate->candidate_id();
@@ -126,7 +125,7 @@ TEST_F(CandidateStoreTest, AcceptsAPatchDirectly) {
       "-slow\n"
       "+fast\n");
   std::string error;
-  const auto candidate = store.Create(request, "commit0", &error);
+  const auto candidate = store.Create(request, &error);
   ASSERT_TRUE(candidate.has_value()) << error;
   ASSERT_EQ(candidate->touched_paths_size(), 1);
   EXPECT_EQ(candidate->touched_paths(0), "problem/lib/core.h");
@@ -211,7 +210,7 @@ TEST_F(CandidateStoreTest, SynthesizedPatchAppliesWithGit) {
   helper->set_content("#pragma once\nint helper();\n");
 
   std::string error;
-  const auto candidate = store_->Create(request, "commit0", &error);
+  const auto candidate = store_->Create(request, &error);
   ASSERT_TRUE(candidate.has_value()) << error;
   const auto patch = store_->ReadPatch(candidate->candidate_id(), &error);
   ASSERT_TRUE(patch.has_value()) << error;
@@ -244,8 +243,8 @@ TEST_F(CandidateStoreTest, SynthesizedPatchAppliesWithGit) {
 
 TEST_F(CandidateStoreTest, IdsAreUniqueAcrossIdenticalNames) {
   std::string error;
-  const auto first = store_->Create(MakeRequest(), "c", &error);
-  const auto second = store_->Create(MakeRequest(), "c", &error);
+  const auto first = store_->Create(MakeRequest(), &error);
+  const auto second = store_->Create(MakeRequest(), &error);
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(second.has_value());
   EXPECT_NE(first->candidate_id(), second->candidate_id());
@@ -254,7 +253,7 @@ TEST_F(CandidateStoreTest, IdsAreUniqueAcrossIdenticalNames) {
 
 TEST_F(CandidateStoreTest, SurvivesRestart) {
   std::string error;
-  const auto candidate = store_->Create(MakeRequest(), "abc123", &error);
+  const auto candidate = store_->Create(MakeRequest(), &error);
   ASSERT_TRUE(candidate.has_value()) << error;
   ASSERT_TRUE(store_->SetStatus(candidate->candidate_id(),
                                 proto::Candidate::READY, ""));
@@ -279,7 +278,7 @@ TEST_F(CandidateStoreTest, BuildErrorIsTrimmedToTheCap) {
   limits.max_build_error_bytes = 64;
   CandidateStore store(dir_, limits, MakeRules());
   std::string error;
-  const auto candidate = store.Create(MakeRequest(), "c", &error);
+  const auto candidate = store.Create(MakeRequest(), &error);
   ASSERT_TRUE(candidate.has_value()) << error;
 
   const std::string huge(10000, 'x');
@@ -293,15 +292,15 @@ TEST_F(CandidateStoreTest, BuildErrorIsTrimmedToTheCap) {
 
 TEST_F(CandidateStoreTest, LineageMustReferToAKnownCandidate) {
   std::string error;
-  const auto parent = store_->Create(MakeRequest("Parent"), "c", &error);
+  const auto parent = store_->Create(MakeRequest("Parent"), &error);
   ASSERT_TRUE(parent.has_value()) << error;
 
   proto::SubmitRequest child = MakeRequest("Child");
   child.set_parent_id(parent->candidate_id());
-  EXPECT_TRUE(store_->Create(child, "c", &error).has_value()) << error;
+  EXPECT_TRUE(store_->Create(child, &error).has_value()) << error;
 
   child.set_parent_id("does-not-exist");
-  EXPECT_FALSE(store_->Create(child, "c", &error).has_value());
+  EXPECT_FALSE(store_->Create(child, &error).has_value());
   EXPECT_NE(error.find("parent_id"), std::string::npos);
 }
 
@@ -310,7 +309,7 @@ TEST_F(CandidateStoreTest, UnknownCandidateAndFileAreRejected) {
   EXPECT_FALSE(store_->Get("nope").has_value());
   EXPECT_FALSE(store_->ReadSource("nope", "strategy.h", &error).has_value());
 
-  const auto candidate = store_->Create(MakeRequest(), "c", &error);
+  const auto candidate = store_->Create(MakeRequest(), &error);
   ASSERT_TRUE(candidate.has_value());
   // Reads are checked against the manifest, so a path that was never
   // submitted cannot be used to walk out of the candidate's directory.

@@ -8,13 +8,7 @@
 # fails when there is nothing to find.
 common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 
-# Every external repository the problem resolves, the toolchain among them,
-# copied in by `bazel vendor`. A dependency the problem did not vendor is then
-# a build failure, which is the correct outcome for a submission depending on
-# something the problem did not offer.
-common --vendor_dir=/opt/arena/vendor
-
-# Only there when the problem overrides game_arena with a checkout on the host
-# that made the image, whose path means nothing in here: a copy of it, and the
-# flag that points at the copy.
-try-import /opt/arena/override.bazelrc
+# The arena the problem was built with, in place of wherever the problem's
+# MODULE.bazel finds it: a path on the host that made the image means nothing
+# in here.
+common --override_module=game_arena=/opt/arena/src/game_arena

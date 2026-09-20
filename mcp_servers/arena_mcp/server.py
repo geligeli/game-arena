@@ -81,7 +81,7 @@ _JOB_STATE = {
 # How far a running job has got. A build can take half an hour, so "running"
 # on its own does not tell an agent whether to keep waiting.
 _ORDER_PHASE = {
-    arena_pb2.OrderProgress.CLONING: "cloning",
+    arena_pb2.OrderProgress.PREPARING: "preparing",
     arena_pb2.OrderProgress.BUILDING: "building",
     arena_pb2.OrderProgress.RUNNING: "running",
 }
@@ -185,7 +185,6 @@ def arena_rules() -> str:
             if problem.graded
             else " (play others and be rated)"
         ),
-        f"  built against base_commit {problem.base_commit or '-'}",
         "",
     ]
     if problem.description:
@@ -199,13 +198,13 @@ def arena_rules() -> str:
             " BUILD:",
             '    arena_submit(display_name="My Bot", paths=["path/to/strategy.h"])',
             "",
-            "  Or a unified diff against base_commit, for anything the file"
+            "  Or a unified diff against the kit's tree, for anything the file"
             " form cannot express:",
             '    arena_submit(display_name="My Bot", patch_path="my.diff")',
         ]
     else:
         out += [
-            "  A unified diff against base_commit. This problem's solutions"
+            "  A unified diff against the kit's tree. This problem's solutions"
             " change existing\n  code, so a file list cannot express one:",
             '    arena_submit(display_name="Faster", patch_path="my.diff")',
         ]
@@ -267,7 +266,7 @@ def arena_submit(
     turns them into a patch under the problem's submission directory and
     generates the BUILD file.
 
-    patch_path: a unified diff against the problem's base_commit, read from
+    patch_path: a unified diff against the problem's tree, read from
     disk. The general form -- it can change anything the problem allows.
 
     entry_header: the file defining MakePolicy. Defaults to the sole .h/.hpp
@@ -458,7 +457,7 @@ def arena_source(candidate_id: str, path: str = "") -> str:
     Paths are repo-relative, because a submission is a patch and a patch
     touches repo paths. Only files the patch *adds* can be read here -- a
     submission that modifies existing code changes lines that live in the repo,
-    not in the arena, so read those from your own checkout at base_commit.
+    not in the arena, so read those from your own kit.
     """
     stub = _stub()
     if not path:
@@ -473,7 +472,6 @@ def arena_source(candidate_id: str, path: str = "") -> str:
             f"{candidate.candidate_id}  \"{candidate.display_name}\"",
             f"author {candidate.author or '-'}  game {candidate.game}  "
             f"status {_STATUS.get(candidate.status, '?')}",
-            f"base_commit {candidate.base_commit or '-'}  "
             f"parent {candidate.parent_id or '-'}",
         ]
         if candidate.entry_header:
@@ -496,7 +494,7 @@ def arena_source(candidate_id: str, path: str = "") -> str:
         else:
             lines.append(
                 "readable here: none -- this submission only modifies existing "
-                "files. Read them from your own checkout at base_commit."
+                "files. Read them from your own kit."
             )
         if candidate.build_error:
             lines.append("")

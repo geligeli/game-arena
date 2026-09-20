@@ -99,9 +99,8 @@ bool ContainerEngine::Prepare(const proto::Workspace &prototype, int lanes,
   (void)prototype;
   (void)lanes;
   (void)error;
-  // Nothing to do that a job's own PrepareWorkspace does not do: the clone is
-  // per lane and the lane's paths arrive on the job. Kept as an override
-  // point so a caller can still warm a lane up front.
+  // Nothing to do that a job's own PrepareWorkspace does not do. Kept as an
+  // override point so a caller can still warm a lane up front.
   return true;
 }
 

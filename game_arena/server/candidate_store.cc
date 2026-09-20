@@ -422,14 +422,12 @@ void CandidateStore::AppendIndexLocked(
         << "\",\"author\":\"" << JsonEscape(candidate.author())
         << "\",\"game\":\"" << JsonEscape(candidate.game())
         << "\",\"parent_id\":\"" << JsonEscape(candidate.parent_id())
-        << "\",\"base_commit\":\"" << JsonEscape(candidate.base_commit())
         << "\",\"submitted_unix_ms\":" << candidate.submitted_unix_ms()
         << "}\n";
 }
 
 std::optional<proto::Candidate> CandidateStore::Create(
-    const proto::SubmitRequest &request, const std::string &base_commit,
-    std::string *error) {
+    const proto::SubmitRequest &request, std::string *error) {
   std::lock_guard lock(mutex_);
   if (!Validate(request, error)) {
     return std::nullopt;
@@ -442,7 +440,6 @@ std::optional<proto::Candidate> CandidateStore::Create(
   candidate.set_game(request.game());
   candidate.set_parent_id(request.parent_id());
   candidate.set_notes(request.notes());
-  candidate.set_base_commit(base_commit);
   candidate.set_entry_header(request.entry_header());
   *candidate.mutable_extra_deps() = request.extra_deps();
   *candidate.mutable_params() = request.params();

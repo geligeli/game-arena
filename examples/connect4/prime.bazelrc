@@ -1,0 +1,18 @@
+# ~/.bazelrc's cluster, made safe for priming a kit: the shared cache, with
+# every action run here. Passed to the priming build alone, never into a kit:
+#
+#   bazel run //:kit_image_issue -- --image=TAG --prime_bazelrc=prime.bazelrc
+#
+# No --remote_executor and no --remote_default_exec_properties: both are part
+# of every action's key, and a participant's build in the image has neither,
+# so a cache primed with them would never hit.
+common --repository_cache=/large_nfs/.bazel-repo-cache
+
+build --remote_cache=grpc://192.168.1.17:8980
+build --remote_timeout=3600
+# A remote hit has to land in the kit's disk cache, which is what ships.
+build --remote_download_outputs=all
+
+build --bes_backend=grpc://192.168.1.17:8082
+build --bes_results_url=http://192.168.1.17:8081/bazel-invocations/
+build --bes_upload_mode=fully_async

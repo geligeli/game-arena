@@ -1,16 +1,16 @@
 // A sandbox fleet worker: builds submitted candidates and plays their games.
 //
 //   bazel run //game_arena/sandbox/worker:sandbox_worker --
-//       --server=localhost:50051 --repo=/large_nfs/game-mcts --slots=2
+//       --server=localhost:50051 --slots=2
 //
 // The worker dials the arena, so a fleet can be attached from any host that
-// has the repo, bazel and a route to the broker -- no inbound port, no
+// has a docker socket and a route to the broker -- no inbound port, no
 // registration, nothing to configure on the server. Adding capacity is
 // starting another one of these.
 //
 // Orders are pulled off the Attach stream onto a fixed set of slot threads.
-// Each slot owns a checkout and a bazel output base, so builds run in parallel
-// without sharing a workspace lock.
+// Each slot owns a bazel output base, so builds run in parallel without
+// sharing a workspace lock.
 
 #include <grpcpp/grpcpp.h>
 #include <unistd.h>
@@ -55,10 +55,7 @@ namespace {
 //                         unenforceable.
 //   ARENA_SLOTS           how many orders to run at once: how much of this
 //                         box to lend the arena.
-//   ARENA_WORK_DIR        where the per-slot checkouts and bazel output bases
-//                         live. Keep it off the repo: a work dir inside makes
-//                         `bazel test //...` descend into the worker's own
-//                         clone.
+//   ARENA_WORK_DIR        where the per-slot logs and staged patches live.
 //   ARENA_WORKER_ID       stable across reconnects; defaults to
 //                         <hostname>-<pid>.
 //   ARENA_VOLUME_PREFIX   names the docker volumes a container's bazel
@@ -180,7 +177,7 @@ class WorkerSession {
                 << order.opponent_spec() << " (" << order.num_games()
                 << " games)";
       // Progress now comes from the engine, phase by phase, rather than one
-      // BUILDING guess before anything started: CLONING and RUNNING were dead
+      // BUILDING guess before anything started: PREPARING and RUNNING were dead
       // enum values until the engine reported its phases.
       const OrderOutcome outcome =
           runner_->RunOrder(slot, order,
@@ -286,7 +283,7 @@ int main(int argc, char **argv) {
   OrderRunner runner(/*process_engine=*/nullptr, container_engine.get(),
                      std::move(job_config), machine_class);
 
-  // No repository named here: each order says where its tree comes from.
+  // No tree named here: it is in the image each order names.
   LOG(INFO) << "Worker '" << worker_id << "' warming up " << slots
             << " slot(s) under " << work_dir << ", " << runner.engines()
             << " engine(s)"

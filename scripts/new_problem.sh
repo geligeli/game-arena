@@ -6,8 +6,7 @@
 #
 # Copies examples/connect4 (match) or examples/knapsack (graded), renames the
 # module and the problem id, pins game_arena to this checkout's HEAD by
-# git_override, and makes the first commit -- so `repo { url: "." }` with
-# `base_commit: "HEAD"` is true from the start. An uncommitted .bazelrc.local
+# git_override, and makes the first commit. An uncommitted .bazelrc.local
 # points bazel at this checkout while both are being worked on.
 set -euo pipefail
 
@@ -51,9 +50,8 @@ commit="$(git -C "${arena}" rev-parse HEAD)"
 
 mkdir -p "${dest}"
 # Sources only: no bazel-* symlinks, no local state. The lockfile comes along
-# and stays committed: the sandbox builds with no network, and without a lock
-# bazel re-resolves the module graph against the registry. The first local
-# build updates it for the override below; commit that too.
+# and stays committed. The first local build updates it for the override
+# below; commit that too.
 tar -C "${src}" --exclude='./bazel-*' --exclude='./.arena' -cf - . \
     | tar -C "${dest}" -xf -
 
@@ -64,15 +62,15 @@ sed -i -e "s/^    name = \"${example}_problem\",/    name = \"${id}_problem\",/"
     "${dest}/MODULE.bazel"
 sed -i -e "s/^problem_id: \"${example}\"/problem_id: \"${id}\"/" \
        -e "s/^display_name: \".*\"/display_name: \"${id}\"/" \
-       -e "s#^  image: \"${example}-sandbox:\\(.*\\)\"#  image: \"${id}-sandbox:\\1\"#" \
-       -e "s#(registry.example.com/${example}-sandbox:1)#(registry.example.com/${id}-sandbox:1)#" \
+       -e "s#/${example}-sandbox:#/${id}-sandbox:#" \
     "${dest}/problem.textproto"
+sed -i "s/${example}/${id}/g" "${dest}/deploy.sh"
 
 # Pin game_arena. local_path_override in the examples is relative to
 # game-arena's own tree, which this repo is not in. A commit the remote has is
 # pinned by git_override, which any clone can fetch; one that exists only here
-# is pointed at by absolute path, and said so, because a worker cloning this
-# repo elsewhere could not fetch it.
+# is pointed at by absolute path, and said so, because nobody cloning this
+# repo elsewhere could fetch it.
 pin="path"
 if [[ -n "${remote}" ]] && git -C "${arena}" branch -r --contains "${commit}" 2>/dev/null | grep -q .; then
   pin="git"
@@ -120,8 +118,7 @@ GI
 
 git -C "${dest}" init -q
 git -C "${dest}" add -A
-# A first commit so repo.base_commit "HEAD" resolves. With no identity
-# configured, commit as the scaffolder rather than fail.
+# With no identity configured, commit as the scaffolder rather than fail.
 git -C "${dest}" \
     -c user.name="$(git config user.name || echo new_problem.sh)" \
     -c user.email="$(git config user.email || echo new_problem@game-arena)" \
@@ -139,8 +136,8 @@ MSG
 else
   cat <<MSG
 WARNING: game-arena's HEAD (${commit}) is not on a remote, so MODULE.bazel
-pins game_arena by path (${arena}). A worker on another host cannot build
-that; push game-arena and switch to git_override before running on a fleet.
+pins game_arena by path (${arena}). Nobody on another host can build that;
+push game-arena and switch to git_override before sharing this repo.
 MSG
 fi
 cat <<MSG
@@ -150,9 +147,11 @@ Next:
   bazel test //...                                  # the rules and the config
   bazel run //:play                                 # a local arena + your kit
   bazel run //:kit -- --out=/tmp/kit --mint=me      # what a participant gets
-  bazel run //:sandbox_image                        # the sandbox image, by hand
+  bazel build //:sandbox_image                      # the sandbox image: this tree
 
-Every submission is built and run in a container: sandbox.image is
-${id}-sandbox:1, a local tag play makes for you the first time. To deploy,
-change it to one the arena host can pull, and commit that.
+Every submission is built and run in a container: sandbox.image, which play
+makes for you. A package you add exports its files (a "tree" filegroup) and is
+named in arena_problem(tree = ...), or the sandbox does not have it.
+./deploy.sh pushes the kit image to the registry it names, runs the
+tournament on this host, and opens a participant's shell.
 MSG

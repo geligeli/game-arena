@@ -14,4 +14,10 @@ arena_problem(
         "README.md",
         "//solutions/reference:kit",
     ],
+    # The rest of the tree a submission is built on, package by package.
+    tree = [
+        "//grader:tree",
+        "//solutions/greedy:tree",
+        "//solutions/reference:tree",
+    ],
 )

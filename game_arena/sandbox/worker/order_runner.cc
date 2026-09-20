@@ -5,7 +5,6 @@
 #include <system_error>
 #include <utility>
 
-#include "game_arena/sandbox/exec/checkout.h"
 #include "game_arena/sandbox/exec/sandbox_job.pb.h"
 
 namespace tournament_arena {
@@ -21,7 +20,7 @@ class ProgressObserver final : public sandbox_exec::Observer {
       : order_id_(std::move(order_id)), sink_(sink) {}
 
   void OnWorkspaceReady(const std::string &) override {
-    Report(proto::OrderProgress::CLONING);
+    Report(proto::OrderProgress::PREPARING);
   }
   void OnPhaseStarted(const std::string &, const std::string &phase) override {
     Report(phase == "build" ? proto::OrderProgress::BUILDING
@@ -50,10 +49,8 @@ OrderRunner::OrderRunner(sandbox_exec::Engine *process_engine,
       machine_class_(std::move(machine_class)) {}
 
 bool OrderRunner::Warmup(int slots, std::string *error) {
-  // Only the directories now. The tree itself arrives with the order -- a
-  // worker has no repository of its own -- so the clone happens in the
-  // engine's PrepareWorkspace, which is idempotent and therefore pays for
-  // itself once per slot rather than once per order.
+  // Only the directories. The tree is in the image an order names: a worker
+  // has none of its own.
   //
   // The process engine's state is all under work_dir. A container's lives in
   // docker volumes, unless this host opted into bind mounts for its caches;

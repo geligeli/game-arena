@@ -120,7 +120,6 @@ cc_library(
     hdrs = ["order_runner.h"],
     deps = [
         ":order_job",
-        "//game_arena/sandbox/exec:checkout",
         ":order_outcome",
         "//game_arena/proto:arena_cc_proto",
         "//game_arena/sandbox/exec:engine",

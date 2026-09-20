@@ -108,7 +108,7 @@ class SchedulerTest : public ::testing::Test {
     file->set_path("strategy.h");
     file->set_content("// " + name + "\n");
     std::string error;
-    const auto candidate = store_->Create(request, "commit0", &error);
+    const auto candidate = store_->Create(request, &error);
     EXPECT_TRUE(candidate.has_value()) << error;
     store_->SetStatus(candidate->candidate_id(), status, "");
     auto updated = store_->Get(candidate->candidate_id());
@@ -150,7 +150,6 @@ TEST_F(SchedulerTest, PlacementDispatchesOneOrderPerBuiltin) {
   EXPECT_EQ(order.opponent_spec(), "builtin:random");
   EXPECT_FALSE(order.has_opponent()) << "a builtin needs no second build";
   EXPECT_EQ(order.num_games(), 2);
-  EXPECT_EQ(order.base_commit(), "commit0");
   // The patch rides along, so a worker needs nothing but the repo and the
   // order: no callback to the arena, no shared filesystem.
   EXPECT_NE(order.candidate().patch().find("+// Alpha"), std::string::npos)
@@ -174,12 +173,11 @@ TEST_F(SchedulerTest, PlacementDispatchesOneOrderPerBuiltin) {
 TEST_F(SchedulerTest, EveryOrderCarriesTheProblemsSandboxAndTree) {
   // A worker has none of this: it takes one flag, the coordinator's address.
   // Two submissions are only comparable if they were built the same way, so
-  // what to build and what the sandbox may do travel with every order -- the
-  // argument base_commit already made for the tree's revision.
+  // what to build and what the sandbox may do travel with every order. The
+  // tree does too: it is in the image.
   SchedulerConfig config;
   config.placement_opponents = {"builtin:random"};
   config.placement_games = 2;
-  config.repo_url = "/srv/arena";
   config.bazel_flags = {"--config=native"};
   config.turn_timeout_ms = 5000;
   config.game_time_budget_ms = 60000;
@@ -196,7 +194,6 @@ TEST_F(SchedulerTest, EveryOrderCarriesTheProblemsSandboxAndTree) {
 
   ASSERT_FALSE(worker->orders.empty());
   const proto::WorkOrder &order = worker->orders[0];
-  EXPECT_EQ(order.repo_url(), "/srv/arena");
   ASSERT_EQ(order.bazel_flags_size(), 1);
   EXPECT_EQ(order.bazel_flags(0), "--config=native");
   EXPECT_EQ(order.sandbox().image(), "registry/arena-build:1");
@@ -218,7 +215,8 @@ TEST_F(SchedulerTest, ProgressSaysHowFarARunningJobHasGot) {
 
   // Unset until a worker says something: a build can take half an hour, and
   // "running" on its own does not say whether to keep waiting.
-  EXPECT_EQ(scheduler_->GetJob(job_id)->phase(), proto::OrderProgress::CLONING);
+  EXPECT_EQ(scheduler_->GetJob(job_id)->phase(),
+            proto::OrderProgress::PREPARING);
 
   proto::OrderProgress progress;
   progress.set_order_id(order_id);

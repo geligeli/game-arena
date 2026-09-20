@@ -151,38 +151,28 @@ inside: `docker run -it -e ARENA_TOKEN=... TAG` is a shell in the kit, and
 `bazel run //:kit_image_issue -- --mint=alice --image=TAG --push` derives
 alice's from it: dependencies vendored, cache primed, her token baked in.
 
-This directory is inside game-arena's git tree, which a worker cannot clone;
-`scripts/new_problem.sh match <dir>` copies it out as a repository of its own.
+`scripts/new_problem.sh match <dir>` copies this out as a repository of its
+own, to start a problem from.
 
 ## Putting it on a server
 
-The same thing, off this machine: the problem becomes three images, none of
-them built by docker, and
-the host that runs the tournament needs docker and nothing else.
+The same thing, off this machine: `bazel run //:tournament` from a checkout
+on a host people can reach. The coordinator and its workers are processes
+there; only submissions run in containers, in the sandbox image that target
+loads first. State is `~/.arena/connect4`.
 
 ```sh
-scripts/new_problem.sh match /srv/src/connect4       # a repo of its own; workers clone repo.url
-cd /srv/src/connect4                                 # sandbox.image -> a tag you can push, committed
-bazel run //:sandbox_image -- --push                 # what every submission is built and run in
-bazel run //:tournament_image_bundle -- --image=registry.example.com/connect4-arena:1 --push
+./deploy.sh                                          # the below, with this repo's names in it
+
+bazel run //:tournament -- --workers=2
 ```
 
-On the arena host, a pull of both and one container -- the socket is how
-submissions get sandboxed, the volume is the tournament's state:
+Each participant is one command from that checkout, which mints a token,
+reloads the registry and writes their kit -- as a directory (`//:kit --
+--out=DIR`), or as their own image with the address and token baked in:
 
 ```sh
-docker run -d --name connect4-arena --restart=unless-stopped \
-    -p 50051:50051 -p 8090:8090 \
-    -v /var/run/docker.sock:/var/run/docker.sock -v connect4-state:/var/arena \
-    registry.example.com/connect4-arena:1
-```
-
-Each participant is one command against that container, which mints a token,
-reloads the registry and writes their kit -- as a directory to `docker cp`
-out, or as their own image with the address and token baked in:
-
-```sh
-docker exec -it connect4-arena arena_tournament kit --mint=alice \
+bazel run //:kit_image_issue -- --mint=alice \
     --server=arena.example.com:50051 --http=arena.example.com:8090 \
     --image=registry.example.com/kit-alice:1 --push
 ```
@@ -191,9 +181,9 @@ docker exec -it connect4-arena arena_tournament kit --mint=alice \
 docker run -it registry.example.com/kit-alice:1      # their environment, everything built
 ```
 
-The referee, the registry and `bots/` ride along inside the tournament image;
+The referee, the registry and `bots/` ride along inside the sandbox image;
 `match { }` needs nothing else at deploy time, because a worker builds
-`//:match_referee` from the repo it clones. [The full
+`//:match_referee` from the tree that image carries. [The full
 walkthrough](../README.md#deploying-it-on-another-host) covers extra workers,
 `arena_admin mint` for a token without a kit, revoking one, and what survives
 an upgrade.

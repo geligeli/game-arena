@@ -46,3 +46,11 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+# Everything here, for the sandbox image: a glob does not cross packages, so
+# each one exports its own (arena_problem's `tree`).
+filegroup(
+    name = "tree",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)

@@ -13,7 +13,6 @@ namespace {
 constexpr char kMatchConfig[] = R"pb(
   problem_id: "risk2"
   display_name: "Risk, two players"
-  repo { url: "/repo" base_commit: "abc123" }
   build { targets: "//bot" }
   sandbox { image: "arena/sandbox:test" }
   match { game: "risk2" referee_target: "//referee:match_referee" }
@@ -22,7 +21,6 @@ constexpr char kMatchConfig[] = R"pb(
 
 constexpr char kGradeConfig[] = R"pb(
   problem_id: "mcts-bench"
-  repo { url: "/repo" }
   build { targets: "//bench" }
   sandbox { image: "arena/sandbox:test" }
   grade {
@@ -101,7 +99,6 @@ TEST(ProblemConfigTest, KeepsExplicitValuesOverDefaults) {
   const auto config =
       Load(R"pb(
              problem_id: "risk2"
-             repo { url: "/repo" }
              build { targets: "//bot" timeout_s: 60 }
              sandbox { image: "arena/sandbox:test" }
              match { game: "risk2" referee_target: "//r" games_per_order: 2 }
@@ -111,8 +108,6 @@ TEST(ProblemConfigTest, KeepsExplicitValuesOverDefaults) {
   ASSERT_TRUE(config.has_value()) << error;
   EXPECT_EQ(config->build().timeout_s(), 60u);
   EXPECT_EQ(config->match().games_per_order(), 2u);
-  // Unset base_commit means "the tree the server is started on".
-  EXPECT_EQ(config->repo().base_commit(), "HEAD");
 }
 
 TEST(ProblemConfigTest, RejectsUnusableProblemIds) {
@@ -141,7 +136,6 @@ TEST(ProblemConfigTest, RequiresAnEvaluation) {
   std::string error;
   EXPECT_FALSE(Load(R"pb(
                       problem_id: "p"
-                      repo { url: "/repo" }
                       build { targets: "//bot" }
                       sandbox { image: "arena/sandbox:test" }
                     )pb",
@@ -153,7 +147,6 @@ TEST(ProblemConfigTest, RequiresRankingToMatchEvaluation) {
   std::string error;
   EXPECT_FALSE(Load(R"pb(
                       problem_id: "p"
-                      repo { url: "/repo" }
                       build { targets: "//bench" }
                       sandbox { image: "arena/sandbox:test" }
                       grade {
@@ -167,7 +160,6 @@ TEST(ProblemConfigTest, RequiresRankingToMatchEvaluation) {
 
   EXPECT_FALSE(Load(R"pb(
                       problem_id: "p"
-                      repo { url: "/repo" }
                       build { targets: "//bot" }
                       sandbox { image: "arena/sandbox:test" }
                       match { game: "g" referee_target: "//r" }
@@ -181,7 +173,6 @@ TEST(ProblemConfigTest, RequiresExactlyOnePrimaryMetric) {
   std::string error;
   EXPECT_FALSE(Load(R"pb(
                       problem_id: "p"
-                      repo { url: "/repo" }
                       build { targets: "//bench" }
                       sandbox { image: "arena/sandbox:test" }
                       grade {
@@ -199,7 +190,6 @@ TEST(ProblemConfigTest, RejectsRankingByAnUndeclaredMetric) {
   std::string error;
   EXPECT_FALSE(Load(R"pb(
                       problem_id: "p"
-                      repo { url: "/repo" }
                       build { targets: "//bench" }
                       sandbox { image: "arena/sandbox:test" }
                       grade {
@@ -219,55 +209,12 @@ TEST(ProblemConfigTest, RequiresASandboxImage) {
   std::string error;
   EXPECT_FALSE(Load(R"pb(
                       problem_id: "p"
-                      repo { url: "/repo" }
                       build { targets: "//bot" }
                       match { game: "g" referee_target: "//r" }
                       ranking { kind: ELO }
                     )pb",
                     &error));
   EXPECT_NE(error.find("sandbox.image"), std::string::npos) << error;
-}
-
-TEST(ProblemConfigTest, ResolvesARelativeRepoUrlAgainstTheConfigDir) {
-  std::string error;
-  auto config = ParseProblemConfigText(kMatchConfig, &error);
-  ASSERT_TRUE(config.has_value()) << error;
-
-  config->mutable_repo()->set_url(".");
-  ResolveRelativeRepoUrl(&*config, "/srv/problems/risk2");
-  EXPECT_EQ(config->repo().url(), "/srv/problems/risk2");
-
-  config->mutable_repo()->set_url("../shared");
-  ResolveRelativeRepoUrl(&*config, "/srv/problems/risk2");
-  EXPECT_EQ(config->repo().url(), "/srv/problems/shared");
-
-  // Absolute paths and anything URL-shaped are not the config's business.
-  for (const char *untouched :
-       {"/abs/repo", "https://github.com/x/y.git", "git@github.com:x/y.git",
-        "ssh://git@host/x.git", "file:///srv/x"}) {
-    config->mutable_repo()->set_url(untouched);
-    ResolveRelativeRepoUrl(&*config, "/srv/problems/risk2");
-    EXPECT_EQ(config->repo().url(), untouched);
-  }
-}
-
-TEST(ProblemConfigTest, LoadFromFileResolvesRepoUrlDot) {
-  const std::filesystem::path dir =
-      std::filesystem::temp_directory_path() / "problem_config_test_dot";
-  std::filesystem::create_directories(dir);
-  const std::filesystem::path path = dir / "problem.textproto";
-  {
-    std::ofstream out(path);
-    out << "problem_id: \"p\" repo { url: \".\" } build { targets: \"//x\" }"
-           " sandbox { image: \"arena/sandbox:test\" }"
-           " match { game: \"g\" referee_target: \"//r\" } ranking { kind: ELO "
-           "}";
-  }
-  std::string error;
-  const auto config = LoadProblemConfig(path, &error);
-  ASSERT_TRUE(config.has_value()) << error;
-  EXPECT_EQ(config->repo().url(), std::filesystem::canonical(dir).string());
-  std::filesystem::remove_all(dir);
 }
 
 TEST(ProblemConfigTest, LoadFromFileReportsThePath) {

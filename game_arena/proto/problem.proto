@@ -16,26 +16,13 @@ package tournament_arena.proto;
 //
 // Two ways a solution earns a score, and they are exclusive:
 //
-//   GradeSpec   run it, read a number off it (how fast, how small, how accurate)
-//   MatchSpec   play it against others, rate the outcomes with ELO
+//   GradeSpec   run it, read a number off it (how fast, how small, how
+//   accurate) MatchSpec   play it against others, rate the outcomes with ELO
 //
 // Text format, loaded by server/problem_config.h. Protobuf rather than YAML
 // because the config is already a wire message: it is served to agents over
 // RPC, rendered on the leaderboard, and shipped inside every work order, and a
 // second hand-written schema for those would be a second thing to keep in sync.
-
-// ---------------------------------------------------------------------------
-// The repository a submission patches
-// ---------------------------------------------------------------------------
-
-message RepoSpec {
-  // A git URL or a local path. Workers clone this once per slot.
-  string url = 1;
-  // The tree submissions are patched onto. "HEAD" is resolved to a concrete
-  // sha once at server startup, never per submission: a rating is only
-  // comparable across candidates if they were built against the same tree.
-  string base_commit = 2;
-}
 
 // ---------------------------------------------------------------------------
 // What a submission may contain
@@ -135,17 +122,6 @@ message KitSpec {
   // "rivals". Empty leaves `source` a reader that writes nothing.
   string source_dir = 2;
 
-  // No longer honoured, and kept only because the number is taken: a
-  // Dockerfile in the problem's repo, from when a kit image was a docker
-  // build with a stage for the problem to extend. A kit image is layered by
-  // bazel now, where there is no Dockerfile to extend, and making one refuses
-  // a problem that sets this rather than silently leaving it out. What it
-  // installed belongs in an oci_image on
-  // @game_arena//game_arena/image:kit_base, named as
-  // arena_problem(kit_base = ...): it still cannot change what a kit *is*,
-  // only what is available inside it.
-  string dockerfile = 3;
-
   // Leave the kit image's bazel able to fetch from the network. Off by
   // default: a kit whose dependencies are vendored builds what the sandbox
   // builds, and a dependency that resolves here but not there is a
@@ -205,10 +181,13 @@ message BuildSpec {
 // ---------------------------------------------------------------------------
 
 message SandboxSpec {
-  // Image every container starts from. Must carry bazel matching the repo's
-  // MODULE.bazel.lock and every external repository the lock resolves, the
-  // C++ toolchain among them -- builds run without egress, so a module fetch
-  // is a build failure, not a retry.
+  // Image every container starts from, and where the problem's tree is: at
+  // /workspace, which is what a job's fresh volume is filled from. Must carry
+  // bazel matching the tree's .bazelversion. Either it also carries every
+  // external repository MODULE.bazel.lock resolves, the C++ toolchain among
+  // them, or allow_build_network is set: without egress a module fetch is a
+  // build failure, not a retry. Two submissions are only comparable if they
+  // were built in the same one.
   string image = 1;
 
   // Caps on the containers that run the solution -- a bot, a graded command.
@@ -285,7 +264,7 @@ message GradeSpec {
   // Runs to perform. A single timing is noise; the aggregate is the score.
   uint32 repeats = 2;
   enum Aggregate {
-    MIN = 0;     // best of N -- the usual choice for a timing
+    MIN = 0;  // best of N -- the usual choice for a timing
     MEDIAN = 1;
     MEAN = 2;
   }
@@ -397,7 +376,6 @@ message ProblemConfig {
   // rendered at the top of the leaderboard page for humans.
   string description = 3;
 
-  RepoSpec repo = 4;
   SubmissionPolicy submission = 5;
   BuildSpec build = 6;
   SandboxSpec sandbox = 7;

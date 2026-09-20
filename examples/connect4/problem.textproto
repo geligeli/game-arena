@@ -1,9 +1,8 @@
 # A tournament problem: write a Connect Four bot, get rated against everyone
 # else's.
 #
-# Every label below is relative to THIS directory, because this directory is
-# the problem's repo root: the sandbox worker clones a repo and runs bazel at
-# its root, so a problem's workspace has to be that root.
+# Every label below is relative to THIS directory: it is the tree the sandbox
+# image carries, and a worker runs bazel at its root.
 #
 #   bazel run //:play                              # see BUILD
 
@@ -23,12 +22,6 @@ description:
   "\n"
   "You are placed against `builtin:random` and `builtin:greedy` first, then "
   "matched against other submissions.\n"
-
-repo {
-  # Relative to this file: the problem is wherever it is checked out.
-  url: "."
-  base_commit: "HEAD"
-}
 
 submission {
   # A strategy is one header. A patch far larger than that is a mistake worth
@@ -67,13 +60,16 @@ build {
 }
 
 sandbox {
-  # A tag of this problem's own, and a local one: `bazel run //:sandbox_image`
-  # makes it on this host, and `play` does that for you the first time. To
-  # deploy, name it where the arena host can pull it from
-  # (registry.example.com/connect4-sandbox:1) and commit that -- this name, not a
-  # flag, is what a worker asks its daemon for. Never a tag something else
-  # already owns: `sandbox_image` writes to whatever this names.
-  image: "connect4-sandbox:1"
+  # What a worker asks its daemon for, by exactly this name: `bazel build
+  # //:sandbox_image`, this tree on the arena's base. `play` loads it under
+  # this name; deploy.sh pushes it.
+  image: "registry.takumi.city/connect4-sandbox:1"
+  # Nothing is vendored into that image, so the first build in a slot fetches
+  # what MODULE.bazel resolves. A build that can fetch can also exfiltrate.
+  allow_build_network: true
+  # Not root: unpacking a fetched archive as root restores its owners, and a
+  # sandbox has dropped the capability to.
+  run_as_user: "1000:1000"
   memory_limit_mb: 4096
   # The two bots must reach their referee, and nothing else.
   network: NETWORK_INTERNAL_BRIDGE

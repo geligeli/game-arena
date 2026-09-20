@@ -70,7 +70,7 @@ class ArenaIntegrationTest : public ::testing::Test {
     // not its gate. The authenticated fixture below overrides it.
     clients_ = MakeClients();
     arena_ = std::make_unique<ArenaService>(
-        store_.get(), scheduler_.get(), standings_.get(), "deadbeef",
+        store_.get(), scheduler_.get(), standings_.get(),
         /*graded=*/false, /*game=*/"risk2", MakeProblemInfo(), clients_.get());
     fleet_ = std::make_unique<FleetService>(scheduler_.get());
 
@@ -199,7 +199,6 @@ TEST_F(ArenaIntegrationTest, SubmitReachesAWorkerAndComesBackRated) {
   ASSERT_TRUE(message.has_order());
   const proto::WorkOrder &order = message.order();
   EXPECT_EQ(order.candidate().candidate_id(), submitted.candidate_id());
-  EXPECT_EQ(order.base_commit(), "deadbeef");
   EXPECT_EQ(order.opponent_spec(), "builtin:random");
   EXPECT_EQ(order.num_games(), 2);
   // The worker starts this itself, beside the bot, on a private network:

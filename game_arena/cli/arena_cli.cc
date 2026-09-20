@@ -66,8 +66,8 @@ ABSL_FLAG(std::vector<std::string>, file, {},
           "submit: a source file to submit (repeatable). Read from disk, "
           "flattened to its basename; the server generates the BUILD");
 ABSL_FLAG(std::string, patch, "",
-          "submit: a unified diff against the problem's base_commit, read "
-          "from disk. Mutually exclusive with --file");
+          "submit: a unified diff against the problem's tree, read from "
+          "disk. Mutually exclusive with --file");
 ABSL_FLAG(std::string, entry_header, "",
           "submit: the header defining MakePolicy. Defaults to the kit's "
           "entry_header, else the sole .h/.hpp among the files submitted");
@@ -262,8 +262,8 @@ const char *JobStateName(proto::Job::State state) {
 // an hour: "running" on its own does not tell you whether to keep waiting.
 const char *PhaseName(proto::OrderProgress::Phase phase) {
   switch (phase) {
-    case proto::OrderProgress::CLONING:
-      return "cloning";
+    case proto::OrderProgress::PREPARING:
+      return "preparing";
     case proto::OrderProgress::BUILDING:
       return "building";
     case proto::OrderProgress::RUNNING:
@@ -338,7 +338,7 @@ void PrintJob(const proto::Job &job) {
 int WaitForJob(const Client &client, const std::string &server,
                const std::string &job_id) {
   proto::Job::State last = proto::Job::QUEUED;
-  // Tracked alongside the state so a long build reports cloning, then
+  // Tracked alongside the state so a long build reports preparing, then
   // building, then running, instead of one "running" line for half an hour.
   std::optional<proto::OrderProgress::Phase> last_phase;
   for (;;) {
@@ -384,9 +384,7 @@ int CmdRules(const Client &client, const std::string &server) {
   } else {
     std::printf(" (play others and be rated)\n");
   }
-  std::printf(
-      "  built against base_commit %s\n\n",
-      problem.base_commit().empty() ? "-" : problem.base_commit().c_str());
+  std::printf("\n");
   if (!problem.description().empty()) {
     std::printf("%s\n\n", problem.description().c_str());
   }
@@ -811,10 +809,9 @@ int CmdSource(const Client &client, const std::string &server,
               candidate.author().empty() ? "-" : candidate.author().c_str(),
               candidate.game().empty() ? "-" : candidate.game().c_str(),
               StatusName(candidate.status()));
-  std::printf(
-      "base_commit %s  parent %s\n",
-      candidate.base_commit().empty() ? "-" : candidate.base_commit().c_str(),
-      candidate.parent_id().empty() ? "-" : candidate.parent_id().c_str());
+  std::printf("parent %s\n", candidate.parent_id().empty()
+                                 ? "-"
+                                 : candidate.parent_id().c_str());
   if (!candidate.entry_header().empty()) {
     std::printf("entry_header %s\n", candidate.entry_header().c_str());
   }

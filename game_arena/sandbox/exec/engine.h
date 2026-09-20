@@ -86,8 +86,8 @@ class Engine {
   virtual Capabilities capabilities() const = 0;
 
   // Prepares what |lanes| concurrent jobs will need, so the first job does
-  // not pay for it: one clone per lane, and the directories a bind mount
-  // would otherwise conjure up empty. |prototype| carries the paths with
+  // not pay for it: the directories a bind mount would otherwise conjure up
+  // empty. |prototype| carries the paths with
   // "{lane}" still in them.
   virtual bool Prepare(const proto::Workspace &prototype, int lanes,
                        std::string *error) {

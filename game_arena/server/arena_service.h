@@ -29,8 +29,6 @@ namespace tournament_arena {
 
 class ArenaService final : public proto::Arena::Service {
  public:
-  // |base_commit| is the tree candidates are built against, recorded on each
-  // submission so a rating stays attributable to a known revision.
   // |graded| says which shape EvaluateRequest must take, so an agent sending
   // the wrong one gets told rather than getting a default that means nothing.
   // |game| is the problem's game (empty for a graded problem): one server
@@ -40,8 +38,8 @@ class ArenaService final : public proto::Arena::Service {
   // client registry has nobody to authenticate against. The startup log says
   // so, loudly.
   ArenaService(CandidateStore *candidates, Scheduler *scheduler,
-               Standings *standings, std::string base_commit, bool graded,
-               std::string game, proto::ProblemInfo problem_info = {},
+               Standings *standings, bool graded, std::string game,
+               proto::ProblemInfo problem_info = {},
                const ClientRegistry *clients = nullptr,
                int default_list_limit = 50);
 
@@ -109,7 +107,6 @@ class ArenaService final : public proto::Arena::Service {
   CandidateStore *candidates_;  // not owned
   Scheduler *scheduler_;        // not owned
   Standings *standings_;        // not owned
-  const std::string base_commit_;
   const bool graded_;
   const std::string game_;
   // Served verbatim by GetProblem; built once at startup from the config.

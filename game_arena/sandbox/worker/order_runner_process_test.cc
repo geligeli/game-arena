@@ -23,8 +23,6 @@
 namespace tournament_arena {
 namespace {
 
-constexpr char kFakeCommit[] = "c0ffee";
-
 void WriteScript(const std::filesystem::path &path, const std::string &body) {
   std::ofstream out(path);
   out << body;
@@ -41,15 +39,9 @@ class OrderRunnerProcessTest : public ::testing::Test {
     std::filesystem::remove_all(root_);
     std::filesystem::create_directories(root_);
 
-    // git: a clone makes a .git dir, everything else succeeds. Applying a patch
-    // is a no-op here; whether git can apply a diff is unified_diff_test's job.
-    WriteScript(root_ / "git",
-                "#!/usr/bin/env bash\n"
-                "case \"$1\" in\n"
-                "  clone) for a in \"$@\"; do dst=\"$a\"; done\n"
-                "         mkdir -p \"$dst/.git\"; exit 0;;\n"
-                "esac\n"
-                "exit 0\n");
+    // Applying a patch is a no-op here; whether git can apply a diff is
+    // unified_diff_test's job.
+    WriteScript(root_ / "git", "#!/usr/bin/env bash\nexit 0\n");
     WriteScript(root_ / "bazel", "#!/usr/bin/env bash\nexit 0\n");
 
     engine_ = std::make_unique<sandbox_exec::ProcessEngine>();
@@ -58,7 +50,6 @@ class OrderRunnerProcessTest : public ::testing::Test {
     config.work_dir = root_ / "work";
     config.git = (root_ / "git").string();
     config.bazel = (root_ / "bazel").string();
-    std::filesystem::create_directories(root_ / "origin");
     runner_ = std::make_unique<OrderRunner>(
         engine_.get(), /*container_engine=*/nullptr, std::move(config));
     std::string error;
@@ -75,9 +66,6 @@ class OrderRunnerProcessTest : public ::testing::Test {
 
     proto::WorkOrder order;
     order.set_order_id("g-1");
-    order.set_base_commit(kFakeCommit);
-    // A worker has no repository of its own; the order names the tree.
-    order.set_repo_url((root_ / "origin").string());
     order.mutable_candidate()->set_candidate_id("cand-1");
     order.mutable_candidate()->set_patch("diff --git a/x b/x\n");
     order.mutable_candidate()->add_build_targets("//bench");
@@ -309,10 +297,10 @@ TEST_F(OrderRunnerProcessTest, ReportsEveryPhaseItReaches) {
         seen.push_back(phase);
       });
 
-  // CLONING and RUNNING were dead enum values before the engine reported its
+  // PREPARING and RUNNING were dead enum values before the engine reported its
   // phases: the worker sent one BUILDING guess before anything had started.
   ASSERT_GE(seen.size(), 3u);
-  EXPECT_EQ(seen[0], proto::OrderProgress::CLONING);
+  EXPECT_EQ(seen[0], proto::OrderProgress::PREPARING);
   EXPECT_EQ(seen[1], proto::OrderProgress::BUILDING);
   EXPECT_EQ(seen.back(), proto::OrderProgress::RUNNING);
 }

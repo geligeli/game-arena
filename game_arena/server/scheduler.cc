@@ -198,7 +198,6 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
                      std::to_string(++order_counter_));
   order.set_job_id(job_id);
   order.set_game(candidate.game());
-  order.set_base_commit(candidate.base_commit());
   order.set_opponent_spec(opponent);
   order.set_num_games(games);
   order.set_build_timeout_s(config_.build_timeout_s);
@@ -206,7 +205,6 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
   order.set_referee_target(config_.referee_target);
   order.set_match_deadline_s(config_.match_deadline_s);
   *order.mutable_sandbox() = config_.sandbox;
-  order.set_repo_url(config_.repo_url);
   order.mutable_bazel_flags()->Assign(config_.bazel_flags.begin(),
                                       config_.bazel_flags.end());
   order.set_turn_timeout_ms(config_.turn_timeout_ms);

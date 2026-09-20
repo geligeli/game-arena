@@ -80,7 +80,6 @@ class CandidateStore : public CandidateView {
   // Validates, allocates an id, and writes the candidate to disk. Returns
   // nullopt with *error set on a rejected or unwritable submission.
   std::optional<proto::Candidate> Create(const proto::SubmitRequest &request,
-                                         const std::string &base_commit,
                                          std::string *error);
 
   std::optional<proto::Candidate> Get(

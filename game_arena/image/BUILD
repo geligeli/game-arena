@@ -12,18 +12,9 @@ package(default_visibility = ["//visibility:public"])
 # `//...` -- a consumer's, a kit's, a sandbox's `bazel vendor` -- must not need
 # one.
 
-# The base itself, for an image that adds to it without changing what it is.
-alias(
-    name = "base",
-    actual = "@arena_base",
-    tags = ["manual"],
-)
-
 # What every sandbox image starts from: the base, and a system bazelrc that
-# builds from /opt/arena/vendor. What goes *in* that directory is every
-# external repository one problem resolves, which is the result of running
-# `bazel vendor` on it -- not a build's to produce, so `arena_tournament image`
-# adds it to this as a layer, outside one.
+# finds game_arena at /opt/arena/src. arena_problem()'s sandbox_image adds
+# that, and the problem's tree.
 #
 # Bazel's own installation is not unpacked here: it wants a lock file beside
 # itself, and a sandbox's root filesystem is read-only, so the worker points

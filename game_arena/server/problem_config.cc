@@ -39,18 +39,6 @@ class CollectingErrors final : public google::protobuf::io::ErrorCollector {
   std::string text_;
 };
 
-// "https://...", "ssh://...", "file://..." have a scheme; "git@host:path" is
-// scp-style. Everything else is a filesystem path.
-bool LooksLikeUrl(std::string_view url) {
-  if (url.find("://") != std::string_view::npos) {
-    return true;
-  }
-  const std::size_t colon = url.find(':');
-  const std::size_t slash = url.find('/');
-  return colon != std::string_view::npos &&
-         (slash == std::string_view::npos || colon < slash);
-}
-
 int CountPrimaryMetrics(const proto::GradeSpec &grade) {
   int primaries = 0;
   for (const proto::MetricSpec &metric : grade.metrics()) {
@@ -119,10 +107,6 @@ void ApplyProblemDefaults(proto::ProblemConfig *config) {
   // Unset and "explicitly zero" are the same thing for a proto3 scalar, which
   // is exactly right here: every field defaulted below is a limit where zero
   // would be nonsense anyway.
-  if (config->repo().base_commit().empty()) {
-    config->mutable_repo()->set_base_commit("HEAD");
-  }
-
   proto::SubmissionPolicy *submission = config->mutable_submission();
   if (submission->max_patch_bytes() == 0) {
     submission->set_max_patch_bytes(2ULL * 1024 * 1024);
@@ -192,10 +176,6 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
             ? "is required"
             : absl::StrCat("'", config.problem_id(), "' is not usable"),
         ": 1-64 chars, starting [a-z0-9], continuing [a-z0-9_-]");
-    return false;
-  }
-  if (config.repo().url().empty()) {
-    *error = "repo.url is required";
     return false;
   }
   if (config.build().targets().empty()) {
@@ -305,32 +285,6 @@ const proto::MetricSpec *PrimaryMetric(const proto::ProblemConfig &config) {
   return nullptr;
 }
 
-void ResolveRelativeRepoUrl(proto::ProblemConfig *config,
-                            const std::filesystem::path &config_dir) {
-  const std::string &url = config->repo().url();
-  if (url.empty() || LooksLikeUrl(url)) {
-    return;
-  }
-  const std::filesystem::path path(url);
-  if (path.is_absolute()) {
-    return;
-  }
-  // weakly_canonical resolves whatever prefix exists and normalizes the rest,
-  // so a "." or ".." comes out clean whether or not the target is there yet.
-  std::error_code ec;
-  std::filesystem::path resolved =
-      std::filesystem::weakly_canonical(config_dir / path, ec);
-  if (ec) {
-    resolved = (config_dir / path).lexically_normal();
-  }
-  // "dir/." normalizes to "dir/"; a trailing separator is noise in a URL.
-  std::string url_out = resolved.string();
-  while (url_out.size() > 1 && url_out.back() == '/') {
-    url_out.pop_back();
-  }
-  config->mutable_repo()->set_url(url_out);
-}
-
 std::optional<proto::ProblemConfig> LoadProblemConfig(
     const std::filesystem::path &path, std::string *error) {
   std::ifstream in(path, std::ios::binary);
@@ -347,10 +301,6 @@ std::optional<proto::ProblemConfig> LoadProblemConfig(
     *error = absl::StrCat(path.string(), ": ", *error);
     return std::nullopt;
   }
-  std::error_code ec;
-  const std::filesystem::path config_dir =
-      std::filesystem::absolute(path, ec).parent_path();
-  ResolveRelativeRepoUrl(&*config, ec ? path.parent_path() : config_dir);
   ApplyProblemDefaults(&*config);
   if (!ValidateProblemConfig(*config, error)) {
     *error = absl::StrCat(path.string(), ": ", *error);

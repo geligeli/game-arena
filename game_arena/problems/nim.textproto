@@ -18,11 +18,6 @@ description:
   "competition -- it exists so the arena can be run end to end without a game "
   "framework in the build.\n"
 
-repo {
-  url: "/large_nfs/game-mcts"
-  base_commit: "HEAD"
-}
-
 submission {
   max_patch_bytes: 262144
   max_files: 32

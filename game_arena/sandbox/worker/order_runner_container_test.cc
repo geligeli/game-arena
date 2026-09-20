@@ -1,10 +1,8 @@
-// End-to-end test of OrderRunner on the container engine, against fake
-// `docker` and `git` scripts:
-// shell scripts that log every invocation and emulate just enough of each
-// tool (a clone that creates a .git dir, a checkout that records its commit,
-// containers that behave per container name). Nothing is really loaded into
-// a volume, but the exact volumes, mounts, argv and entrypoint scripts
-// handed to docker, and the host-side git work, are asserted from the logs.
+// End-to-end test of OrderRunner on the container engine, against a fake
+// `docker`: a shell script that logs every invocation and emulates just
+// enough of it (containers that behave per container name). Nothing is really
+// loaded into a volume, but the exact volumes, mounts, argv and entrypoint
+// scripts handed to docker are asserted from the log.
 
 #include <gtest/gtest.h>
 #include <unistd.h>
@@ -24,25 +22,17 @@ namespace {
 
 namespace proto = tournament_arena::proto;
 
-constexpr char kFakeCommit[] = "abc123def456";
-
 class OrderRunnerContainerTest : public ::testing::Test {
  protected:
   static void SetUpTestSuite() {
     root_ = std::filesystem::temp_directory_path() /
             ("order_runner_container_itest_" + std::to_string(::getpid()));
-    // A "repository" for the backend to clone: the fake git only needs the
-    // directory to exist, but Warmup requires the .git marker.
-    std::filesystem::create_directories(root_ / "repo_src" / ".git");
+    std::filesystem::create_directories(root_);
 
     fake_docker_ = root_ / "fake_docker";
     std::ofstream(fake_docker_) << FakeDockerScript();
     std::filesystem::permissions(fake_docker_,
                                  std::filesystem::perms::owner_all,
-                                 std::filesystem::perm_options::add);
-    fake_git_ = root_ / "fake_git";
-    std::ofstream(fake_git_) << FakeGitScript();
-    std::filesystem::permissions(fake_git_, std::filesystem::perms::owner_all,
                                  std::filesystem::perm_options::add);
 
     sandbox_exec::ContainerEngineConfig engine_config;
@@ -50,7 +40,6 @@ class OrderRunnerContainerTest : public ::testing::Test {
     engine_ = std::make_unique<sandbox_exec::ContainerEngine>(engine_config);
 
     OrderJobConfig config;
-    config.git = fake_git_.string();
     config.work_dir = root_ / "work";
     config.disk_cache = root_ / "work" / "disk_cache";
     runner_ = std::make_unique<OrderRunner>(/*process_engine=*/nullptr,
@@ -131,35 +120,6 @@ class OrderRunnerContainerTest : public ::testing::Test {
            "exit 1\n";
   }
 
-  static std::string FakeGitScript() {
-    return "#!/usr/bin/env bash\n"
-           "echo \"git $*\" >> \"" +
-           (root_ / "git.log").string() +
-           "\"\n"
-           "cmd=\"$1\"; shift || true\n"
-           "case \"$cmd\" in\n"
-           // The last argument is the clone destination.
-           "  clone)\n"
-           "    dst=\"\"\n"
-           "    for a in \"$@\"; do dst=\"$a\"; done\n"
-           "    mkdir -p \"$dst/.git\"\n"
-           "    exit 0;;\n"
-           "  fetch)\n"
-           "    exit 0;;\n"
-           // Records the checked-out commit where a real repo would keep its
-           // HEAD, for the test to read.
-           "  checkout)\n"
-           "    commit=\"\"\n"
-           "    for a in \"$@\"; do commit=\"$a\"; done\n"
-           "    mkdir -p .git\n"
-           "    echo \"$commit\" > .git/checked_out\n"
-           "    exit 0;;\n"
-           "  clean)\n"
-           "    exit 0;;\n"
-           "esac\n"
-           "exit 1\n";
-  }
-
   static std::string ReadFile(const std::filesystem::path &path) {
     std::ifstream in(path);
     if (!in) {
@@ -203,14 +163,12 @@ class OrderRunnerContainerTest : public ::testing::Test {
     proto::WorkOrder order;
     order.set_order_id(id);
     order.set_game("nim");
-    order.set_base_commit(kFakeCommit);
     order.set_referee_target("//game_arena/testgame:match_referee");
     order.set_opponent_spec("builtin:random");
     order.set_num_games(2);
 
-    // The sandbox travels with the order now: a worker has no image and no
-    // repository of its own.
-    order.set_repo_url((root_ / "repo_src").string());
+    // The sandbox travels with the order: a worker has no image and no tree
+    // of its own.
     proto::SandboxOrder *sandbox = order.mutable_sandbox();
     sandbox->set_image("fake-image:1");
     sandbox->set_memory_limit_mb(4096);
@@ -236,60 +194,32 @@ class OrderRunnerContainerTest : public ::testing::Test {
 
   static std::filesystem::path root_;
   static std::filesystem::path fake_docker_;
-  static std::filesystem::path fake_git_;
   static std::unique_ptr<sandbox_exec::ContainerEngine> engine_;
   static std::unique_ptr<OrderRunner> runner_;
 };
 
 std::filesystem::path OrderRunnerContainerTest::root_;
 std::filesystem::path OrderRunnerContainerTest::fake_docker_;
-std::filesystem::path OrderRunnerContainerTest::fake_git_;
 std::unique_ptr<sandbox_exec::ContainerEngine>
     OrderRunnerContainerTest::engine_;
 std::unique_ptr<OrderRunner> OrderRunnerContainerTest::runner_;
 
-TEST_F(OrderRunnerContainerTest, TheOrderSaysWhichTreeToClone) {
-  // A worker has no repository of its own, so the clone source is whatever
-  // the order names -- which is what stops two hosts in one fleet from
+TEST_F(OrderRunnerContainerTest, TheTreeIsTheImagesNotTheWorkers) {
+  // A worker has no tree of its own: the job's fresh volume is mounted at the
+  // workspace of a container made from the order's image, and docker fills a
+  // fresh volume from what the image has there. Nothing is copied into it
+  // from this side -- which is what stops two hosts in one fleet from
   // building a problem out of two different trees.
-  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("clone-1", "c-ok"), {}).build_ok);
+  const std::size_t before = ReadFile(root_ / "docker.log").size();
+  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("tree-1", "c-ok"), {}).build_ok);
 
-  const std::string git_log = ReadFile(root_ / "git.log");
-  ExpectLogContains(git_log, "git clone " + (root_ / "repo_src").string() +
-                                 " " +
-                                 (root_ / "work" / "slot0" / "repo").string());
-  EXPECT_TRUE(
-      std::filesystem::exists(root_ / "work" / "slot0" / "repo" / ".git"));
+  const std::string mine = ReadFile(root_ / "docker.log").substr(before);
+  ExpectLogContains(mine, "docker create --name saw-0-tree-1-load ");
+  ExpectLogContains(mine, "source=saw-0-tree-1-ws,target=/workspace");
+  EXPECT_EQ(mine.find(":/workspace"), std::string::npos) << mine;
+  EXPECT_FALSE(std::filesystem::exists(root_ / "work" / "slot0" / "repo"));
   // Bind-mount sources that docker would otherwise conjure up exist up front.
   EXPECT_TRUE(std::filesystem::is_directory(root_ / "work" / "disk_cache"));
-}
-
-TEST_F(OrderRunnerContainerTest, ADifferentOrderCanNameADifferentTree) {
-  const std::filesystem::path other = root_ / "other_src";
-  std::filesystem::create_directories(other / ".git");
-  proto::WorkOrder order = MakeOrder("other-1", "c-ok");
-  order.set_repo_url(other.string());
-
-  runner_->RunOrder(1, order, {});
-
-  ExpectLogContains(ReadFile(root_ / "git.log"),
-                    "git clone " + other.string() + " " +
-                        (root_ / "work" / "slot1" / "repo").string());
-}
-
-TEST_F(OrderRunnerContainerTest, AUrlIsClonedWithoutTheHardlinkOptimisation) {
-  // A plain path is cloned without an explicit --local: git hardlinks the
-  // objects when it can and copies them across filesystems, whereas the flag
-  // makes the second case fatal. A URL is passed through unchanged.
-  proto::WorkOrder order = MakeOrder("url-1", "c-ok");
-  order.set_repo_url("https://example.invalid/arena.git");
-
-  runner_->RunOrder(2, order, {});
-
-  const std::string git_log = ReadFile(root_ / "git.log");
-  ExpectLogContains(git_log, "git clone https://example.invalid/arena.git " +
-                                 (root_ / "work" / "slot2" / "repo").string());
-  EXPECT_EQ(git_log.find("--local"), std::string::npos) << git_log;
 }
 
 // The problem's registry_options have to survive all the way to the referee's
@@ -332,27 +262,17 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   EXPECT_EQ(outcome.losses, 0);
   EXPECT_DOUBLE_EQ(outcome.elo, 1500.0);
 
-  // The host checked the slot's clone out at the order's commit.
-  const std::string git_log = ReadFile(root_ / "git.log");
-  ExpectLogContains(git_log, "git fetch --all --tags --quiet");
-  ExpectLogContains(git_log,
-                    std::string("git checkout --force ") + kFakeCommit);
-  EXPECT_EQ(ReadFile(root_ / "work" / "slot0" / "repo" / ".git" / "checked_out")
-                .find(kFakeCommit),
-            0);
-
   // The submission is staged as the one thing the container applies: its patch.
   const auto staged = root_ / "work" / "slot0" / "patches" / "c-ok.diff";
   ASSERT_TRUE(std::filesystem::is_regular_file(staged));
   EXPECT_NE(ReadFile(staged).find("+#pragma once"), std::string::npos);
 
   const std::string log = ReadFile(root_ / "docker.log");
-  // The tree and the staged patch are loaded into the job's own volumes
-  // through the daemon; nothing on this side is mounted anywhere.
+  // The staged patch is loaded into the job's own volume through the daemon;
+  // nothing on this side is mounted anywhere.
   ExpectLogContains(log, "docker volume create saw-0-ok-1-ws");
   ExpectLogContains(log, "docker volume create saw-0-ok-1-patches");
   ExpectLogContains(log, "docker volume create saw-0-ok-1-scratch");
-  ExpectLogContains(log, "docker cp - saw-0-ok-1-load:/workspace");
   ExpectLogContains(log, "docker cp " +
                              (root_ / "work" / "slot0" / "patches").string() +
                              "/. saw-0-ok-1-load:/patches");
@@ -520,7 +440,6 @@ TEST_F(OrderRunnerContainerTest, SideWithoutAPatchIsRejected) {
 
 TEST_F(OrderRunnerContainerTest, WarmupMakesTheDirectoriesThisHostOwns) {
   OrderJobConfig config;
-  config.git = fake_git_.string();
   config.work_dir = root_ / "work_warm";
   config.bind_output_base_dir = root_ / "bind_ob";
   config.bind_disk_cache_dir = root_ / "bind_dc";
@@ -545,7 +464,6 @@ TEST_F(OrderRunnerContainerTest, WarmupMakesTheDirectoriesThisHostOwns) {
 
 TEST_F(OrderRunnerContainerTest, AHostMayBindItsCachesForSpeed) {
   OrderJobConfig config;
-  config.git = fake_git_.string();
   config.work_dir = root_ / "work_bind";
   config.bind_output_base_dir = root_ / "fast" / "ob";
   config.bind_disk_cache_dir = root_ / "fast" / "dc";

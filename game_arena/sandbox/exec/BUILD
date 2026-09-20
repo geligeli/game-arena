@@ -38,16 +38,6 @@ cc_library(
 )
 
 cc_library(
-    name = "checkout",
-    srcs = ["checkout.cc"],
-    hdrs = ["checkout.h"],
-    deps = [
-        "//game_arena/sandbox/common:step",
-        "//game_arena/sandbox/common:text",
-    ],
-)
-
-cc_library(
     name = "entrypoint",
     srcs = ["entrypoint.cc"],
     hdrs = ["entrypoint.h"],
@@ -87,7 +77,6 @@ cc_library(
     srcs = ["workspace.cc"],
     hdrs = ["workspace.h"],
     deps = [
-        ":checkout",
         ":sandbox_job_cc_proto",
         "//game_arena/common/process",
         "//game_arena/sandbox/common:docker",

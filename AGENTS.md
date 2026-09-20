@@ -23,8 +23,8 @@ game_arena/client/     the generic reference client
 game_arena/testgame/   Nim: the arena's own game and reference registry
 game_arena/problems/   nim.textproto
 game_arena/rules/      arena_problem, the macro a problem repo calls
-game_arena/image/      what bazel layers a problem's images onto: kit_base,
-                       sandbox_base, and the base itself
+game_arena/image/      what bazel layers a problem's images onto: kit_base
+                       and sandbox_base
 docker/base/           the base image's Dockerfile: the one image docker
                        builds, by hand, pinned by digest in MODULE.bazel
 game_arena/cli/        arena_cli: the participant's client, a kit's builtin
@@ -140,21 +140,36 @@ No image here is a docker build, except the base (`docker/base/Dockerfile`:
 one split, and it is the thing to keep:
 
 - **What a build can hold is a build output.** rules_oci stacks tars on a base
-  pulled by digest: `//:kit_image`, `//:tournament_image`, and the arena's own
-  `kit_base` and `sandbox_base`. Nothing runs inside an image while it is made.
+  pulled by digest: `//:kit_image`, `//:sandbox_image`,
+  and the arena's own `kit_base` and `sandbox_base`. Nothing runs inside an image while it is made.
 - **What a build cannot hold is added outside one**, as more layers, by
   `arena_tournament` with the regctl rules_oci built the image with: a token
-  (`kit_image_issue`), the result of running bazel -- a primed cache
-  (`kit_image_issue`), vendored dependencies (`sandbox_image`) -- and a git
-  history (`tournament_image_bundle`). Do not turn any of these into an
-  action: a secret ends up in a remote cache, and bazel does not run bazel.
+  and the result of running bazel -- a kit's vendored dependencies and primed
+  cache -- both by `kit_image_issue`, and nothing else. Do not turn either
+  into an action: a secret ends up in a remote cache, and bazel does not run
+  bazel.
+- **The sandbox image vendors nothing.** It is the base, the arena's sources
+  (`//:sandbox_surface`, which its bazelrc overrides `game_arena` to) and the
+  problem's tree. The first build in a slot fetches what the problem resolves
+  into that slot's output-base volume, so a problem sets
+  `sandbox.allow_build_network`, and `run_as_user` to someone who is not root
+  (unpacking an archive as root restores owners, which a sandbox cannot).
+- **The problem's tree is in its sandbox image**, at `/workspace`: the root
+  package's files and the `tree` filegroups each other package exports, since
+  a glob does not cross packages. Every job gets a fresh volume mounted there, and docker
+  fills a fresh volume from what the image has at the mount point: that is
+  how a worker gets the tree, and why it needs no git, no repository and no
+  reset between jobs. There is no `repo.url` and no `base_commit`; the image
+  tag is what two comparable submissions have in common. `up` from a checkout
+  loads it every time, a cached build, so an edit is never missed.
 - Every target that reaches the base is tagged `manual`. `//...` must not need
   a registry, and a sandbox's `bazel vendor //...` must not carry an image.
-  `up` makes a missing sandbox image by *running* `//:sandbox_image`, for the
+  `up` makes the sandbox image by *running* `//:sandbox_image_load`, for the
   same reason: carrying the base itself would put it in `//...`.
-- A tournament image carries the built kit image, so `kit --image` from inside
-  one adds a token and nothing else. It does not prime: that is a full build,
-  and a coordinator's container is not where builds happen.
+- The coordinator and the workers are not images. They are processes on a
+  host with docker (`bazel run //:tournament`); only what a worker builds and
+  runs is a container. Do not wrap them in one: it buys a socket mount and
+  nothing else.
 
 ## Build / test / run
 
@@ -166,12 +181,11 @@ bazel test --config=asan //game_arena/...
 (cd examples/knapsack && bazel test //...)
 ```
 
-End to end, from a standalone problem repo (the examples live inside this git
-tree, and a worker clones `repo.url`, so scaffold one first):
+End to end, from an example as it sits (`scripts/new_problem.sh` is for
+starting a problem of your own, not a prerequisite):
 
 ```sh
-scripts/new_problem.sh match /tmp/c4 --id=c4 && cd /tmp/c4
-# sandbox.image is a local tag (c4-sandbox:1); play makes it the first time.
+cd examples/connect4
 bazel run //:play              # tournament + your kit + a shell in it
 arena_cli submit --name=ref --wait   # the kit's builtin; arena.env is sourced
 exit                           # stops the tournament
@@ -210,6 +224,16 @@ Or the pieces `play` runs: `bazel run //:tournament` in one shell,
   (pre-commit) rewrites `#pragma once` and fails the commit so you re-stage.
 - Loads come from `@rules_cc//cc:cc_library.bzl` etc., not bare `cc_library`.
 - `package(default_visibility = ["//visibility:public"])` in BUILD files.
+
+## Size
+
+- Write the smallest thing that works. If 3 lines do it, write 3 lines.
+- Happy path only. No argument validation, env-var knobs, retry/wait loops,
+  fallbacks or usage text unless asked. `set -e` and the tool's own error are
+  the error handling.
+- Comments: one line, only where the code is surprising.
+- If a change will exceed ~30 lines, say what and why before writing it.
+  Offer hardening as a one-line follow-up, don't build it.
 
 ## Tests
 

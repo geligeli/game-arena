@@ -61,10 +61,6 @@ message ProblemInfo {
   string display_name = 2;
   // Markdown. The whole contract, so one call replaces reading five files.
   string description = 3;
-  // The tree submissions are patched onto. An agent should check this out
-  // before writing a diff against it.
-  string base_commit = 4;
-
   // False: submissions play each other and are rated. True: they are run and
   // measured.
   bool graded = 5;
@@ -125,13 +121,9 @@ message Candidate {
   string parent_id = 5;
   string notes = 6;
 
-  // The commit the sandbox checks out before patching the sources in, so a
-  // result stays attributable to a known tree.
-  string base_commit = 7;
-
-  // The submission itself: a unified diff against |base_commit|. This is the
-  // canonical stored form. A structured submission (files + entry_header) is
-  // converted into one at submit time, so there is exactly one thing to
+  // The submission itself: a unified diff against the problem's tree. This is
+  // the canonical stored form. A structured submission (files + entry_header)
+  // is converted into one at submit time, so there is exactly one thing to
   // validate, store, dispatch and apply.
   bytes patch = 15;
   // Every path |patch| touches, derived at submit time. Kept on the manifest so
@@ -146,11 +138,11 @@ message Candidate {
   map<string, string> params = 11;
 
   enum Status {
-    PENDING = 0;       // stored, waiting for a worker
+    PENDING = 0;  // stored, waiting for a worker
     BUILDING = 1;
-    READY = 2;         // built, playing or played
+    READY = 2;  // built, playing or played
     BUILD_FAILED = 3;
-    DISABLED = 4;      // withdrawn, or retired for misbehaving
+    DISABLED = 4;  // withdrawn, or retired for misbehaving
   }
   Status status = 12;
   // Compact compiler errors on BUILD_FAILED; the worker trims these before
@@ -195,7 +187,9 @@ message SubmitResponse {
   repeated string superseded_job_ids = 3;
 }
 
-message GetCandidateRequest { string candidate_id = 1; }
+message GetCandidateRequest {
+  string candidate_id = 1;
+}
 
 message GetSourceRequest {
   string candidate_id = 1;
@@ -240,7 +234,9 @@ message CandidateStanding {
   int32 runs = 9;
 }
 
-message ListCandidatesResponse { repeated CandidateStanding candidates = 1; }
+message ListCandidatesResponse {
+  repeated CandidateStanding candidates = 1;
+}
 
 // ---------------------------------------------------------------------------
 // Jobs
@@ -276,9 +272,13 @@ message GradeRequest {
   int32 repeats = 1;
 }
 
-message EvaluateResponse { string job_id = 1; }
+message EvaluateResponse {
+  string job_id = 1;
+}
 
-message GetJobRequest { string job_id = 1; }
+message GetJobRequest {
+  string job_id = 1;
+}
 
 message Job {
   string job_id = 1;
@@ -338,9 +338,9 @@ message WorkerHello {
   // Stable across reconnects, so a returning worker is recognised rather than
   // counted twice.
   string worker_id = 1;
-  int32 slots = 2;           // orders it will run concurrently
-  string backend = 3;        // "local" | "docker"
-  repeated string games = 4; // empty: any game the server knows
+  int32 slots = 2;            // orders it will run concurrently
+  string backend = 3;         // "local" | "docker"
+  repeated string games = 4;  // empty: any game the server knows
   // What kind of host this is, e.g. "bench-c7i". A graded problem can require
   // one (GradeSpec.require_machine_class): a timing from a laptop and one from
   // a server are not the same measurement, and a board that mixes them ranks
@@ -348,13 +348,13 @@ message WorkerHello {
   string machine_class = 5;
 }
 
-// One buildable side of an order: a submission, patched onto the base commit
-// and built.
+// One buildable side of an order: a submission, patched onto the problem's
+// tree and built.
 message Side {
   string candidate_id = 1;
 
-  // Unified diff against WorkOrder.base_commit, applied with `git apply` in
-  // the worker's checkout. The coordinator only ever parsed its headers -- it
+  // Unified diff against the tree in the sandbox image, applied with `git
+  // apply` in the sandbox. The coordinator only ever parsed its headers -- it
   // has no tree to apply anything to, and applying submitted patches is
   // exactly the work a coordinator must not do.
   bytes patch = 2;
@@ -374,10 +374,6 @@ message WorkOrder {
   string order_id = 1;
   string job_id = 2;
   string game = 4;
-
-  // The tree every side is patched onto. Two submissions are only comparable
-  // if they were built against the same one.
-  string base_commit = 5;
 
   // The submission being evaluated.
   Side candidate = 3;
@@ -426,11 +422,6 @@ message WorkOrder {
 
   // Everything else about the sandbox this order runs in.
   SandboxOrder sandbox = 21;
-
-  // Where the tree comes from, so a worker has no repository of its own to
-  // disagree with the problem about. A local path is cloned with hardlinks; a
-  // URL is fetched.
-  string repo_url = 22;
 
   // Extra bazel flags from the problem's BuildSpec, e.g. "--config=native".
   // On the order for the same reason the image is: a flag that changes what
@@ -488,10 +479,10 @@ message GradeOrder {
 // read one would be a worker that needs redeploying when that schema changes.
 //
 // It travels on the order rather than being configured per worker because two
-// submissions are only comparable if they were built the same way -- the same
-// argument WorkOrder.base_commit already makes. A fleet whose hosts were
-// started with different images produces ratings that cannot be compared, and
-// nothing would notice.
+// submissions are only comparable if they were built the same way, against
+// the same tree -- and the image is both. A fleet whose hosts were started
+// with different images produces ratings that cannot be compared, and nothing
+// would notice.
 message SandboxOrder {
   // Image every container starts from. Empty means this order does not need a
   // container, and is what tells a worker to run it as plain subprocesses.
@@ -512,12 +503,14 @@ message SandboxOrder {
   bool allow_build_network = 7;
 }
 
-message CancelOrder { string order_id = 1; }
+message CancelOrder {
+  string order_id = 1;
+}
 
 message OrderProgress {
   string order_id = 1;
   enum Phase {
-    CLONING = 0;
+    PREPARING = 0;
     BUILDING = 1;
     RUNNING = 2;
   }
@@ -554,7 +547,9 @@ message OrderResult {
   string machine_class = 13;
 }
 
-message Heartbeat { int32 free_slots = 1; }
+message Heartbeat {
+  int32 free_slots = 1;
+}
 
 message WorkerMessage {
   oneof msg {
@@ -597,4 +592,6 @@ message MetricStore {
 
 // Written to <data_dir>/candidates/<candidate_id>/manifest.pb. Sources live
 // beside it under src/, so they can be read and diffed without a tool.
-message CandidateManifest { Candidate candidate = 1; }
+message CandidateManifest {
+  Candidate candidate = 1;
+}
