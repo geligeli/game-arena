@@ -5,9 +5,9 @@ module(
     version = "0.1.0",
 )
 
-bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_python", version = "1.9.0")
-bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_cc", version = "0.2.25")
 
 # The C++ toolchain: hermetic-llvm (clang + libc++ + compiler-rt, no sysroot).
 # Registered here rather than in each consumer so that a problem repo, a kit
@@ -19,11 +19,11 @@ bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "llvm", version = "0.8.21")
 register_toolchains("@llvm//toolchain:all")
 
-# A kit image is layered by bazel, not built by docker: rules_oci stacks tars
-# on a base it pulls by digest and never runs anything inside it, so making
-# one needs no daemon. (The sandbox and tournament images still run bazel
-# inside themselves as they are made, and stay docker builds:
-# game_arena/image/Dockerfile.) The one thing that does need a container to be made
+# Images are layered by bazel, not built by docker: rules_oci stacks tars on a
+# base it pulls by digest and never runs anything inside it, so making one
+# needs no daemon. What a build cannot hold -- a token, the result of running
+# bazel, a git history -- is added to the built image outside the build, as
+# more layers. The one thing that does need a container to be made
 # -- `apt-get`, and the bazel binary beside it -- is the base itself,
 # docker/base/Dockerfile, built by hand and rarely and pinned here. The tag is
 # for people; only the digest is used. Pulled lazily: nothing fetches it but a
@@ -36,13 +36,27 @@ oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
     name = "arena_base",
     digest = "sha256:e65008b7817ed904b2ca07c744703283edd92166d0d004e6590d839b22321b2d",
-    image = "takumi.city/game-arena-base",
+    image = "registry.takumi.city/game-arena-base",
     # tag = "noble-bazel8.8.0"
 )
 use_repo(oci, "arena_base")
 
+# The docker CLI a tournament image carries: its workers start every build and
+# every match as a container on the daemon whose socket is mounted in. A static
+# binary, so a layer like any other; the archive's daemon and containerd are
+# left behind. Fetched only by a target that builds a tournament image.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "arena_docker_cli",
+    build_file_content = 'exports_files(["docker"])',
+    sha256 = "cc21815cf1e2efed867dc9c8b96b46ffed8ea176ffab32b0aacb54726ded8f25",
+    strip_prefix = "docker",
+    urls = ["https://download.docker.com/linux/static/stable/x86_64/docker-29.8.0.tgz"],
+)
+
 # game_arena/server:no_problem_code_test is an sh_test.
-bazel_dep(name = "rules_shell", version = "0.7.1")
+bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.1")
 
 # game_arena/sandbox/worker:build_log parses bazel output with RE2.
@@ -119,7 +133,7 @@ use_repo(pip, "arena_mcp_pip_deps")
 # @cpp_format_bin, so nothing in the build graph misses it.
 bazel_dep(name = "cpp_formatting", version = "0.1.0", dev_dependency = True)
 
-CPP_FORMAT_VERSION = "20260919-32e9dc2"
+CPP_FORMAT_VERSION = "20260920-d26f1b4"
 
 archive_override(
     module_name = "cpp_formatting",

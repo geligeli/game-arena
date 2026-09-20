@@ -81,9 +81,11 @@ registry), `:config_test`, and three runnable targets:
 | `bazel run //:play` | the tournament in the background, a kit minted for you, and a shell in it; leaving the shell stops everything |
 | `bazel run //:tournament` | a coordinator and a local worker, on this checkout; builds the sandbox image if this daemon lacks it |
 | `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, the arena's kit surface as `./arena`, `arena_cli` as a program, `//:mcp_server`, a README from the config, and a token |
-| `bazel run //:kit_image -- --mint=bob --server=HOST:PORT --image=TAG [--push]` | the same as an image: toolchain, kit, dependencies vendored, cache primed; `docker run -it TAG` is a ready environment. Layered by bazel, so making it needs no docker |
+| `bazel build //:kit_image` | the same as an image, as a build output: toolchain and kit, no token, nothing built. `:kit_image_load` / `:kit_image_push` deliver it; `docker run -it -e ARENA_TOKEN=... TAG` uses it |
+| `bazel run //:kit_image_issue -- --image=TAG [--mint=bob] [--push]` | what a build cannot add, added outside one: dependencies vendored and the cache primed, and a participant's token. `--prime_cache=false` for the token alone, in seconds |
 | `bazel run //:sandbox_image` | the offline sandbox image `sandbox.image` names |
-| `bazel run //:tournament -- --image=TAG` | the coordinator and workers as a docker image, for any host with a docker socket and that sandbox image |
+| `bazel build //:tournament_image` | the coordinator and workers as an image, for any host with a docker socket and that sandbox image; `:tournament_image_load` / `:tournament_image_push` deliver it |
+| `bazel run //:tournament_image_bundle -- --image=TAG [--push]` | that image plus the repository its workers clone, for a problem whose `repo.url` is a path -- which both of these are |
 
 `bazel build //:connect4` builds every binary a tournament needs. What a
 participant sees is exactly `kit_files`: connect4 ships its rules, harness and
@@ -143,25 +145,32 @@ Three things about the copy you deploy that `play` did not care about:
 cd /srv/src/connect4
 docker login registry.example.com
 bazel run //:sandbox_image -- --push                                  # the tag sandbox.image names
-bazel run //:tournament -- --image=registry.example.com/connect4-arena:1 --push
+bazel run //:tournament_image_bundle -- --image=registry.example.com/connect4-arena:1 --push
 ```
 
-`sandbox_image` builds `sandbox.image` itself: every external repository
-the problem resolves, the C++ toolchain among them, vendored, so a worker
-builds submissions in it with no network at all. (`--tag=other:1` builds under a
-different name for a scratch run -- but what gets deployed has to match the
-config.)
+Neither is a docker build, and the build host needs no daemon for either:
+bazel stacks layers on a base it pulls by digest, and `--push` goes straight
+to the registry with the logins docker keeps.
 
-`--image` on the tournament target builds the coordinator instead of running
-it: `problem_server`, `sandbox_worker`, `arena_tournament`, `arena_admin`,
-`arena_cli`, the arena's kit surface as sources, and this repo with its
-`.git`. The arena's binaries are built **from this workspace**, so they are
-the arena version the problem depends on. There is deliberately no toolchain
-in that image -- every build a tournament does happens in the sandbox image,
-through the docker socket.
+`sandbox_image` makes `sandbox.image` itself: every external repository
+the problem resolves, the C++ toolchain among them, vendored on this host and
+added to the arena's sandbox base, so a worker builds submissions in it with
+no network at all. (`--tag=other:1` makes it under a different name for a
+scratch run -- but what gets deployed has to match the config.)
 
-Both take a while the first time; the tournament image keeps a bazel cache
-mount, so rebuilding it after a change to the problem is short.
+`tournament_image` is the coordinator as a build output: `problem_server`,
+`sandbox_worker`, `arena_tournament`, `arena_admin`, `arena_cli`, the docker
+CLI, the arena's kit surface as sources, the built kit image, and this
+problem's config and kit files. The arena's binaries are built **from this
+workspace**, so they are the arena version the problem depends on.
+`tournament_image_bundle` then adds the one thing a build cannot hold -- this
+repo with its `.git`, as a clean clone of the committed tree, for the workers
+to clone. Every build a tournament does happens in the sandbox image, through
+the docker socket, never in this one.
+
+The sandbox image takes a minute or two, nearly all of it compressing the
+toolchain; the tournament image is as fast as the build cache is warm, and the
+bundle step is seconds.
 
 ### On the arena host
 
@@ -235,18 +244,22 @@ docker run -i  registry.example.com/kit-bob:1 bazel run //:mcp_server  # the sam
 docker run -it -e ARENA_SERVER=other:50051 registry.example.com/kit-bob:1
 ```
 
-That is a docker build, through the socket, because the container has no
-bazel: the image vendors and builds the kit as it is made, which takes a
-while per participant. From a checkout of the problem the same image is
-`bazel run //:kit_image -- --mint=bob ... --image=... --push`, which needs no
-docker at all -- the kit is primed on the build host and layered onto a
-pinned base -- but mints into the registry of the tournament running *there*
-(`--clients=`), not into this container's.
+That takes about a second: the tournament image carries the kit image bazel
+built, and this adds bob's token to it with regctl -- nothing is built, and
+the push goes from inside the container, so the registry login has to be in
+there (`docker exec -it connect4-arena /opt/arena/bin/regctl registry login
+registry.example.com`). What it does not have is a primed cache: bob's first
+build in it fetches and compiles. From a checkout of the problem, `bazel run
+//:kit_image_issue -- --mint=bob ... --image=... --push` adds the vendored
+dependencies and the primed cache as well -- but mints into the registry of
+the tournament running *there* (`--clients=`), not into this container's. One
+primed image for everyone and a token each (`arena_admin mint`, then `docker
+run -e ARENA_TOKEN=...`) avoids the question.
 
 A kit image is one participant's credential: build one per client id, and push
 it somewhere only they can pull. A kit `docker cp`'d out of the container is
-the same workspace but a cold one -- the image is where the build is primed,
-because the arena host has no bazel to prime it with.
+the same workspace, as cold as the image made here: priming is a full build
+of the kit, and the arena host is not where that is done.
 
 Someone who needs a token but not a kit -- a CI job, or a participant who
 already has the repo:
@@ -288,7 +301,7 @@ The problem config, the rules and the repo are *inside* the tournament image,
 so changing any of them is a rebuild:
 
 ```sh
-bazel run //:tournament -- --image=registry.example.com/connect4-arena:2 --push
+bazel run //:tournament_image_bundle -- --image=registry.example.com/connect4-arena:2 --push
 # on the arena host
 docker pull registry.example.com/connect4-arena:2
 docker rm -f connect4-arena

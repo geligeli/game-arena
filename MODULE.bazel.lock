@@ -480,7 +480,6 @@
     "https://bcr.bazel.build/modules/rules_shell/0.3.0/MODULE.bazel": "de4402cd12f4cc8fda2354fce179fdb068c0b9ca1ec2d2b17b3e21b24c1a937b",
     "https://bcr.bazel.build/modules/rules_shell/0.4.1/MODULE.bazel": "00e501db01bbf4e3e1dd1595959092c2fadf2087b2852d3f553b5370f5633592",
     "https://bcr.bazel.build/modules/rules_shell/0.6.1/MODULE.bazel": "72e76b0eea4e81611ef5452aa82b3da34caca0c8b7b5c0c9584338aa93bae26b",
-    "https://bcr.bazel.build/modules/rules_shell/0.7.1/MODULE.bazel": "257dd8d667371de804918dfceb86f6ddd2e1b5e025f5d9322878d4a73dc8aa58",
     "https://bcr.bazel.build/modules/rules_shell/0.8.0/MODULE.bazel": "f6a89f1d6a669a26f28fe814503857055d76306b79cfc11d12399af08d0b80ae",
     "https://bcr.bazel.build/modules/rules_shell/0.8.0/source.json": "eb53cc815bc503c6683c5fe12d943f98883f81fc22f51403ec8a95610cba4195",
     "https://bcr.bazel.build/modules/rules_swift/1.16.0/MODULE.bazel": "4a09f199545a60d09895e8281362b1ff3bb08bbde69c6fc87aff5b92fcc916ca",
@@ -720,13 +719,13 @@
     "@@cpp_formatting+//bazel/integration:extensions.bzl%cpp_format": {
       "general": {
         "bzlTransitiveDigest": "6N/vIsxDty/MWHg66D27sBhuS7/dkjBhF6gYTpVj6pQ=",
-        "usagesDigest": "uKyewSqAELMfnQNcMIV20qyj6lS0tdfx7OoM4Tg/Q3c=",
+        "usagesDigest": "HDu7cKj4uIuWHFyiugGmkZcpTeAfTytHT1FyCY1cbHY=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
           "cpp_format_bin": {
             "repoRuleId": "@@cpp_formatting+//bazel/integration:extensions.bzl%_binary_repo",
             "attributes": {
-              "version": "20260919-32e9dc2",
+              "version": "20260920-d26f1b4",
               "base_url": "https://github.com/geligeli/cpp_formatting/releases/download",
               "sha256": {}
             }
@@ -736,7 +735,7 @@
     },
     "@@cpp_formatting+//third_party/llvm:extensions.bzl%llvm": {
       "general": {
-        "bzlTransitiveDigest": "ZJbEE0d88zRVNGzW9laWfbuMISQjD3JTZ066l9TrNrk=",
+        "bzlTransitiveDigest": "RWGSG+JgnUXUpV/vhCqtD42u+0sbR6hR+DvkeCuQ3Rk=",
         "usagesDigest": "WVPi1CHOuwLIbRTk5KY94zTau6WJOp10TgJh6ucfdm0=",
         "recordedInputs": [
           "REPO_MAPPING:cpp_formatting+,bazel_tools bazel_tools"
@@ -752,6 +751,7 @@
               "patches": [
                 "@@cpp_formatting+//patches:llvm_blake3_no_asm_on_windows.patch",
                 "@@cpp_formatting+//patches:llvm_enable_zlib_define.patch",
+                "@@cpp_formatting+//patches:llvm_rdf_std_specializations.patch",
                 "@@cpp_formatting+//patches:llvm_zstd_no_asm_on_windows.patch"
               ],
               "sha256": "7ba3f2a8d8fda88be18a31d011e8195d3b7f87f9fa92b20c94cba2d7f65b0e3f",

@@ -25,7 +25,6 @@ cc_binary(
     name = "arena_tournament",
     srcs = ["arena_tournament.cc"],
     data = [
-        "//game_arena/image:Dockerfile",
         "//game_arena/sandbox/worker:sandbox_worker",
         "//game_arena/server:problem_server",
         # Installed into every kit as a builtin, not run from here.

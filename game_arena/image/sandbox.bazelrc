@@ -1,0 +1,20 @@
+# The sandbox image's system bazelrc (/etc/bazel.bazelrc).
+#
+# System rc rather than the problem's bazel_flags: a worker's bazel invocation
+# is the problem's business, and this is the image's.
+
+# There is no compiler in the image, and bazel must not go looking for one:
+# without this it autoconfigures a host toolchain repository it never uses and
+# fails when there is nothing to find.
+common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
+
+# Every external repository the problem resolves, the toolchain among them,
+# copied in by `bazel vendor`. A dependency the problem did not vendor is then
+# a build failure, which is the correct outcome for a submission depending on
+# something the problem did not offer.
+common --vendor_dir=/opt/arena/vendor
+
+# Only there when the problem overrides game_arena with a checkout on the host
+# that made the image, whose path means nothing in here: a copy of it, and the
+# flag that points at the copy.
+try-import /opt/arena/override.bazelrc

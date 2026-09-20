@@ -224,8 +224,14 @@ void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
     // Bazel's own installation, unpacked once per slot into the persistent
     // volume beside the output base rather than into the image: the install
     // base wants a lock file next to itself, and the image is read-only.
+    // Given as an output_user_root, not an --install_base: under one, bazel
+    // names the install directory after the hash of its own binary. The
+    // volume outlives the image, and a fixed install base unpacked by one
+    // bazel is "corrupt installation" to the next -- every build failing, on
+    // the first sandbox image that moves to another release, until someone
+    // works out which volume to delete.
     *build->add_argv() =
-        Verbatim("--install_base=" + paths.output_base + "/_install");
+        Verbatim("--output_user_root=" + paths.output_base + "/_user_root");
   }
   *build->add_argv() = Verbatim("build");
   if (!paths.disk_cache.empty()) {

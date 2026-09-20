@@ -395,10 +395,13 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   EXPECT_EQ(log.find("volume rm -f arena-"), std::string::npos) << log;
   // --output_base before the command, --disk_cache after it: one is a bazel
   // startup option and the other is not, and the container path used to get
-  // that wrong -- which is why it never built anything.
+  // that wrong -- which is why it never built anything. An output_user_root
+  // rather than an --install_base: bazel keys the install directory under it
+  // by its own binary, so a volume that outlives the image survives the
+  // image moving to another bazel.
   ExpectLogContains(log,
                     "exec bazel --output_base=/output_base "
-                    "--install_base=/output_base/_install build "
+                    "--output_user_root=/output_base/_user_root build "
                     "--disk_cache=/disk_cache '//solutions/"
                     "c-ok:bot'");
 

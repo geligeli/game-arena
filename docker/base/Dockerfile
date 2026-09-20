@@ -1,16 +1,15 @@
 # syntax=docker/dockerfile:1.7
 #
 # The arena's base image: bazel and what it needs to run, and nothing of the
-# arena or of any problem. It is built with docker, by hand and rarely; a kit
-# image is layered on top of it by bazel (rules_oci), which pulls this by
-# digest and never runs anything inside it. That split is the point: `apt-get`
-# needs a container to run in, and nothing else a kit image is made of does.
-# (The sandbox and tournament images are still docker builds of their own, in
-# game_arena/image/Dockerfile, whose `base` stage is this file's twin.)
+# arena or of any problem. It is the one image here that docker builds, by
+# hand and rarely; every other -- a kit, the sandbox, the tournament -- is
+# layered on top of it by bazel (rules_oci), which pulls this by digest and
+# never runs anything inside it. That split is the point: `apt-get` needs a
+# container to run in, and nothing else an arena image is made of does.
 #
 #   docker build --provenance=false --sbom=false \
-#       -t takumi.city/game-arena-base:noble-bazel8.8.0 docker/base
-#   docker push takumi.city/game-arena-base:noble-bazel8.8.0
+#       -t registry.takumi.city/game-arena-base:noble-bazel8.8.0 docker/base
+#   docker push registry.takumi.city/game-arena-base:noble-bazel8.8.0
 #
 # Then pin what the push printed in MODULE.bazel (oci.pull, name "arena_base").
 # The tag is for people; the digest is what builds use, so a rebuild of this

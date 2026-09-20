@@ -3,8 +3,8 @@
 #
 # arena_problem() generates sh_binary/sh_test targets whose srcs is this file
 # and whose first argument is the tool's rootpath. Everything else is passed
-# through. The tool finds problem_server, sandbox_worker and the sandbox
-# Dockerfile through the runfiles library, which needs RUNFILES_DIR: `bazel
+# through. The tool finds problem_server, sandbox_worker and the arena's kit
+# surface through the runfiles library, which needs RUNFILES_DIR: `bazel
 # run` and `bazel test` set it in different ways, so both are covered here.
 set -euo pipefail
 

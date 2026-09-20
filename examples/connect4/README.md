@@ -143,25 +143,28 @@ more installed than bazel, git and python3 layers its own `oci_image` on
 may read of each other is the separate `source` section; the default, and what
 this problem does, is that every submission is readable.
 
-`bazel run //:kit_image -- --mint=alice --server=... --image=TAG [--push]` is
-the same kit as an image with the toolchain, its dependencies vendored and its
-cache primed: `docker run -it TAG` is a shell in the kit, ready to submit, and
-`docker run -i TAG bazel run //:mcp_server` is the MCP server for an agent.
-Bazel layers it onto a pinned base; no docker is involved in making it.
+`bazel build //:kit_image` is the same kit as an image -- a build output,
+stacked by bazel on a pinned base, with no docker involved and no token
+inside: `docker run -it -e ARENA_TOKEN=... TAG` is a shell in the kit, and
+`docker run -i TAG bazel run //:mcp_server` is the MCP server for an agent
+(`bazel run //:kit_image_load` puts it in your daemon as `connect4-kit`).
+`bazel run //:kit_image_issue -- --mint=alice --image=TAG --push` derives
+alice's from it: dependencies vendored, cache primed, her token baked in.
 
 This directory is inside game-arena's git tree, which a worker cannot clone;
 `scripts/new_problem.sh match <dir>` copies it out as a repository of its own.
 
 ## Putting it on a server
 
-The same thing, off this machine: the problem becomes three docker images, and
+The same thing, off this machine: the problem becomes three images, none of
+them built by docker, and
 the host that runs the tournament needs docker and nothing else.
 
 ```sh
 scripts/new_problem.sh match /srv/src/connect4       # a repo of its own; workers clone repo.url
 cd /srv/src/connect4                                 # sandbox.image -> a tag you can push, committed
 bazel run //:sandbox_image -- --push                 # what every submission is built and run in
-bazel run //:tournament -- --image=registry.example.com/connect4-arena:1 --push
+bazel run //:tournament_image_bundle -- --image=registry.example.com/connect4-arena:1 --push
 ```
 
 On the arena host, a pull of both and one container -- the socket is how

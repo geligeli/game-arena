@@ -135,19 +135,15 @@ message KitSpec {
   // "rivals". Empty leaves `source` a reader that writes nothing.
   string source_dir = 2;
 
-  // A Dockerfile in the problem's repo, layered into the kit image between
-  // the arena's toolchain stage and the kit itself: `FROM kit_base` plus
-  // whatever this problem's participants need installed. The kit's own
-  // contents, the builtins and the build still come from the arena's
-  // Dockerfile after it, so this cannot change what a kit *is*, only what is
-  // available inside it.
-  //
-  // Only the docker build of a kit image reads this, which is the one a
-  // deployed tournament does from inside its container. From a checkout a kit
-  // image is layered by bazel, where there is no Dockerfile to extend and
-  // `kit_image` refuses a problem that sets this: the same addition is an
-  // oci_image on @game_arena//game_arena/image:kit_base, named as
-  // arena_problem(kit_base = ...).
+  // No longer honoured, and kept only because the number is taken: a
+  // Dockerfile in the problem's repo, from when a kit image was a docker
+  // build with a stage for the problem to extend. A kit image is layered by
+  // bazel now, where there is no Dockerfile to extend, and making one refuses
+  // a problem that sets this rather than silently leaving it out. What it
+  // installed belongs in an oci_image on
+  // @game_arena//game_arena/image:kit_base, named as
+  // arena_problem(kit_base = ...): it still cannot change what a kit *is*,
+  // only what is available inside it.
   string dockerfile = 3;
 
   // Leave the kit image's bazel able to fetch from the network. Off by

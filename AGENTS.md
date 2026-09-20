@@ -23,10 +23,10 @@ game_arena/client/     the generic reference client
 game_arena/testgame/   Nim: the arena's own game and reference registry
 game_arena/problems/   nim.textproto
 game_arena/rules/      arena_problem, the macro a problem repo calls
-game_arena/image/      the Dockerfile the sandbox and tournament images come
-                       from, and kit_base: what bazel layers a kit image onto
-docker/base/           the base image's Dockerfile: the one image built by
-                       hand, pinned by digest in MODULE.bazel
+game_arena/image/      what bazel layers a problem's images onto: kit_base,
+                       sandbox_base, and the base itself
+docker/base/           the base image's Dockerfile: the one image docker
+                       builds, by hand, pinned by digest in MODULE.bazel
 game_arena/cli/        arena_cli: the participant's client, a kit's builtin
 game_arena/tools/      arena_admin, arena_tournament (operator tooling)
 game_arena/common/     subprocess wrapper
@@ -118,20 +118,43 @@ they need to work on the problem.**
   participant may edit -- the coordinator enforces the problem's policy on
   whatever arrives, so a widened kit config changes what is sent, never what
   is accepted.
-- A kit image is layered, not built: `//:kit_image` stacks the kit on
-  `//game_arena/image:kit_base` with rules_oci's regctl, and no container
-  runs while it is made. So whatever a Dockerfile would `RUN` happens on the
-  host first -- `bazel vendor`, then the build that primes `.arena/cache` --
-  with `--nohome_rc --nosystem_rc` and a strict action env, because a cache
-  hits only for the build that filled it. The token goes on at run time, by
-  the tool: never make it an input of a bazel action, where a remote cache
-  keeps it. Everything that pulls the base is tagged `manual`; `//...` must
-  not need a registry, and a sandbox's `bazel vendor //...` must not carry an
-  image.
+- A kit image is a build output: `bazel build //:kit_image` is the kit's tree
+  (`rules/kit_tree.bzl`, this tool run in an action) stacked on
+  `//game_arena/image:kit_base` by rules_oci. No container runs while it is
+  made, and nothing goes into it that is not a build's to hold. The two
+  things that are not -- priming, which is bazel run on a kit, and a token,
+  which is a secret and would sit in a remote cache -- are **external
+  actions**: `//:kit_image_issue` adds each as a layer on the built image, at
+  run time. Do not move either into an action. Priming runs with
+  `--nohome_rc --nosystem_rc` and a strict action env, because a cache hits
+  only for the build that filled it.
 - What of each other participants may read is `SourcePolicy` in the problem
   config, enforced in `arena_service.cc` on `GetSource` and on the patch bytes
   of every manifest. The default is that everything is readable; that is the
   point of the arena, and a problem opts out of it deliberately.
+
+## Images
+
+No image here is a docker build, except the base (`docker/base/Dockerfile`:
+`apt-get` needs a container to run in, and nothing else does). The rest follow
+one split, and it is the thing to keep:
+
+- **What a build can hold is a build output.** rules_oci stacks tars on a base
+  pulled by digest: `//:kit_image`, `//:tournament_image`, and the arena's own
+  `kit_base` and `sandbox_base`. Nothing runs inside an image while it is made.
+- **What a build cannot hold is added outside one**, as more layers, by
+  `arena_tournament` with the regctl rules_oci built the image with: a token
+  (`kit_image_issue`), the result of running bazel -- a primed cache
+  (`kit_image_issue`), vendored dependencies (`sandbox_image`) -- and a git
+  history (`tournament_image_bundle`). Do not turn any of these into an
+  action: a secret ends up in a remote cache, and bazel does not run bazel.
+- Every target that reaches the base is tagged `manual`. `//...` must not need
+  a registry, and a sandbox's `bazel vendor //...` must not carry an image.
+  `up` makes a missing sandbox image by *running* `//:sandbox_image`, for the
+  same reason: carrying the base itself would put it in `//...`.
+- A tournament image carries the built kit image, so `kit --image` from inside
+  one adds a token and nothing else. It does not prime: that is a full build,
+  and a coordinator's container is not where builds happen.
 
 ## Build / test / run
 
@@ -154,7 +177,7 @@ arena_cli submit --name=ref --wait   # the kit's builtin; arena.env is sourced
 exit                           # stops the tournament
 ```
 
-`play` builds the sandbox image first if the daemon does not have it, which is
+`play` makes the sandbox image first if the daemon does not have it, which is
 the slow part of a first run. Every submission is built and run in a
 container; there is no flag that skips that.
 

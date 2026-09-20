@@ -44,9 +44,11 @@ From a problem repository that calls `arena_problem()` (see
 bazel run //:play                            # the tournament, a kit for you, a shell in it
 bazel run //:tournament                      # a coordinator and a local worker
 bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
-bazel run //:kit_image -- --mint=bob --image=TAG   # the same, as an image; no docker needed
+bazel build //:kit_image                     # the same, as an image: a build output, no docker
+bazel run //:kit_image_issue -- --mint=bob --image=TAG   # that image + a primed cache + bob's token
 bazel run //:sandbox_image                   # the image sandbox.image names
-bazel run //:tournament -- --image=TAG       # the tournament, as a docker image
+bazel build //:tournament_image              # the tournament, as an image
+bazel run //:tournament_image_bundle -- --image=TAG   # + the repo its workers clone
 ```
 
 `play` is the dev loop: `tournament` in the background with its log in
@@ -66,20 +68,30 @@ participant's first build is warm and a missing `kit_files` entry is found
 here rather than by them.
 
 `kit_image` is the same kit as an image, and the one image here that docker
-does not build. It is layered: `//game_arena/image:kit_base` is the arena's
-base image (`docker/base/Dockerfile`, pulled by digest) with a kit's user,
-directory and `PATH` set on it by rules_oci, and the kit goes on top as a tar.
-Nothing runs inside an image made that way, so what a Dockerfile would `RUN`
-happens on this host first: `bazel vendor` into `.arena/vendor`, then the
-build into `.arena/cache`. Both are run with `--nohome_rc --nosystem_rc` and
-the kit carries `--incompatible_strict_action_env`, because a cache only hits
-for the build that filled it -- a remote executor's platform properties in a
+does not build. It is a build output: `kit_tree` runs this tool in an action
+to write the kit for `/kit` and tars it, and rules_oci stacks that on
+`//game_arena/image:kit_base` -- the arena's base image
+(`docker/base/Dockerfile`, pulled by digest) with a kit's user, directory and
+`PATH` set on it. `bazel build //:kit_image` is therefore the whole image, the
+same bytes for the same kit, and it holds nothing that is not a build's to
+hold: no token, and nothing built.
+
+Those two are added outside the build, by `kit_image_issue`, each as a layer
+on the built image and either on its own. *Priming* is bazel run on a kit,
+which an action cannot do: the tool writes the same kit on this host, runs
+`bazel vendor` into `.arena/vendor` and the build into `.arena/cache`, and
+adds the two directories. Both run with `--nohome_rc --nosystem_rc` and the
+kit carries `--incompatible_strict_action_env`, because a cache only hits for
+the build that filled it -- a remote executor's platform properties in a
 `~/.bazelrc`, or this shell's `PATH`, are part of every action's key, and the
-container has neither. The token, the address and the last few files are added
-by the tool with `regctl` after the build, never as a bazel action: an
-action's inputs end up in a remote cache. `--push` goes straight to the
-registry with the logins docker keeps; without it the image is loaded into
-the local daemon when there is one, and left as an archive when there is not.
+container has neither. A *token* is a secret, and an action's inputs end up in
+a remote cache; `--mint` or `--token` puts it in the image's environment and
+the participant's files, with `regctl`, in a couple of seconds. `--push` goes
+straight to the registry with the logins docker keeps; without it the image is
+loaded into the local daemon when there is one, and left as an archive when
+there is not. A problem that would rather prime its kits another way -- a
+remote cache reachable from inside the image, say, in a `~/.bazelrc` its own
+`kit_base` carries -- needs none of this.
 
 `tournament` writes the effective config and all state under
 `~/.arena/<problem_id>` (`$ARENA_STATE_DIR` to move it), starts
@@ -87,15 +99,21 @@ the local daemon when there is one, and left as an archive when there is not.
 need a token, and `kit --mint` adds one and has the coordinator reload),
 waits for the port, starts `--workers` local `sandbox_worker`s, and forwards
 Ctrl-C to all of them. It needs docker and the problem's `sandbox.image`, and
-builds that image when the daemon does not have it -- which is the slow part
-of a first run. There is no flag that runs a tournament without a sandbox:
+makes that image when the daemon does not have it, by running
+`//:sandbox_image` -- which is the slow part of a first run. There is no flag that runs a tournament without a sandbox:
 `sandbox.image` is required by the config, and a worker links no engine that
 could run an order outside a container.
 
-`--image=TAG` builds the same thing as a docker image instead of running it:
-the arena's binaries built from the problem's workspace, the problem repo for
-the workers to clone, git and the docker CLI, and no toolchain. It runs on
-any host with a docker socket and the sandbox image on that daemon:
+`tournament_image` is the same thing as an image instead of a process, and a
+build output: the arena's binaries built from the problem's workspace, the
+docker CLI, the built kit image and regctl, and the problem's config and kit
+files, stacked on the arena's base by rules_oci. What it cannot hold is the
+repository the workers clone -- a git history is not a build input -- so for a
+problem whose `repo.url` is a path, `tournament_image_bundle` adds a clean
+clone of the committed tree as one more layer, at the path `"."` resolves to
+inside. A problem whose `repo.url` is a remote uses the built image as it is.
+It runs on any host with a docker socket and the sandbox image on that
+daemon:
 
 ```sh
 docker run -d --name c4-arena --restart=unless-stopped -p 50051:50051 -p 8090:8090 \
@@ -108,7 +126,11 @@ docker run -d -v /var/run/docker.sock:/var/run/docker.sock \
 
 Inside, `arena_tournament up` is what `docker run` starts, and `kit` works
 because the image carries `kit_files` and the registry label in its
-environment. State is the `/var/arena` volume. Or by hand, which is what all
+environment. `kit --image` there adds the participant's token to the kit image
+the tournament image carries, with regctl -- about a second, and not a build
+of anything; a kit with a primed cache is made from a checkout
+(`kit_image_issue`), because priming is a full build and a coordinator's
+container is not where that belongs. State is the `/var/arena` volume. Or by hand, which is what all
 of those run:
 
 ```sh
@@ -255,12 +277,14 @@ dependencies: the arena depends on hermetic-llvm, a bazel module carrying
 clang, libc++ and compiler-rt, so the compiler is pinned by
 `MODULE.bazel.lock` rather than by whatever the image's distro ships, and a
 kit, a developer's checkout and the sandbox all build with the same one.
-`bazel run //:sandbox_image` builds such an image from the `sandbox` target
-of `game_arena/image/Dockerfile`: a small base with bazel and no compiler,
-`bazel vendor` of the problem's `MODULE.bazel` into `/opt/arena/vendor`, and
-a system bazelrc pointing bazel at it. A `game_arena` overridden with a local path is
-copied into the image too, with a warning, because `bazel vendor` only
-symlinks local overrides.
+`bazel run //:sandbox_image` makes such an image:
+`//game_arena/image:sandbox_base` -- a small base with bazel and no compiler,
+and a system bazelrc pointing bazel at `/opt/arena/vendor` -- with `bazel
+vendor` of the problem's `MODULE.bazel` added to it as a layer. The vendoring
+runs on the host, since running bazel is not something a build action or a
+layered image can do, and nothing else about it needs docker. A `game_arena`
+overridden with a local path is copied into the image too, with a warning,
+because `bazel vendor` leaves local overrides where they are.
 
 ## Slots, checkouts and build cost
 

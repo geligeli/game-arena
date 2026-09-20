@@ -110,14 +110,15 @@ owns a protocol and the submission is a single function.
 
 ## Putting it on a server
 
-Off this machine, the problem is three docker images and a host with docker on
+Off this machine, the problem is three images -- layered by bazel, not built by
+docker -- and a host with docker on
 it -- no bazel, no checkout:
 
 ```sh
 scripts/new_problem.sh graded /srv/src/knapsack      # a repo of its own; workers clone repo.url
 cd /srv/src/knapsack                                 # sandbox.image -> a tag you can push, committed
 bazel run //:sandbox_image -- --push                 # what every submission is built and graded in
-bazel run //:tournament -- --image=registry.example.com/knapsack-arena:1 --push
+bazel run //:tournament_image_bundle -- --image=registry.example.com/knapsack-arena:1 --push
 
 # on the arena host: docker, a pull of both images, and this
 docker run -d --name knapsack-arena --restart=unless-stopped \
