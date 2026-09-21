@@ -56,11 +56,9 @@ auto Scheduler::Reservation::operator=(Reservation &&other) noexcept
 }
 
 Scheduler::Scheduler(SchedulerConfig config, CandidateStore *candidates,
-                     tournament_broker::EloStore *elo_store,
                      Standings *standings)
     : config_(std::move(config)),
       candidates_(candidates),
-      elo_store_(elo_store),
       standings_(standings) {}
 
 void Scheduler::ReleaseReservationLocked(const std::string &client_id) {
@@ -170,14 +168,13 @@ bool Scheduler::FillSideLocked(const proto::Candidate &candidate,
   // The patch is the submission. It travels with the order so a worker needs
   // nothing but the repo and this message -- no callback to the arena, no
   // shared filesystem.
-  std::string error;
-  const auto patch = candidates_->ReadPatch(candidate.candidate_id(), &error);
-  if (!patch.has_value()) {
-    LOG(ERROR) << "Candidate " << candidate.candidate_id()
-               << ": cannot read its patch: " << error;
+  // From the candidate as handed over, not looked up by id: a resubmit is
+  // staged beside the entry it replaces, and the two share one.
+  if (candidate.patch().empty()) {
+    LOG(ERROR) << "Candidate " << candidate.candidate_id() << " has no patch";
     return false;
   }
-  side->set_patch(*patch);
+  side->set_patch(candidate.patch());
 
   // "{submission_id}" is expanded here, so the worker never sees a template and
   // needs no problem config of its own.
@@ -250,71 +247,6 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
   return order;
 }
 
-std::optional<std::vector<std::string>> Scheduler::ExpandOpponentsLocked(
-    const proto::Candidate &candidate, const std::string &spec,
-    std::string *error) const {
-  if (spec.empty()) {
-    *error = "opponent is required";
-    return std::nullopt;
-  }
-  if (IsBuiltin(spec)) {
-    return std::vector<std::string>{spec};
-  }
-  if (spec != "top" && spec != "ladder") {
-    const auto rival = candidates_->Get(spec);
-    if (!rival.has_value()) {
-      *error = "unknown opponent '" + spec +
-               "' (expected builtin:<spec>, a candidate id, \"top\" or "
-               "\"ladder\")";
-      return std::nullopt;
-    }
-    if (rival->candidate_id() == candidate.candidate_id()) {
-      *error = "a candidate cannot play itself";
-      return std::nullopt;
-    }
-    if (rival->status() != proto::Candidate::READY) {
-      *error = "opponent '" + spec + "' is not ready to play";
-      return std::nullopt;
-    }
-    if (rival->game() != candidate.game()) {
-      *error = "opponent '" + spec + "' plays " + rival->game() + ", not " +
-               candidate.game();
-      return std::nullopt;
-    }
-    return std::vector<std::string>{spec};
-  }
-
-  // "top" and "ladder" are resolved now, against the current standings, rather
-  // than at dispatch: an agent asking to be measured wants the field as it
-  // stood when it asked.
-  std::vector<std::pair<double, std::string>> rated;
-  for (const proto::Candidate &other : candidates_->List()) {
-    if (other.candidate_id() == candidate.candidate_id() ||
-        other.game() != candidate.game() ||
-        other.status() != proto::Candidate::READY) {
-      continue;
-    }
-    const auto rating = elo_store_->Get(other.game(), other.candidate_id());
-    rated.emplace_back(rating.elo(), other.candidate_id());
-  }
-  if (rated.empty()) {
-    *error = "no rated opponent is available yet for " + candidate.game();
-    return std::nullopt;
-  }
-  std::sort(rated.begin(), rated.end(),
-            [](const auto &a, const auto &b) { return a.first > b.first; });
-
-  std::vector<std::string> opponents;
-  const int wanted = spec == "top" ? 1 : config_.ladder_size;
-  for (const auto &[elo, id] : rated) {
-    if (static_cast<int>(opponents.size()) >= wanted) {
-      break;
-    }
-    opponents.push_back(id);
-  }
-  return opponents;
-}
-
 std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
                                      const std::vector<std::string> &opponents,
                                      int games, const std::string &client_id) {
@@ -365,77 +297,47 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
     ReleaseReservationLocked(client_id);
     reservation.scheduler_ = nullptr;
   }
+  // A participant's older work is for code this submission replaces, and its
+  // result would be taken for this one's.
+  for (auto &[job_id, job] : jobs_) {
+    if (job.status.candidate_id() == candidate.candidate_id() &&
+        (job.status.state() == proto::Job::QUEUED ||
+         job.status.state() == proto::Job::RUNNING)) {
+      AbortJobLocked(&job, "superseded by a newer submission");
+    }
+  }
   if (config_.grade.has_value()) {
     // A graded problem has no opponents to be placed against: the one order is
     // the whole measurement. The empty entry is that order.
     return EnqueueLocked(candidate, {""}, config_.placement_games, client_id);
   }
-  return EnqueueLocked(candidate, config_.placement_opponents,
-                       config_.placement_games, client_id);
+  std::vector<std::string> opponents = config_.placement_opponents;
+  const std::vector<std::string> ladder =
+      LadderLocked(candidate.candidate_id());
+  opponents.insert(opponents.end(), ladder.begin(), ladder.end());
+  return EnqueueLocked(candidate, opponents, config_.placement_games,
+                       client_id);
 }
 
-std::optional<std::string> Scheduler::EnqueueChallenge(
-    const std::string &candidate_id, const std::string &opponent, int games,
-    Reservation reservation, std::string *error) {
-  std::lock_guard lock(mutex_);
-  const std::string client_id = reservation.client_id();
-  if (reservation.scheduler_ != nullptr) {
-    ReleaseReservationLocked(client_id);
-    reservation.scheduler_ = nullptr;
+// Rated rivals, evenly spaced from the top of the board to the bottom.
+std::vector<std::string> Scheduler::LadderLocked(
+    const std::string &self) const {
+  std::vector<std::string> rated;
+  if (standings_ != nullptr) {
+    for (const Standing &row : standings_->Rank(0)) {
+      if (row.candidate_id != self) {
+        rated.push_back(row.candidate_id);
+      }
+    }
   }
-  const auto candidate = candidates_->Get(candidate_id);
-  if (!candidate.has_value()) {
-    *error = "unknown candidate '" + candidate_id + "'";
-    return std::nullopt;
+  const std::size_t n = rated.size();
+  const std::size_t k =
+      std::min(n, static_cast<std::size_t>(std::max(0, config_.ladder_size)));
+  std::vector<std::string> ladder;
+  for (std::size_t i = 0; i < k; ++i) {
+    ladder.push_back(rated[k == 1 ? 0 : i * (n - 1) / (k - 1)]);
   }
-  if (candidate->status() == proto::Candidate::BUILD_FAILED) {
-    *error = "candidate '" + candidate_id + "' failed to build";
-    return std::nullopt;
-  }
-  if (candidate->status() == proto::Candidate::DISABLED) {
-    *error = "candidate '" + candidate_id + "' is disabled";
-    return std::nullopt;
-  }
-
-  const int wanted = games <= 0 ? config_.default_games
-                                : std::min(games, config_.max_games_per_job);
-  const auto opponents = ExpandOpponentsLocked(*candidate, opponent, error);
-  if (!opponents.has_value()) {
-    return std::nullopt;
-  }
-  return EnqueueLocked(*candidate, *opponents, wanted, client_id);
-}
-
-std::optional<std::string> Scheduler::EnqueueRegrade(
-    const std::string &candidate_id, int repeats, Reservation reservation,
-    std::string *error) {
-  std::lock_guard lock(mutex_);
-  const std::string client_id = reservation.client_id();
-  if (reservation.scheduler_ != nullptr) {
-    ReleaseReservationLocked(client_id);
-    reservation.scheduler_ = nullptr;
-  }
-  if (!config_.grade.has_value()) {
-    *error = "this problem is played, not graded";
-    return std::nullopt;
-  }
-  const auto candidate = candidates_->Get(candidate_id);
-  if (!candidate.has_value()) {
-    *error = "unknown candidate '" + candidate_id + "'";
-    return std::nullopt;
-  }
-  if (candidate->status() == proto::Candidate::BUILD_FAILED) {
-    *error = "candidate '" + candidate_id + "' failed to build";
-    return std::nullopt;
-  }
-  if (candidate->status() == proto::Candidate::DISABLED) {
-    *error = "candidate '" + candidate_id + "' is disabled";
-    return std::nullopt;
-  }
-  // A graded evaluation has no opponent, so the "opponent" list is one empty
-  // entry: one order, which is the whole measurement.
-  const int runs = repeats > 0 ? repeats : config_.placement_games;
-  return EnqueueLocked(*candidate, {""}, runs, client_id);
+  return ladder;
 }
 
 int Scheduler::FreeSlotsLocked() const {

@@ -75,9 +75,7 @@ struct SchedulerConfig {
   std::vector<std::string> placement_opponents = {"builtin:random",
                                                   "builtin:mcts"};
   int placement_games = 4;
-  int default_games = 10;
-  int max_games_per_job = 200;
-  // How many rated rivals "ladder" spreads across.
+  // How many rated rivals a placement also plays, spread across the board.
   int ladder_size = 3;
   int build_timeout_s = 1800;
   int run_timeout_s = 1800;
@@ -89,7 +87,7 @@ class Scheduler {
   // the only thing that writes standings: a referee's own ratings die with its
   // container.
   Scheduler(SchedulerConfig config, CandidateStore *candidates,
-            tournament_broker::EloStore *elo_store, Standings *standings);
+            Standings *standings);
 
   // A held quota slot.
   //
@@ -134,26 +132,11 @@ class Scheduler {
                                         bool cancel_running,
                                         std::string *error);
 
-  // Queues the placement series for a newly created candidate, consuming
+  // Queues the placement series for a newly created candidate -- the
+  // problem's placement opponents, then a ladder of rated rivals -- consuming
   // |reservation|.
   std::string EnqueuePlacement(const proto::Candidate &candidate,
                                Reservation reservation);
-
-  // Queues |games| games against |opponent|: "builtin:<spec>" |
-  // "<candidate_id>" | "top" | "ladder". Returns nullopt with *error set on an
-  // unusable request.
-  std::optional<std::string> EnqueueChallenge(const std::string &candidate_id,
-                                              const std::string &opponent,
-                                              int games,
-                                              Reservation reservation,
-                                              std::string *error);
-
-  // Queues another measurement of |candidate_id| for a graded problem.
-  // |repeats| <= 0 uses the problem's default. Returns nullopt with *error set.
-  std::optional<std::string> EnqueueRegrade(const std::string &candidate_id,
-                                            int repeats,
-                                            Reservation reservation,
-                                            std::string *error);
 
   std::optional<proto::Job> GetJob(const std::string &job_id) const;
 
@@ -191,9 +174,7 @@ class Scheduler {
   };
 
   // Caller holds mutex_.
-  std::optional<std::vector<std::string>> ExpandOpponentsLocked(
-      const proto::Candidate &candidate, const std::string &spec,
-      std::string *error) const;
+  std::vector<std::string> LadderLocked(const std::string &self) const;
   // Builds the whole order, opponent sources included. Returns nullopt when the
   // named rival cannot play (unknown, not ready, wrong game). Not const: each
   // call consumes an order id.
@@ -217,9 +198,8 @@ class Scheduler {
   int FreeSlotsLocked() const;
 
   const SchedulerConfig config_;
-  CandidateStore *candidates_;              // not owned
-  tournament_broker::EloStore *elo_store_;  // not owned
-  Standings *standings_;                    // not owned
+  CandidateStore *candidates_;  // not owned
+  Standings *standings_;        // not owned
 
   mutable std::mutex mutex_;
   std::map<std::string, Job> jobs_;

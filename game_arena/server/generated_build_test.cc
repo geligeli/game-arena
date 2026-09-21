@@ -11,7 +11,6 @@ namespace {
 // Deliberately not this repo's labels. The coordinator generates a BUILD out
 // of whatever the problem config names; if these were game_mcts paths, a
 // regression that reintroduced a hardcoded one would still pass.
-constexpr char kDir[] = "solutions";
 constexpr char kApiDep[] = "//problem/harness:api";
 constexpr char kMainSrc[] = "//problem/harness:main.cc";
 
@@ -29,23 +28,16 @@ std::string Build(const std::vector<std::string> &files,
                   const std::string &entry = "strategy.h",
                   const std::vector<std::string> &deps = {},
                   const proto::CandidateHarness &harness = Harness()) {
-  return GenerateCandidateBuild(kDir, "c-1", harness, files, entry, deps);
+  return GenerateCandidateBuild(harness, files, entry, deps);
 }
 
-TEST(CandidateTargetTest, LabelsTheGeneratedBinary) {
-  EXPECT_EQ(CandidateTarget(kDir, "my-bot-abc123", proto::CandidateHarness()),
-            "//solutions/my-bot-abc123:bot");
-}
-
-TEST(CandidateTargetTest, NamesTheBinaryAsTheHarnessSays) {
+TEST(GenerateCandidateBuildTest, NamesTheBinaryAsTheHarnessSays) {
   proto::CandidateHarness harness;
   harness.set_api_dep("//api");
   harness.set_main_src("solve.cc");
   harness.set_binary_name("solve");
-  EXPECT_EQ(CandidateTarget(kDir, "c-1", harness),
-            "//" + std::string(kDir) + "/c-1:solve");
-  const std::string build = GenerateCandidateBuild(
-      kDir, "c-1", harness, {"solve.cc"}, "solve.cc", {});
+  const std::string build =
+      GenerateCandidateBuild(harness, {"solve.cc"}, "solve.cc", {});
   EXPECT_NE(build.find("name = \"solve\""), std::string::npos);
   EXPECT_EQ(build.find("name = \"bot\""), std::string::npos);
 }
@@ -56,9 +48,10 @@ TEST(GenerateCandidateBuildTest, WiresTheEntryHeaderAndGameIntoTheBinary) {
   EXPECT_NE(build.find("name = \"bot\""), std::string::npos) << build;
   // The harness reaches the submission through this define, not a dep: the game
   // and the entry header are local_defines, which do not reach a prebuilt lib.
-  EXPECT_NE(
-      build.find("CANDIDATE_ENTRY_HEADER=\\\"solutions/c-1/strategy.h\\\""),
-      std::string::npos)
+  // Found through package_name(), so the file builds in any directory.
+  EXPECT_NE(build.find("r'CANDIDATE_ENTRY_HEADER=\\\"' + package_name() + "
+                       "r'/strategy.h\\\"'"),
+            std::string::npos)
       << build;
   EXPECT_NE(build.find("PROBLEM_GAME_ALPHA"), std::string::npos) << build;
   EXPECT_NE(build.find(kMainSrc), std::string::npos) << build;

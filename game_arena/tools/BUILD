@@ -33,6 +33,7 @@ cc_binary(
         "//:kit_surface",
     ],
     deps = [
+        "//game_arena/common/kv_options",
         "//game_arena/common/process",
         "//game_arena/proto:kit_cc_proto",
         "//game_arena/server:client_registry",

@@ -12,7 +12,7 @@ into its referee at build time**.
 ```sh
 bazel test //...                                   # the rules, and the config
 bazel run //:broker_server -- --data_dir=/tmp/c4 & # a broker, this game
-bazel run //bots:dev_bot -- --name=me --opponent=builtin:greedy --games=6
+bazel run //bots/reference:bot -- --name=me --opponent=builtin:greedy --games=6
 ```
 
 ```
@@ -88,8 +88,10 @@ the referee validates every action, and an invalid one is a loss, not a retry.
 `bot::Board` gives you `LegalColumns()`, `After()` and `IsWinningMove()` so a
 search is a few more lines.
 
-Copy `bots/reference/` to `bots/submissions/<your-id>/` and iterate with
-`dev_bot`, which is the same harness the arena compiles.
+Every participant is a directory under `bots/`, named after them, with the
+BUILD the arena generates: `bots/reference/` is the one everyone starts as. In
+a kit `arena_cli` copies it to `bots/<you>/` the first time, and
+`//bots/<you>:bot` is the same harness the arena compiles.
 
 ## How a submission is built
 
@@ -116,7 +118,7 @@ genrule, and a genrule runs arbitrary code at build time.
 
 ```sh
 bazel run //:play                                # all of the below, and a shell in your kit
-bazel run //:tournament                          # coordinator + a local worker
+bazel run //:tournament                          # the coordinator; a worker is its own process
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
 ```
 
@@ -130,13 +132,13 @@ generated from `problem.textproto`, and the token in `arena.env` and
 
 ```sh
 . ./arena.env                             # arena_cli on PATH, address, token
-arena_cli submit --name="My bot" --wait   # kit.submit_files says what that is
-arena_cli source <candidate_id>           # a rival, pulled into rivals/<id>/
+arena_cli submit --wait                   # sends bots/<you>/; again replaces it, once it builds
+arena_cli source alice                    # alice's, pulled into bots/alice/
+arena_cli spar alice                      # that, then yours against it, here
 ```
 
-The `kit` section of `problem.textproto` is what shapes that: `submit_files`
-is what `arena_cli submit` sends when the participant names nothing,
-`source_dir` is where pulled rivals land. A problem whose participants need
+The `kit` section of `problem.textproto` names the starter (`starter_dir`).
+A problem whose participants need
 more installed than bazel, git and python3 layers its own `oci_image` on
 `@game_arena//game_arena/image:kit_base` and names it as
 `arena_problem(kit_base = ...)`; this one does not. What they
@@ -164,7 +166,9 @@ loads first. State is `~/.arena/connect4`.
 ```sh
 ./deploy.sh                                          # the below, with this repo's names in it
 
-bazel run //:tournament -- --workers=2
+bazel run //:tournament                              # the coordinator
+bazel run //:sandbox_image_load                      # what a worker builds and runs in
+bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- --server=localhost:50051
 ```
 
 Each participant is one command from that checkout, which mints a token,

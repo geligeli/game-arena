@@ -22,8 +22,8 @@ namespace {
 
 proto::SubmitRequest MakeRequest(const std::string &name = "My Bot") {
   proto::SubmitRequest request;
+  // No author: the id is the participant, which here is the name.
   request.set_display_name(name);
-  request.set_author("agent-1");
   request.set_game("risk2");
   request.set_entry_header("strategy.h");
   auto *file = request.add_files();
@@ -72,8 +72,7 @@ TEST_F(CandidateStoreTest, StoresSourcesAsReadableFiles) {
 
   EXPECT_EQ(candidate->display_name(), "My Bot");
   EXPECT_EQ(candidate->status(), proto::Candidate::PENDING);
-  EXPECT_EQ(candidate->candidate_id().rfind("my-bot-", 0), 0u)
-      << candidate->candidate_id();
+  EXPECT_EQ(candidate->candidate_id(), "my-bot");
 
   // Added files land on disk as real files, so a rival's source can be read and
   // grepped without a checkout. They are keyed by their repo path, because that
@@ -165,6 +164,29 @@ TEST_F(CandidateStoreTest, HoldsPatchesToTheProblemsPathPolicy) {
   EXPECT_NE(error.find("excluded by this problem"), std::string::npos) << error;
 }
 
+TEST_F(CandidateStoreTest, APatchMayOnlyTouchItsOwnDirectory) {
+  // Every participant's code sits beside everyone else's, so a problem says
+  // "your own directory" with the id a submission will be given.
+  SubmissionRules rules;
+  rules.policy.add_allow_paths("bots/{submission_id}/**");
+  CandidateStore store(dir_, CandidateLimits{}, rules);
+  const auto patch_by = [](const std::string &author, const std::string &path) {
+    proto::SubmitRequest request;
+    request.set_display_name("Probe");
+    request.set_author(author);
+    request.set_patch("diff --git a/" + path + " b/" + path + "\n--- a/" +
+                      path + "\n+++ b/" + path + "\n@@ -1 +1 @@\n-a\n+b\n");
+    return request;
+  };
+  std::string error;
+  EXPECT_TRUE(
+      store.Validate(patch_by("alice", "bots/alice/strategy.h"), &error))
+      << error;
+  EXPECT_FALSE(
+      store.Validate(patch_by("alice", "bots/bob/strategy.h"), &error));
+  EXPECT_FALSE(store.Validate(patch_by("alice", "bots/bot_main.cc"), &error));
+}
+
 TEST_F(CandidateStoreTest, RejectsAPatchThatEscapesTheRepo) {
   SubmissionRules rules;
   CandidateStore store(dir_, CandidateLimits{}, rules);
@@ -241,14 +263,63 @@ TEST_F(CandidateStoreTest, SynthesizedPatchAppliesWithGit) {
   EXPECT_TRUE(std::filesystem::is_regular_file(root / "BUILD"));
 }
 
-TEST_F(CandidateStoreTest, IdsAreUniqueAcrossIdenticalNames) {
+TEST_F(CandidateStoreTest, TheIdIsTheAuthenticatedParticipant) {
+  proto::SubmitRequest request = MakeRequest("Anything At All");
+  request.set_author("alice");
   std::string error;
-  const auto first = store_->Create(MakeRequest(), &error);
+  const auto candidate = store_->Create(request, &error);
+  ASSERT_TRUE(candidate.has_value()) << error;
+  EXPECT_EQ(candidate->candidate_id(), "alice");
+}
+
+TEST_F(CandidateStoreTest, ResubmitReplacesTheParticipantsEntry) {
+  proto::SubmitRequest request = MakeRequest();
+  request.add_files()->set_path("helper.h");
+  std::string error;
+  const auto first = store_->Create(request, &error);
+  ASSERT_TRUE(first.has_value()) << error;
+
+  // Not built yet, so there is nothing worth keeping: replaced where it is,
+  // and the file the second submission dropped goes with it.
   const auto second = store_->Create(MakeRequest(), &error);
-  ASSERT_TRUE(first.has_value());
-  ASSERT_TRUE(second.has_value());
-  EXPECT_NE(first->candidate_id(), second->candidate_id());
-  EXPECT_EQ(store_->size(), 2u);
+  ASSERT_TRUE(second.has_value()) << error;
+  EXPECT_EQ(second->candidate_id(), first->candidate_id());
+  EXPECT_EQ(store_->size(), 1u);
+  EXPECT_FALSE(
+      store_->ReadSource("my-bot", "solutions/my-bot/helper.h", &error));
+  EXPECT_TRUE(
+      store_->ReadSource("my-bot", "solutions/my-bot/strategy.h", &error));
+}
+
+TEST_F(CandidateStoreTest, AResubmitIsStagedUntilItBuilds) {
+  std::string error;
+  ASSERT_TRUE(store_->Create(MakeRequest(), &error).has_value()) << error;
+  store_->SetStatus("my-bot", proto::Candidate::READY, "");
+  const std::string path = "solutions/my-bot/strategy.h";
+  const std::string old_source = *store_->ReadSource("my-bot", path, &error);
+
+  proto::SubmitRequest broken = MakeRequest();
+  broken.mutable_files(0)->set_content("does not compile\n");
+  const auto staged = store_->Create(broken, &error);
+  ASSERT_TRUE(staged.has_value()) << error;
+  // What the scheduler is handed is the new code; what everyone else sees --
+  // a ladder, a rival reading source, the board -- is still the working one.
+  EXPECT_NE(staged->patch().find("does not compile"), std::string::npos);
+  EXPECT_EQ(store_->Get("my-bot")->status(), proto::Candidate::READY);
+  EXPECT_EQ(*store_->ReadSource("my-bot", path, &error), old_source);
+
+  // It does not build: dropped, and the participant has lost nothing.
+  store_->SetStatus("my-bot", proto::Candidate::BUILD_FAILED, "error: ...");
+  EXPECT_EQ(store_->Get("my-bot")->status(), proto::Candidate::READY);
+  EXPECT_EQ(*store_->ReadSource("my-bot", path, &error), old_source);
+
+  // One that builds takes over.
+  proto::SubmitRequest better = MakeRequest();
+  better.mutable_files(0)->set_content("// better\n");
+  ASSERT_TRUE(store_->Create(better, &error).has_value()) << error;
+  store_->SetStatus("my-bot", proto::Candidate::READY, "");
+  EXPECT_EQ(*store_->ReadSource("my-bot", path, &error), "// better\n");
+  EXPECT_EQ(store_->size(), 1u);
 }
 
 TEST_F(CandidateStoreTest, SurvivesRestart) {

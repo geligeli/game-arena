@@ -79,7 +79,7 @@ registry), `:config_test`, and three runnable targets:
 | | |
 | --- | --- |
 | `bazel run //:play` | the tournament in the background, a kit minted for you, and a shell in it; leaving the shell stops everything |
-| `bazel run //:tournament` | a coordinator and a local worker, on this checkout; builds the sandbox image if this daemon lacks it |
+| `bazel run //:tournament` | the coordinator, on this checkout. It builds and runs nothing: a worker is a process of its own, which `deploy.sh` and `play` start |
 | `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, the arena's kit surface as `./arena`, `arena_cli` as a program, `//:mcp_server`, a README from the config, and a token |
 | `bazel build //:kit_image` | the same as an image, as a build output: toolchain and kit, no token, nothing built. `:kit_image_load` / `:kit_image_push` deliver it; `docker run -it -e ARENA_TOKEN=... TAG` uses it |
 | `bazel run //:kit_image_issue -- --image=TAG [--mint=bob] [--push]` | what a build cannot add, added outside one: dependencies vendored and the cache primed, and a participant's token. `--prime_cache=false` for the token alone, in seconds |
@@ -157,16 +157,18 @@ host that runs a worker does.
 
 ```sh
 cd examples/connect4
-bazel run //:tournament -- --workers=2
+bazel run //:tournament                 # the coordinator
+bazel run //:sandbox_image_load         # what a worker builds and runs in
+bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- --server=localhost:50051
 ```
 
-That is the whole install: `problem_server` on 50051 (the Arena and the
-SandboxFleet service on one port: submissions in, workers attached) and 8090
-(the leaderboard: read-only, and open, as the arena's reads are), and local
-`sandbox_worker`s that start every build and every match as a container on
-this host's daemon. State is `~/.arena/connect4` (`$ARENA_STATE_DIR` to move
+That is the whole install, as two concerns: `problem_server` on 50051 (the
+Arena and the SandboxFleet service on one port: submissions in, workers
+attached) and 8090 (the leaderboard: read-only, and open, as the arena's
+reads are), which builds and runs nothing; and a `sandbox_worker` that starts
+every build and every match as a container on this host's daemon. State is `~/.arena/connect4` (`$ARENA_STATE_DIR` to move
 it): submissions, ratings and the client registry. Deleting it deletes the
-tournament. It runs in the foreground and Ctrl-C stops all of it, so keep it
+tournament. Each runs in the foreground until Ctrl-C, so keep them
 under whatever keeps things running on that host (systemd, tmux).
 
 <http://arena.example.com:8090/> is the leaderboard. The client registry
@@ -239,7 +241,8 @@ and send the same `SIGHUP`.
 
 ### More capacity
 
-`--workers=N` is more workers on the arena host. Another host needs docker,
+One more `sandbox_worker` is more capacity (give each its own
+`ARENA_VOLUME_PREFIX` on a shared daemon). Another host needs docker,
 the sandbox image on its daemon, and a checkout to run the worker from:
 
 ```sh

@@ -112,7 +112,7 @@ That defines everything the two examples run:
 ```sh
 bazel test //...                                     # the rules, and the config
 bazel run //:play                                    # all of it, and a shell in your kit
-bazel run //:tournament                              # a coordinator + a local worker
+bazel run //:tournament                              # the coordinator; deploy.sh adds a worker
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
 bazel build //:kit_image                             # the kit as an image: a build output
 bazel run //:kit_image_issue -- --mint=bob --image=REG/kit-bob --push   # + a primed cache, + bob's token

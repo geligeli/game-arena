@@ -64,8 +64,8 @@ class ArenaIntegrationTest : public ::testing::Test {
     config.bot_target = "//game_arena/candidates/{submission_id}:bot";
     standings_ =
         std::make_unique<EloStandings>(elo_.get(), store_.get(), "risk2");
-    scheduler_ = std::make_unique<Scheduler>(config, store_.get(), elo_.get(),
-                                             standings_.get());
+    scheduler_ =
+        std::make_unique<Scheduler>(config, store_.get(), standings_.get());
     // Null by default: most of these tests are about the arena's behaviour,
     // not its gate. The authenticated fixture below overrides it.
     clients_ = MakeClients();
@@ -106,8 +106,8 @@ class ArenaIntegrationTest : public ::testing::Test {
   proto::SubmitResponse Submit(const std::string &name,
                                const std::string &content = "// bot\n") {
     proto::SubmitRequest request;
+    // No registry and no author: the id is the participant, which is the name.
     request.set_display_name(name);
-    request.set_author("agent-1");
     request.set_game("risk2");
     request.set_entry_header("strategy.h");
     auto *file = request.add_files();
@@ -422,15 +422,6 @@ TEST_F(ArenaIntegrationTest, UnknownIdsAreNotFound) {
           ->GetCandidate(&candidate_context, candidate_request, &candidate)
           .error_code(),
       grpc::StatusCode::NOT_FOUND);
-
-  grpc::ClientContext challenge_context;
-  proto::EvaluateRequest evaluate;
-  evaluate.set_candidate_id("nope");
-  evaluate.mutable_match()->set_opponent("builtin:random");
-  proto::EvaluateResponse response;
-  EXPECT_EQ(arena_stub_->Evaluate(&challenge_context, evaluate, &response)
-                .error_code(),
-            grpc::StatusCode::INVALID_ARGUMENT);
 }
 
 // --- tokens and quotas ------------------------------------------------------
@@ -553,21 +544,9 @@ TEST_F(AuthenticatedArenaTest, CancelRunningTakesTheSlot) {
   proto::Job job;
   ASSERT_TRUE(arena_stub_->GetJob(&context, request, &job).ok());
   EXPECT_EQ(job.state(), proto::Job::CANCELLED);
-  EXPECT_EQ(store_->size(), 2u);
+  // One participant, one entry: the second submission replaced the first.
+  EXPECT_EQ(store_->size(), 1u);
   worker_context.TryCancel();
-}
-
-// Queued work is bounded separately from running work, so a client cannot bank
-// a backlog behind its one active evaluation.
-TEST_F(AuthenticatedArenaTest, BoundsQueuedWorkWithNoWorkerAttached) {
-  // No worker, so nothing runs and everything queues. The registry allows 4.
-  for (int i = 0; i < 4; ++i) {
-    ASSERT_TRUE(SubmitAs(kToken, "Queued" + std::to_string(i)).ok()) << i;
-  }
-  const grpc::Status over = SubmitAs(kToken, "TooMany");
-  EXPECT_EQ(over.error_code(), grpc::StatusCode::RESOURCE_EXHAUSTED);
-  EXPECT_NE(over.error_message().find("queued"), std::string::npos)
-      << over.error_message();
 }
 
 // --- the source policy ------------------------------------------------------

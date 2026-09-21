@@ -47,9 +47,9 @@ REPO_ROOT = (
 ARENA_TARGET = os.environ.get(
     "ARENA_MCP_TARGET", os.environ.get("ARENA_SERVER", "localhost:50051")
 )
-DEFAULT_AUTHOR = os.environ.get("ARENA_MCP_AUTHOR", "agent")
+DEFAULT_AUTHOR = os.environ.get("ARENA_NAME", "agent")
 # Sent as the x-arena-token metadata header on writes. An arena with a client
-# registry refuses Submit and Evaluate without it; one without a registry
+# registry refuses Submit without it; one without a registry
 # ignores it. Metadata rather than a request field, so it never lands in a
 # stored submission or a log line.
 ARENA_TOKEN = os.environ.get("ARENA_MCP_TOKEN", os.environ.get("ARENA_TOKEN", ""))
@@ -234,10 +234,6 @@ def arena_rules() -> str:
         "  arena_source(candidate_id)         what their patch touches",
         "  arena_source(candidate_id, path)   their code",
         "  Set parent_id when you build on someone, so lineage is recorded.",
-        "",
-        "MORE WORK",
-        "  arena_evaluate(candidate_id, repeats=5)      measure again (graded)",
-        '  arena_evaluate(candidate_id, opponent="ladder")  more games (match)',
     ]
     return "\n".join(out)
 
@@ -511,44 +507,6 @@ def arena_source(candidate_id: str, path: str = "") -> str:
         return _rpc_error(error)
     return _truncate(source.content.decode("utf-8", errors="replace"),
                      MAX_SOURCE_CHARS)
-
-
-@mcp.tool()
-def arena_evaluate(
-    candidate_id: str,
-    opponent: str = "",
-    games: int = 0,
-    repeats: int = 0,
-    cancel_running: bool = False,
-) -> str:
-    """Queues more work for a candidate.
-
-    On a match problem, pass `opponent`: "builtin:random" | "builtin:mcts" | a
-    candidate id | "top" (the current leader) | "ladder" (a spread of rated
-    rivals). `games` defaults to the problem's own.
-
-    On a graded problem there is nothing to play against; pass `repeats` to
-    measure again. More runs is a tighter number, not a better one.
-
-    Sending the wrong one is an error rather than a silent default, so the
-    problem tells you its shape the first time you guess wrong.
-    """
-    request = arena_pb2.EvaluateRequest(
-        candidate_id=candidate_id, cancel_running=cancel_running
-    )
-    if repeats > 0 and not opponent:
-        request.grade.repeats = repeats
-    else:
-        request.match.opponent = opponent or "ladder"
-        if games > 0:
-            request.match.games = games
-    try:
-        response = _stub().Evaluate(
-            request, timeout=RPC_TIMEOUT_S, metadata=_auth()
-        )
-    except grpc.RpcError as error:
-        return _rpc_error(error)
-    return f"job {response.job_id} queued\npoll: arena_job(\"{response.job_id}\")"
 
 
 if __name__ == "__main__":

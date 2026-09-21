@@ -42,7 +42,7 @@ From a problem repository that calls `arena_problem()` (see
 
 ```sh
 bazel run //:play                            # the tournament, a kit for you, a shell in it
-bazel run //:tournament                      # a coordinator and a local worker
+bazel run //:tournament                      # the coordinator; a worker is a process of its own
 bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
 bazel build //:kit_image                     # the same, as an image: a build output, no docker
 bazel run //:kit_image_issue -- --mint=bob --image=TAG   # that image + a primed cache + bob's token
@@ -95,12 +95,14 @@ remote cache reachable from inside the image, say, in a `~/.bazelrc` its own
 `~/.arena/<problem_id>` (`$ARENA_STATE_DIR` to move it), starts
 `problem_server` on it with a client registry (created empty: writes always
 need a token, and `kit --mint` adds one and has the coordinator reload),
-waits for the port, starts `--workers` local `sandbox_worker`s, and forwards
-Ctrl-C to all of them. It needs docker and the problem's `sandbox.image`, and
-from a checkout makes that image every time, by running
-`//:sandbox_image_load` -- a cached build. There is no flag that runs a tournament without a sandbox:
-`sandbox.image` is required by the config, and a worker links no engine that
-could run an order outside a container.
+and waits for the port. That is all of it: the coordinator builds and runs
+nothing, and needs no docker. Capacity is a separate concern -- a
+`sandbox_worker` pointed at it, on any host with docker and the problem's
+`sandbox.image` (`bazel run //:sandbox_image_load` makes it from a checkout),
+started by whoever wants it: the examples' `deploy.sh` starts one, and `play`,
+being the whole dev loop, starts its own. There is no way to run a submission
+without a sandbox: `sandbox.image` is required by the config, and a worker
+links no engine that could run an order outside a container.
 
 The problem's tree is not the checkout a worker sees: a submission is built on
 the one the sandbox image carries at `/workspace`, which docker copies into
@@ -152,9 +154,18 @@ bind-mounted into a sandbox.
 ## Writing a candidate
 
 What a solution looks like is set by the problem's `submission.harness` — see
-the "Writing a candidate" section of [README.md](README.md). Whatever it is, the
-local loop needs nothing from the arena: build the problem's bot target and
-point it at a broker you run yourself.
+the "Writing a candidate" section of [README.md](README.md). Wherever it is,
+it is a directory named after you: every participant's implementation lives at
+`<files_submit_dir>/<name>/`, in the problem's tree, at the coordinator and in
+a kit alike, with the BUILD the arena generates -- which names no directory,
+so it builds wherever it lands. A kit makes yours from the problem's starter
+the first time `arena_cli` runs, `arena_cli source <name>` puts a rival's
+beside it, and `arena_cli spar <name>` builds both and referees them on your
+machine with the referee and the game bounds the fleet uses. That is a
+rival's code run by you, on your own machine, by your choice: it gets no
+token, and it is not something the tournament ever does.
+
+The loop below needs nothing from the arena at all: a broker you run yourself.
 
 ```sh
 # Against a local broker, not the arena.
@@ -169,6 +180,14 @@ bazel run //game_arena/testgame:random_client -- \
    `<data_dir>/candidates/<id>/` as `patch.diff`, with the files it adds
    extracted beside it so they can be read and grepped directly.
 
+   **The id is the participant** -- the token's client id -- so there is one
+   entry, one leaderboard row and one rating per participant, and a resubmit
+   replaces the code behind them. It is *staged* while the entry it would
+   replace works: ladders, `source` and the board keep serving the old code
+   until the new one's first good result, and a resubmit that does not build
+   is dropped, costing its author nothing. The participant's unfinished jobs
+   are cancelled when a new one is queued.
+
    **A submission is a patch.** The structured form — a list of files plus an
    `entry_header` — is a convenience: the server turns it into an add-only diff
    under the problem's `files_submit_dir`, *generating the BUILD file*, so
@@ -176,8 +195,10 @@ bazel run //game_arena/testgame:random_client -- \
    `git apply`. Generating the BUILD is also what keeps the dependency
    allowlist enforceable; a submitter who could write their own could write a
    `genrule`, and a `genrule` runs arbitrary code at build time.
-2. The scheduler queues a **placement series** — by default two games each
-   against `builtin:random` and `builtin:mcts`.
+2. The scheduler queues a **placement series**: the problem's
+   `placement_opponents`, then a ladder of rated rivals spread from the top
+   of the board to the bottom. Nothing else plays two submissions against
+   each other; there is no RPC that asks the fleet for more games.
 3. A worker picks up the order, starts from the tree in the sandbox image,
    `git apply`s the patch (both sides, for a candidate-vs-candidate match),
    and builds the problem's targets.
@@ -287,7 +308,6 @@ score label, not ratings or milliseconds.
 | an order | build both sides, referee N games | run a command N times |
 | result | W/D/L tally | a metric per run |
 | standings | ELO, keyed `(problem_id, submission_id)` | the primary metric, in its direction |
-| `Evaluate` | `match { opponent, games }` | `grade { repeats }` |
 
 **The coordinator owns the standings.** A match's referee keeps its own ratings
 while it plays, but they die with its container: they exist so a game has
@@ -335,7 +355,6 @@ it are load-bearing for an agent loop that has to stay cheap:
 | `arena_leaderboard(...)` | current standings |
 | `arena_candidates(...)` | everyone, including pending and broken, with lineage |
 | `arena_source(id[, path])` | a candidate's manifest or file, as far as the problem's `SourcePolicy` allows |
-| `arena_evaluate(...)` | more games vs a builtin, a candidate, `top` or `ladder`; or more measurement runs |
 
 Regenerate the Python stubs after changing `proto/arena.proto`:
 
@@ -348,7 +367,7 @@ mcp_servers/arena_mcp/make_stubs.sh
 Writes are gated on an `x-arena-token` metadata header; reads are not. The
 leaderboard is meant to be public and readable source is the point of the
 arena, so `GetSource`, `ListCandidates`, `GetJob`, `Leaderboard` and
-`GetProblem` stay open. Only `Submit` and `Evaluate` spend the fleet.
+`GetProblem` stay open. Only `Submit` spends the fleet.
 
 A problem can narrow the reading (`source { visibility: ... }` in its config):
 `ALL` is the default above, `OWN` serves each participant only their own
@@ -386,8 +405,7 @@ beside a credit you cannot is only half a system.
 
 Two limits, defaulted in `ProblemConfig.clients` and overridable per client:
 `max_active_evaluations` (1 by default — a client waits for its own result
-before spending the fleet on another guess) and `max_queued_jobs`, which covers
-`Evaluate` rematches as well as fresh submissions.
+before spending the fleet on another guess) and `max_queued_jobs`.
 
 Over quota, `Submit` returns `RESOURCE_EXHAUSTED` naming the running job, and
 **stores nothing**. That is not incidental: the check and its claim are one

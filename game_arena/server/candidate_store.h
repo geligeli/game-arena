@@ -8,7 +8,7 @@
 //   <dir>/<candidate_id>/manifest.pb    the Candidate proto
 //   <dir>/<candidate_id>/patch.diff     the submission itself
 //   <dir>/<candidate_id>/src/<path>     files the patch adds, extracted
-//   <dir>/index.jsonl                   one line per candidate, append-only
+//   <dir>/index.jsonl                   one line per submission, append-only
 //
 // A submission *is* a patch. A structured submission (a list of files plus an
 // entry header) is converted into an add-only patch here, at submit time, so
@@ -77,8 +77,12 @@ class CandidateStore : public CandidateView {
   // set describing the first problem, in terms the submitting agent can act on.
   bool Validate(const proto::SubmitRequest &request, std::string *error) const;
 
-  // Validates, allocates an id, and writes the candidate to disk. Returns
-  // nullopt with *error set on a rejected or unwritable submission.
+  // Validates and writes the candidate to disk. Its id is its participant's
+  // name -- the author, or the display name when there is no author -- so a
+  // resubmit replaces that participant's entry. A READY entry is replaced
+  // only once the new one builds (see SetStatus); until then the new one is
+  // staged, and everything but this call's return value still sees the old.
+  // Returns nullopt with *error set on a rejected or unwritable submission.
   std::optional<proto::Candidate> Create(const proto::SubmitRequest &request,
                                          std::string *error);
 
@@ -99,6 +103,8 @@ class CandidateStore : public CandidateView {
   std::vector<proto::Candidate> List() const override;
 
   // Records a build outcome. |build_error| is trimmed to the configured cap.
+  // For a participant with a staged resubmit the outcome is the resubmit's:
+  // READY makes it the entry, anything else drops it and changes nothing.
   bool SetStatus(const std::string &candidate_id,
                  proto::Candidate::Status status,
                  const std::string &build_error);
@@ -107,10 +113,11 @@ class CandidateStore : public CandidateView {
 
  private:
   std::filesystem::path CandidateDir(const std::string &candidate_id) const;
-  // Writes manifest.pb for |candidate|. Caller holds mutex_.
-  bool WriteManifestLocked(const proto::Candidate &candidate) const;
+  std::filesystem::path StagedDir(const std::string &candidate_id) const;
+  // Writes manifest.pb for |candidate| into |root|. Caller holds mutex_.
+  bool WriteManifestLocked(const std::filesystem::path &root,
+                           const proto::Candidate &candidate) const;
   void AppendIndexLocked(const proto::Candidate &candidate) const;
-  std::string AllocateIdLocked(const std::string &display_name) const;
 
   // Builds the patch a request will be stored as: the request's own when it
   // sent one, otherwise a synthesized add-only patch under the problem's
@@ -127,6 +134,8 @@ class CandidateStore : public CandidateView {
   // candidate_id -> manifest. Small (hundreds), and every lookup is on the
   // request path, so it is worth keeping resident.
   std::map<std::string, proto::Candidate> candidates_;
+  // Resubmits that have not built yet, beside the entries they would replace.
+  std::map<std::string, proto::Candidate> staged_;
 };
 
 // Exposed for testing: the rules a submitted path must satisfy.

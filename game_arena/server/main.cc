@@ -65,7 +65,7 @@ ABSL_FLAG(std::string, data_dir, "tournament_data",
 ABSL_FLAG(std::string, clients, "",
           "Path to the client registry (.textproto). Writes require an "
           "x-arena-token header naming a client in it; reads never do. Empty "
-          "leaves Submit and Evaluate open to anyone who can reach the port, "
+          "leaves Submit open to anyone who can reach the port, "
           "which is fine for a single-agent loop and nothing else. Mint "
           "clients with //game_arena/tools:arena_admin");
 ABSL_FLAG(double, k_factor, 32.0, "ELO K factor");
@@ -150,7 +150,6 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
     config.placement_opponents.assign(match.placement_opponents().begin(),
                                       match.placement_opponents().end());
     config.placement_games = static_cast<int>(match.games_per_order());
-    config.default_games = static_cast<int>(match.games_per_order());
     config.run_timeout_s = static_cast<int>(match.timeout_s());
     config.referee_target = match.referee_target();
     config.turn_timeout_ms = static_cast<int>(match.turn_timeout_ms());
@@ -176,7 +175,6 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
     const auto &grade = problem.grade();
     config.placement_opponents.clear();
     config.placement_games = static_cast<int>(grade.repeats());
-    config.default_games = static_cast<int>(grade.repeats());
     config.run_timeout_s = static_cast<int>(grade.timeout_s());
 
     tournament_arena::proto::GradeOrder order;
@@ -269,13 +267,13 @@ int main(int argc, char **argv) {
       return 2;
     }
   } else {
-    LOG(WARNING) << "No --clients registry: Submit and Evaluate are open to "
+    LOG(WARNING) << "No --clients registry: Submit is open to "
                     "anyone who can reach this port, and `author` is whatever "
                     "the caller says it is";
   }
 
-  tournament_arena::Scheduler scheduler(
-      SchedulerConfigFor(*problem), &candidates, &elo_store, standings.get());
+  tournament_arena::Scheduler scheduler(SchedulerConfigFor(*problem),
+                                        &candidates, standings.get());
   // What an agent needs to know about the problem, curated from the config:
   // the operator's image names and timeouts are not a submitter's business.
   tournament_arena::proto::ProblemInfo info;

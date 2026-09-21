@@ -10,7 +10,7 @@
 // Writes are gated on an x-arena-token metadata header; reads are not. The
 // leaderboard is meant to be public and readable source is the point of the
 // arena, so GetSource, ListCandidates, GetJob, Leaderboard and GetProblem stay
-// open. Only Submit and Evaluate spend the fleet, and only those are metered.
+// open. Only Submit spends the fleet, and only it is metered.
 //
 // The token is metadata rather than a request field so it never lands in a
 // stored SubmitRequest, a manifest, or a log line -- and `author` is derived
@@ -29,8 +29,7 @@ namespace tournament_arena {
 
 class ArenaService final : public proto::Arena::Service {
  public:
-  // |graded| says which shape EvaluateRequest must take, so an agent sending
-  // the wrong one gets told rather than getting a default that means nothing.
+  // |graded| is what GetProblem reports.
   // |game| is the problem's game (empty for a graded problem): one server
   // runs one problem, so a submission that does not name a game gets this
   // one -- the game is not the submitter's to state.
@@ -58,10 +57,6 @@ class ArenaService final : public proto::Arena::Service {
   grpc::Status ListCandidates(grpc::ServerContext *context,
                               const proto::ListCandidatesRequest *request,
                               proto::ListCandidatesResponse *response) override;
-
-  grpc::Status Evaluate(grpc::ServerContext *context,
-                        const proto::EvaluateRequest *request,
-                        proto::EvaluateResponse *response) override;
 
   grpc::Status GetJob(grpc::ServerContext *context,
                       const proto::GetJobRequest *request,

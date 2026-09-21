@@ -32,20 +32,20 @@ message KitConfig {
   // the author of a submission from the token, never from what is sent.
   string client_id = 4;
 
-  // What `submit` sends when no --file is given: paths relative to the kit, a
-  // directory taken whole (recursively, source files only). The problem
-  // describes a solution's shape and this is that shape, spelled out for the
-  // tool.
-  repeated string submit_files = 5;
-  // The header defining the entry point, when submit_files holds more than
-  // one header and the sole-header rule cannot pick.
-  string entry_header = 6;
-  // Extra bazel deps every submission from this kit names. The problem's
-  // allowed_dep_prefixes still bound them, at the coordinator.
-  repeated string extra_deps = 7;
+  reserved 5 to 8;
 
-  // Where `source <candidate_id>` puts what it pulls: one directory per
-  // candidate under this one, so rivals never land among your own files.
-  // Relative to the kit. Empty disables writing, leaving `source` a reader.
-  string source_dir = 8;
+  // Where every participant's implementation lives, one directory each, named
+  // after them: yours is <submit_dir>/<your name>, which is what `submit`
+  // sends, and `source <name>` puts a rival's beside it.
+  string submit_dir = 9;
+  // The directory yours is copied from the first time, relative to the kit.
+  string starter_dir = 10;
+
+  // For `spar`, which plays yours against a rival's here: the binary a
+  // participant's directory builds, the game the referee is asked for, and
+  // the flags that bound a game the way the tournament bounds a rated one.
+  // |game| empty: a graded problem, with no opponent to spar with.
+  string bot_binary = 11;
+  string game = 12;
+  repeated string referee_flags = 13;
 }

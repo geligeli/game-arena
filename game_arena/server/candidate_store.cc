@@ -5,11 +5,11 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
-#include <random>
 #include <string_view>
 
 #include "absl/log/log.h"
 #include "game_arena/server/generated_build.h"
+#include "game_arena/server/problem_config.h"
 #include "game_arena/server/unified_diff.h"
 
 namespace tournament_arena {
@@ -156,8 +156,15 @@ void CandidateStore::Load() {
   std::lock_guard lock(mutex_);
   candidates_.clear();
   std::error_code ec;
+  staged_.clear();
   for (const auto &entry : std::filesystem::directory_iterator(dir_, ec)) {
     if (!entry.is_directory()) {
+      continue;
+    }
+    // A staged resubmit's job died with the process that queued it.
+    if (entry.path().extension() == ".staged") {
+      std::error_code removed;
+      std::filesystem::remove_all(entry.path(), removed);
       continue;
     }
     const std::filesystem::path manifest_path = entry.path() / "manifest.pb";
@@ -184,10 +191,12 @@ namespace {
 // A path passes when it matches some allow pattern (or there are none) and no
 // deny pattern. Deny wins, so a broad allow can be narrowed without rewriting
 // it.
-bool PathAllowed(const proto::SubmissionPolicy &policy, const std::string &path,
-                 std::string *error) {
+// "{submission_id}" in a pattern is the submitter's own id, which is how a
+// problem confines a patch to its participant's directory.
+bool PathAllowed(const proto::SubmissionPolicy &policy, const std::string &id,
+                 const std::string &path, std::string *error) {
   for (const std::string &pattern : policy.deny_paths()) {
-    if (PathMatchesGlob(path, pattern)) {
+    if (PathMatchesGlob(path, ExpandSubmissionId(pattern, id))) {
       *error = "path '" + path + "' is excluded by this problem (deny_paths '" +
                pattern + "')";
       return false;
@@ -197,7 +206,7 @@ bool PathAllowed(const proto::SubmissionPolicy &policy, const std::string &path,
     return true;
   }
   for (const std::string &pattern : policy.allow_paths()) {
-    if (PathMatchesGlob(path, pattern)) {
+    if (PathMatchesGlob(path, ExpandSubmissionId(pattern, id))) {
       return true;
     }
   }
@@ -208,6 +217,12 @@ bool PathAllowed(const proto::SubmissionPolicy &policy, const std::string &path,
 }
 
 }  // namespace
+
+// A participant is one entry: its id is who submitted it.
+static std::string CandidateIdFor(const proto::SubmitRequest &request) {
+  return Slugify(request.author().empty() ? request.display_name()
+                                          : request.author());
+}
 
 bool CandidateStore::Validate(const proto::SubmitRequest &request,
                               std::string *error) const {
@@ -283,8 +298,8 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
   // From here on there is only a patch, whichever form arrived. Validating the
   // synthesized one too is deliberate: the generator is code, and a policy that
   // only checked hand-written patches would not check what actually gets built.
-  const std::optional<std::string> patch =
-      PatchForLocked(request, "validate-only", error);
+  const std::string id = CandidateIdFor(request);
+  const std::optional<std::string> patch = PatchForLocked(request, id, error);
   if (!patch.has_value()) {
     return false;
   }
@@ -313,7 +328,7 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
     return false;
   }
   for (const std::string &path : TouchedPaths(parsed)) {
-    if (!PathAllowed(policy, path, error)) {
+    if (!PathAllowed(policy, id, path, error)) {
       return false;
     }
   }
@@ -348,8 +363,7 @@ std::optional<std::string> CandidateStore::PatchForLocked(
   // The BUILD is generated, never submitted: a submitter who could write their
   // own could write a genrule, and a genrule runs arbitrary code at build time.
   const std::string build = GenerateCandidateBuild(
-      rules_.files_submit_dir, candidate_id, rules_.harness, paths,
-      request.entry_header(),
+      rules_.harness, paths, request.entry_header(),
       {request.extra_deps().begin(), request.extra_deps().end()});
   if (build.empty()) {
     *error =
@@ -362,35 +376,23 @@ std::optional<std::string> CandidateStore::PatchForLocked(
   return MakeAddOnlyPatch(files);
 }
 
-std::string CandidateStore::AllocateIdLocked(
-    const std::string &display_name) const {
-  const std::string slug = Slugify(display_name);
-  static thread_local std::mt19937 gen(std::random_device{}());
-  std::uniform_int_distribution<int> hex(0, 0xFFFFFF);
-  for (int attempt = 0; attempt < 64; ++attempt) {
-    char suffix[8];
-    std::snprintf(suffix, sizeof(suffix), "%06x", hex(gen));
-    std::string id = slug + "-" + suffix;
-    if (!candidates_.contains(id)) {
-      return id;
-    }
-  }
-  // Astronomically unlikely; fall back to something guaranteed unique rather
-  // than returning a colliding id.
-  return slug + "-" + std::to_string(NowUnixMs());
-}
-
 std::filesystem::path CandidateStore::CandidateDir(
     const std::string &candidate_id) const {
   return dir_ / candidate_id;
 }
 
+// A slug has no '.', so this is never another candidate's directory.
+std::filesystem::path CandidateStore::StagedDir(
+    const std::string &candidate_id) const {
+  return dir_ / (candidate_id + ".staged");
+}
+
 bool CandidateStore::WriteManifestLocked(
+    const std::filesystem::path &root,
     const proto::Candidate &candidate) const {
   proto::CandidateManifest manifest;
   *manifest.mutable_candidate() = candidate;
-  const std::filesystem::path path =
-      CandidateDir(candidate.candidate_id()) / "manifest.pb";
+  const std::filesystem::path path = root / "manifest.pb";
   // Written via a temp file and renamed, so a crash mid-write cannot leave a
   // half-parsed manifest that Load() would then skip.
   const std::filesystem::path tmp = path.string() + ".tmp";
@@ -434,7 +436,7 @@ std::optional<proto::Candidate> CandidateStore::Create(
   }
 
   proto::Candidate candidate;
-  candidate.set_candidate_id(AllocateIdLocked(request.display_name()));
+  candidate.set_candidate_id(CandidateIdFor(request));
   candidate.set_display_name(request.display_name());
   candidate.set_author(request.author());
   candidate.set_game(request.game());
@@ -446,8 +448,6 @@ std::optional<proto::Candidate> CandidateStore::Create(
   candidate.set_status(proto::Candidate::PENDING);
   candidate.set_submitted_unix_ms(NowUnixMs());
 
-  // Generated with the real id this time: a structured submission's paths carry
-  // it, so the patch validated above and the one stored differ by exactly that.
   const std::optional<std::string> patch =
       PatchForLocked(request, candidate.candidate_id(), error);
   if (!patch.has_value()) {
@@ -463,8 +463,15 @@ std::optional<proto::Candidate> CandidateStore::Create(
     candidate.add_touched_paths(path);
   }
 
-  const std::filesystem::path root = CandidateDir(candidate.candidate_id());
+  // A working entry stays the entry until its replacement builds.
+  const auto live = candidates_.find(candidate.candidate_id());
+  const bool staged = live != candidates_.end() &&
+                      live->second.status() == proto::Candidate::READY;
+  const std::filesystem::path root =
+      staged ? StagedDir(candidate.candidate_id())
+             : CandidateDir(candidate.candidate_id());
   std::error_code ec;
+  std::filesystem::remove_all(root, ec);
   std::filesystem::create_directories(root / "src", ec);
   if (ec) {
     *error = "cannot create candidate directory: " + ec.message();
@@ -513,12 +520,12 @@ std::optional<proto::Candidate> CandidateStore::Create(
     candidate.add_file_paths(file.path());
   }
 
-  if (!WriteManifestLocked(candidate)) {
+  if (!WriteManifestLocked(root, candidate)) {
     *error = "cannot write manifest";
     return std::nullopt;
   }
   AppendIndexLocked(candidate);
-  candidates_[candidate.candidate_id()] = candidate;
+  (staged ? staged_ : candidates_)[candidate.candidate_id()] = candidate;
   LOG(INFO) << "Candidate " << candidate.candidate_id() << " submitted by '"
             << candidate.author() << "' (" << patch->size() << " byte patch, "
             << candidate.touched_paths_size() << " path(s) touched)";
@@ -604,6 +611,21 @@ bool CandidateStore::SetStatus(const std::string &candidate_id,
                                proto::Candidate::Status status,
                                const std::string &build_error) {
   std::lock_guard lock(mutex_);
+  if (const auto staged = staged_.find(candidate_id); staged != staged_.end()) {
+    std::error_code ec;
+    if (status == proto::Candidate::READY) {
+      std::filesystem::remove_all(CandidateDir(candidate_id), ec);
+      std::filesystem::rename(StagedDir(candidate_id),
+                              CandidateDir(candidate_id), ec);
+      candidates_[candidate_id] = staged->second;
+    } else {
+      std::filesystem::remove_all(StagedDir(candidate_id), ec);
+    }
+    staged_.erase(staged);
+    if (status != proto::Candidate::READY) {
+      return true;
+    }
+  }
   const auto it = candidates_.find(candidate_id);
   if (it == candidates_.end()) {
     return false;
@@ -614,7 +636,7 @@ bool CandidateStore::SetStatus(const std::string &candidate_id,
           ? build_error.substr(build_error.size() -
                                limits_.max_build_error_bytes)
           : build_error);
-  return WriteManifestLocked(it->second);
+  return WriteManifestLocked(CandidateDir(candidate_id), it->second);
 }
 
 std::size_t CandidateStore::size() const {

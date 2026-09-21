@@ -128,6 +128,19 @@ they need to work on the problem.**
   run time. Do not move either into an action. Priming runs with
   `--nohome_rc --nosystem_rc` and a strict action env, because a cache hits
   only for the build that filled it.
+- **A participant is a directory**, `<files_submit_dir>/<name>/`, the same in
+  the problem's tree, at the coordinator and in a kit. The candidate id is
+  the participant (the token's client id): one entry, one row, one rating,
+  and a resubmit -- staged until it builds -- replaces the code behind them.
+  The generated BUILD names no directory (`package_name()`), so a rival's
+  pulled by `arena_cli source <name>` builds where it lands, and
+  `arena_cli spar <name>` plays yours against it locally. That runs a rival's
+  code on the participant's machine, by their choice, without their token; it
+  is not a path the tournament runs anything on. There is no `Evaluate`:
+  placement -- builtins, then a ladder of rated rivals -- is the only thing
+  that spends the fleet.
+- `arena_cli` spawns with `posix_spawnp`, not `common/process`: a kit's
+  surface was not widened for `spar`.
 - What of each other participants may read is `SourcePolicy` in the problem
   config, enforced in `arena_service.cc` on `GetSource` and on the patch bytes
   of every manifest. The default is that everything is readable; that is the
@@ -166,6 +179,9 @@ one split, and it is the thing to keep:
   a registry, and a sandbox's `bazel vendor //...` must not carry an image.
   `up` makes the sandbox image by *running* `//:sandbox_image_load`, for the
   same reason: carrying the base itself would put it in `//...`.
+- `tournament` is the coordinator alone: it never starts a worker, makes an
+  image or calls docker. A worker is a separate process, started by whoever
+  wants the capacity (`deploy.sh`; `play` for the dev loop).
 - The coordinator and the workers are not images. They are processes on a
   host with docker (`bazel run //:tournament`); only what a worker builds and
   runs is a container. Do not wrap them in one: it buys a socket mount and
@@ -187,7 +203,8 @@ starting a problem of your own, not a prerequisite):
 ```sh
 cd examples/connect4
 bazel run //:play              # tournament + your kit + a shell in it
-arena_cli submit --name=ref --wait   # the kit's builtin; arena.env is sourced
+arena_cli submit --wait        # the kit's builtin; sends bots/<you>/
+arena_cli spar reference       # yours against the starter, locally
 exit                           # stops the tournament
 ```
 

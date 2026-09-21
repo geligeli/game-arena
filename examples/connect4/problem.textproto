@@ -28,14 +28,14 @@ submission {
   # catching before it reaches the fleet.
   max_patch_bytes: 262144
   max_files: 16
-  allow_paths: "bots/submissions/**"
+  allow_paths: "bots/{submission_id}/**"
 
   # Solutions are new files in their own directory, so agents may submit that
   # shape directly and the coordinator turns it into an add-only patch --
   # generated BUILD included, which is what keeps the dependency list below
   # enforceable. A hand-written patch is still accepted, under the same
   # allow_paths.
-  files_submit_dir: "bots/submissions"
+  files_submit_dir: "bots"
   harness {
     # These are this repo's labels. The arena has no opinion about them; it
     # writes exactly these into the BUILD it generates per submission.
@@ -54,7 +54,7 @@ build {
   # against the referee -- and the referee beside it: a submission that
   # somehow breaks the rules library fails to build rather than reaching a
   # match.
-  targets: "//bots/submissions/{submission_id}:bot"
+  targets: "//bots/{submission_id}:bot"
   targets: "//:match_referee"
   timeout_s: 1200
 }
@@ -89,12 +89,10 @@ match {
   timeout_s: 900
 }
 
-# What a participant's environment is. The kit gets these files as
-# arena.textproto, so `arena_cli submit --name=...` submits the strategy
-# without being told where it lives.
+# The participant everyone starts as: copied to <submit dir>/<your name>/ the
+# first time, which is then what `arena_cli submit` sends.
 kit {
-  submit_files: "bots/reference/strategy.h"
-  source_dir: "rivals"
+  starter_dir: "bots/reference"
 }
 
 ranking { kind: ELO }

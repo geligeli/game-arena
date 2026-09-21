@@ -94,7 +94,7 @@ build a `solve` and submit it:
 
 ```sh
 . ./arena.env                              # arena_cli on PATH, address, token
-arena_cli submit --name="Greedy" --wait    # kit.submit_files says what that is
+arena_cli submit --wait                    # sends solutions/<you>/, started from solutions/reference/
 ```
 
 `scripts/new_problem.sh graded <dir>` copies this out as a repository of its
@@ -116,7 +116,9 @@ a host people can reach; only submissions run in containers:
 ```sh
 ./deploy.sh                                          # the below, with this repo's names in it
 
-bazel run //:tournament -- --workers=2
+bazel run //:tournament                              # the coordinator
+bazel run //:sandbox_image_load                      # what a worker builds and runs in
+bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- --server=localhost:50051
 
 # one participant: a token, a reload of the registry, and their own image
 bazel run //:kit_image_issue -- --mint=bob \

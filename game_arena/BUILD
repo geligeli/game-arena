@@ -10,6 +10,7 @@ _KIT_TARGETS = [
     "//game_arena/referee:broker_server_main",
     "//game_arena/referee:game_registry",
     "//game_arena/referee:game_session",
+    "//game_arena/referee:referee_main",
     "//game_arena/cli:arena_cli",
     "//game_arena/client:play_loop",
     "//game_arena/client:random_client_main",

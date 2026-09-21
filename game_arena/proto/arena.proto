@@ -35,10 +35,6 @@ service Arena {
 
   rpc ListCandidates(ListCandidatesRequest) returns (ListCandidatesResponse);
 
-  // Queues more work for a candidate: more games against a chosen opponent for
-  // a match problem, more runs for a graded one.
-  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
-
   rpc GetJob(GetJobRequest) returns (Job);
 
   rpc Leaderboard(LeaderboardRequest) returns (LeaderboardResponse);
@@ -241,40 +237,6 @@ message ListCandidatesResponse {
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
-
-message EvaluateRequest {
-  string candidate_id = 1;
-
-  // Which kind depends on the problem, not the caller's mood: a match problem
-  // takes |match|, a graded one takes |grade|. Sending the wrong one is an
-  // error rather than a silent default, so an agent learns the problem's shape
-  // from its first mistake instead of from a result that means nothing.
-  oneof spec {
-    MatchRequest match = 2;
-    GradeRequest grade = 3;
-  }
-
-  // As on SubmitRequest: replace this client's in-flight work rather than being
-  // refused for being over quota.
-  bool cancel_running = 4;
-}
-
-message MatchRequest {
-  // "builtin:<spec>" | "<candidate_id>" | "top" (the current leader) |
-  // "ladder" (a spread of rated opponents).
-  string opponent = 1;
-  int32 games = 2;
-}
-
-message GradeRequest {
-  // Extra measurement runs. More runs is a tighter number, not a better one:
-  // the aggregate is taken over them per GradeSpec.aggregate.
-  int32 repeats = 1;
-}
-
-message EvaluateResponse {
-  string job_id = 1;
-}
 
 message GetJobRequest {
   string job_id = 1;

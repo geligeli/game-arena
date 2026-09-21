@@ -116,6 +116,7 @@ cc_library(
     deps = [
         "//game_arena/standings:candidate_view",
         ":generated_build",
+        ":problem_config",
         ":unified_diff",
         "//game_arena/proto:arena_cc_proto",
         "//game_arena/proto:problem_cc_proto",

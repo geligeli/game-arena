@@ -14,9 +14,10 @@ That call defines, in the calling package:
   :match_referee, :broker_server, :random_client
       the registry linked with the arena's entry points (only with `registry`)
   :config_test     `bazel test` -- the config parses and is consistent
-  :tournament      `bazel run //:tournament` -- a coordinator and local
-                   workers, on this checkout, making the problem's sandbox
-                   image first if this daemon does not have it
+  :tournament      `bazel run //:tournament` -- the coordinator, and nothing
+                   else: it builds and runs nothing. A worker is a process of
+                   its own (`sandbox_worker --server=HOST:PORT`), on any host
+                   with docker and the sandbox image
   :kit             `bazel run //:kit -- --out=DIR --server=HOST:PORT --mint=ID`
                    -- a participant's workspace: kit_files, the arena's kit
                    surface vendored as ./arena, arena_cli as a program, an MCP
@@ -164,17 +165,11 @@ def arena_problem(
         "ARENA_KIT_FILES": " ".join(["$(rootpaths %s)" % f for f in kit_files]),
         "ARENA_KIT_REGISTRY": registry or "",
     }
-    # `up` makes the sandbox image by running the target that does, rather
-    # than carrying that target's base itself.
-    up_env = {
-        "ARENA_SANDBOX_LOAD_TARGET": "//%s:sandbox_image_load" % native.package_name(),
-    }
     sh_binary(
         name = "tournament",
         srcs = [run],
         data = base_data,
         args = base_args + ["up", config_arg],
-        env = up_env,
         visibility = visibility,
     )
 
@@ -318,7 +313,11 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         srcs = [run],
         data = base_data + kit_files,
         args = base_args + ["play", config_arg],
-        env = kit_env | up_env,
+        # `play` makes its worker's sandbox image by running the target that
+        # does, rather than carrying that target's base itself.
+        env = kit_env | {
+            "ARENA_SANDBOX_LOAD_TARGET": "//%s:sandbox_image_load" % native.package_name(),
+        },
         visibility = visibility,
     )
 

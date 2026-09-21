@@ -112,15 +112,12 @@ message CandidateHarness {
 // SubmissionPolicy and SourcePolicy, at the coordinator, from the problem's
 // own copy of this config.
 message KitSpec {
-  // What `arena_cli submit` sends when the participant names no files: paths
-  // inside the kit, a directory taken whole. This is where a solution lives,
-  // spelled out for the tool, so that submitting is one word.
-  repeated string submit_files = 1;
+  reserved 1, 2;
 
-  // Where `arena_cli source <candidate_id>` writes what it pulls -- one
-  // directory per candidate under this one, inside the kit. Default
-  // "rivals". Empty leaves `source` a reader that writes nothing.
-  string source_dir = 2;
+  // The participant everyone starts as: a directory under
+  // submission.files_submit_dir, in kit_files, that a participant's own
+  // directory is copied from the first time.
+  string starter_dir = 5;
 
   // Leave the kit image's bazel able to fetch from the network. Off by
   // default: a kit whose dependencies are vendored builds what the sandbox
@@ -309,7 +306,7 @@ message MatchSpec {
 
   uint32 games_per_order = 3;
   // Opponents a freshly submitted solution is placed against, e.g.
-  // "builtin:random", "builtin:mcts". A later Evaluate may name any rival.
+  // "builtin:random", "builtin:mcts". A ladder of rated rivals follows them.
   repeated string placement_opponents = 4;
 
   uint32 turn_timeout_ms = 5;

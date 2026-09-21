@@ -1,7 +1,7 @@
 // Standing a tournament up from a problem repository, and handing participants
 // a kit to enter it.
 /*
-bazel run //:tournament -- [--workers=2]
+bazel run //:tournament
 bazel run //:play                            # all of it, and a shell in your
 kit bazel run //:kit -- --out=/srv/kits/alice --server=arena:50051 --mint=alice
 bazel build //:kit_image
@@ -18,10 +18,9 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 // Four subcommands, one problem config. (The sandbox image is not one of them:
 // it is a build output and nothing else, the macro's sandbox_image.)
 //
-//   up      a coordinator and N local workers on this checkout, making the
-//           problem's sandbox image first if this daemon does not have it.
-//           Every submission is built and run in a container -- there is no
-//           mode that skips that.
+//   up      the coordinator, on this checkout, and nothing else: it builds
+//           and runs nothing. A worker is a process of its own
+//           (sandbox_worker), started by whoever wants the capacity.
 //   kit     a participant's workspace: the files the problem names, the
 //           arena's CLI and MCP server reachable through @game_arena, a README
 //           from the config, and a freshly minted token. The kit as an
@@ -72,6 +71,7 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/strip.h"
+#include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/common/process/process.h"
 #include "game_arena/proto/kit.pb.h"
 #include "game_arena/server/client_registry.h"
@@ -91,7 +91,6 @@ ABSL_FLAG(std::string, data_dir, "",
           "`bazel test //...` there never descends into a worker's clone");
 ABSL_FLAG(int, grpc_port, 50051, "up: the Arena and SandboxFleet port");
 ABSL_FLAG(int, http_port, 8090, "up: the leaderboard port");
-ABSL_FLAG(int, workers, 1, "up: local sandbox workers to start");
 ABSL_FLAG(std::string, clients, "",
           "up/kit: the client registry. up passes it to the coordinator, "
           "creating it empty if it does not exist; kit --mint appends to it "
@@ -580,25 +579,6 @@ struct ScopedRemove {
 // up
 // ---------------------------------------------------------------------------
 
-std::string Hostname() {
-  char name[256] = {};
-  if (::gethostname(name, sizeof(name) - 1) != 0) {
-    return "host";
-  }
-  return name;
-}
-
-// Runs a command with its output discarded; the exit code, -1 if it could not
-// start.
-int RunQuiet(const std::string &executable,
-             const std::vector<std::string> &arguments) {
-  process::ChildOptions options;
-  options.stdout_path = "/dev/null";
-  options.stderr_path = "/dev/null";
-  auto child = process::Child::Start(executable, arguments, options);
-  return child ? child->Wait() : -1;
-}
-
 int RunUp(const ArenaRunfiles &runfiles) {
   std::filesystem::path config_path;
   auto config = LoadConfig(&config_path);
@@ -613,9 +593,7 @@ int RunUp(const ArenaRunfiles &runfiles) {
 
   const std::filesystem::path server_bin =
       runfiles.Locate("game_arena/server/problem_server");
-  const std::filesystem::path worker_bin =
-      runfiles.Locate("game_arena/sandbox/worker/sandbox_worker");
-  if (server_bin.empty() || worker_bin.empty()) {
+  if (server_bin.empty()) {
     return 1;
   }
 
@@ -624,40 +602,12 @@ int RunUp(const ArenaRunfiles &runfiles) {
           ? StateDir(config->problem_id())
           : Resolve(absl::GetFlag(FLAGS_data_dir));
   std::error_code ec;
-  std::filesystem::create_directories(data_dir / "work", ec);
+  std::filesystem::create_directories(data_dir, ec);
   if (ec) {
     LOG(ERROR) << "cannot create " << data_dir << ": " << ec.message();
     return 1;
   }
 
-  // Submitted code runs in a container or it does not run: there is no flag
-  // here that turns that off. The sandbox image holds the problem's tree, so
-  // from a checkout it is made every time -- a cached build, and otherwise an
-  // edit since the last run is an edit no submission sees. Making it is the
-  // sandbox_image_load target's job: it carries the base, which this one must
-  // not, or `//...` would need a registry -- and under `bazel run` the server
-  // is free again by the time this is running, so that target can simply be
-  // run.
-  const std::string &image = config->sandbox().image();
-  if (process::ResolveExecutable(absl::GetFlag(FLAGS_docker)).empty()) {
-    LOG(ERROR) << "no " << absl::GetFlag(FLAGS_docker)
-               << " on PATH. A tournament builds and runs every submission in "
-                  "a container; there is no unsandboxed mode";
-    return 1;
-  }
-  const std::string target = EnvOr("ARENA_SANDBOX_LOAD_TARGET", "");
-  if (!target.empty() &&
-      RunInherit("bazel", {"run", target}, WorkspaceRoot()) != 0) {
-    LOG(ERROR) << "cannot make the sandbox image: bazel run " << target;
-    return 1;
-  }
-  if (RunQuiet(absl::GetFlag(FLAGS_docker), {"image", "inspect", image}) != 0) {
-    LOG(ERROR) << "the sandbox image " << image
-               << " is not on this daemon. Pull it, or make it from the "
-                  "problem's checkout (bazel run //:sandbox_image_load), then "
-                  "start the tournament again";
-    return 1;
-  }
   std::string effective_text;
   google::protobuf::TextFormat::PrintToString(*config, &effective_text);
   const std::filesystem::path effective =
@@ -722,47 +672,26 @@ int RunUp(const ArenaRunfiles &runfiles) {
   // is this one rather than whatever else had the port.
   WriteFile(pid_file, absl::StrCat(server->pid(), "\n"));
 
-  std::vector<process::Child> workers;
-  const int worker_count = std::max(1, absl::GetFlag(FLAGS_workers));
-  // Each worker's cache volumes are its own: two workers sharing an output
-  // base would corrupt it.
-  const std::string volume_prefix =
-      EnvOr("ARENA_VOLUME_PREFIX", "arena-" + Hostname());
-  for (int i = 0; i < worker_count; ++i) {
-    process::ChildOptions options;
-    options.extra_env = {
-        "ARENA_WORK_DIR=" + (data_dir / "work" / std::to_string(i)).string(),
-        "ARENA_SLOTS=" + EnvOr("ARENA_SLOTS", "1"),
-        absl::StrCat("ARENA_WORKER_ID=local-", i),
-        absl::StrCat("ARENA_VOLUME_PREFIX=", volume_prefix, "-", i),
-    };
-    auto worker = process::Child::Start(
-        worker_bin.string(), {absl::StrCat("--server=localhost:", grpc_port)},
-        options);
-    if (!worker) {
-      LOG(ERROR) << "cannot start " << worker_bin;
-      server->Stop(std::chrono::seconds(5));
-      return 1;
-    }
-    workers.push_back(std::move(*worker));
-  }
-
   std::printf(
       "\n"
       "%s is up.\n"
       "  leaderboard   http://localhost:%d/\n"
       "  arena         localhost:%d   (writes need a token from %s)\n"
       "  state         %s\n"
-      "  workers       %d local, building and running in %s\n"
+      "\n"
+      "It builds and runs nothing itself. A worker, on any host with docker "
+      "and "
+      "the\nsandbox image %s:\n"
+      "  sandbox_worker --server=<this host>:%d\n"
       "\n"
       "A participant's kit (mints a token and reloads the registry):\n"
       "  bazel run //:kit -- --mint=<client_id> --server=<this host>:%d\n"
       "\n"
-      "Ctrl-C stops everything.\n\n",
+      "Ctrl-C stops it.\n\n",
       config->display_name().empty() ? config->problem_id().c_str()
                                      : config->display_name().c_str(),
-      http_port, grpc_port, clients.c_str(), data_dir.c_str(), worker_count,
-      config->sandbox().image().c_str(), grpc_port);
+      http_port, grpc_port, clients.c_str(), data_dir.c_str(),
+      config->sandbox().image().c_str(), grpc_port, grpc_port);
   std::fflush(stdout);
 
   int status = 0;
@@ -776,25 +705,9 @@ int RunUp(const ArenaRunfiles &runfiles) {
       status = 1;
       break;
     }
-    bool worker_died = false;
-    for (auto &worker : workers) {
-      if (const auto code = worker.Poll()) {
-        LOG(ERROR) << "a sandbox_worker exited with " << *code;
-        worker_died = true;
-      }
-    }
-    if (worker_died) {
-      status = 1;
-      break;
-    }
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
 
-  // Workers first: an order in flight is cancelled rather than orphaned, and
-  // the coordinator sees its stream close.
-  for (auto &worker : workers) {
-    worker.Stop(std::chrono::seconds(10));
-  }
   server->Stop(std::chrono::seconds(10));
   std::filesystem::remove(pid_file, ec);
   return status;
@@ -892,6 +805,19 @@ std::string KitBuildFile(const std::string &registry) {
         "    ],\n"
         ")\n"
         "\n"
+        "# What `arena_cli spar <name>` referees yours against a rival's "
+        "with:\n"
+        "# the one the tournament's workers run.\n"
+        "cc_binary(\n"
+        "    name = \"match_referee\",\n"
+        "    deps = [\n"
+        "        \"",
+        registry,
+        "\",\n"
+        "        \"@game_arena//game_arena/referee:referee_main\",\n"
+        "    ],\n"
+        ")\n"
+        "\n"
         "# A player making uniformly random legal moves; a floor to beat.\n"
         "cc_binary(\n"
         "    name = \"random_client\",\n"
@@ -944,15 +870,24 @@ std::string KitReadme(const proto::ProblemConfig &config,
     md << "- `" << file << "`\n";
   }
 
-  md << "\n## Iterating locally\n\n```sh\nbazel build //...\n";
+  const std::string own = config.submission().files_submit_dir() + "/<you>";
+  md << "\nYours is `" << own << "/`, made from `" << config.kit().starter_dir()
+     << "/` the first time you run `arena_cli`. Every participant's "
+        "implementation is a directory like it, named after them.\n";
+
+  md << "\n## Iterating locally\n\n```sh\n";
   if (config.has_match()) {
-    md << "bazel run //:broker_server -- --grpc_port=50051 --http_port=8080 &\n"
-          "# then run your bot (see the harness in this kit) against it with\n"
+    md << "arena_cli spar <name>      # pull <name>'s directory beside yours, "
+          "build both, play them here\n"
+          "bazel run //:broker_server -- --grpc_port=50051 --http_port=8080 &\n"
+          "# or run your bot against a builtin:\n"
           "#   --server=localhost:50051 --opponent=builtin:<name>\n";
     if (!config.match().placement_opponents().empty()) {
       md << "# builtins the arena rates you against first: "
          << absl::StrJoin(config.match().placement_opponents(), ", ") << "\n";
     }
+  } else {
+    md << "bazel build //...\n";
   }
   md << "```\n";
 
@@ -969,16 +904,9 @@ std::string KitReadme(const proto::ProblemConfig &config,
         "token, and submitting needs no build.\n";
   md << "\n```sh\n. ./arena.env\n"
         "arena_cli rules\n";
-  const auto &kit = config.kit();
-  if (!kit.submit_files().empty()) {
-    md << "arena_cli submit --name=\"My bot\" --wait   # "
-       << absl::StrJoin(kit.submit_files(), ", ") << "\n";
-  } else {
-    md << "arena_cli submit --name=\"My bot\" --file=<path> --wait\n";
-  }
-  md << "arena_cli leaderboard\n";
-  const std::string rivals =
-      kit.source_dir().empty() ? "rivals" : kit.source_dir();
+  md << "arena_cli submit --wait                # sends " << own
+     << "/; again replaces it, once it builds\n"
+        "arena_cli leaderboard\n";
   switch (config.source().visibility()) {
     case proto::SourcePolicy::OWN:
       md << "arena_cli source <your candidate_id>   # your own submissions "
@@ -987,13 +915,13 @@ std::string KitReadme(const proto::ProblemConfig &config,
     case proto::SourcePolicy::NONE:
       break;
     default:
-      md << "arena_cli source <candidate_id>        # pulled into " << rivals
-         << "/<candidate_id>/\n";
+      md << "arena_cli source <name>                # pulled into "
+         << config.submission().files_submit_dir() << "/<name>/\n";
       break;
   }
   md << "```\n\n";
   md << "`arena.textproto` is what those commands do when you do not say: the "
-        "address, what `submit` sends, where `source` puts what it pulls. It "
+        "address, and where participants' directories live. It "
         "is yours to edit -- it steers your tools, and the tournament still "
         "decides what it accepts.\n";
   switch (config.source().visibility()) {
@@ -1012,7 +940,7 @@ std::string KitReadme(const proto::ProblemConfig &config,
   }
   md << "\nFor an agent, `mcp.json` registers the same operations as MCP "
         "tools (`arena_rules`, `arena_submit`, `arena_job`, "
-        "`arena_leaderboard`, `arena_source`, `arena_evaluate`); "
+        "`arena_leaderboard`, `arena_source`); "
         "`arena_submit` takes file paths relative to this directory.\n";
   return md.str();
 }
@@ -1050,7 +978,7 @@ std::string KitMcpJson(const std::filesystem::path &kit,
                     JsonEscape(token), "\"");
   }
   if (!client_id.empty()) {
-    absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_AUTHOR\": \"",
+    absl::StrAppend(&mcp, ",\n        \"ARENA_NAME\": \"",
                     JsonEscape(client_id), "\"");
   }
   absl::StrAppend(&mcp, ",\n        \"ARENA_KIT\": \"",
@@ -1250,11 +1178,35 @@ std::string KitConfigText(const proto::ProblemConfig &config,
   kit.set_server(server);
   kit.set_http(http);
   kit.set_client_id(client_id);
-  for (const std::string &file : config.kit().submit_files()) {
-    kit.add_submit_files(file);
+  kit.set_submit_dir(config.submission().files_submit_dir());
+  kit.set_starter_dir(config.kit().starter_dir());
+  if (config.has_match()) {
+    const proto::MatchSpec &match = config.match();
+    kit.set_bot_binary(config.submission().harness().binary_name().empty()
+                           ? "bot"
+                           : config.submission().harness().binary_name());
+    kit.set_game(match.game());
+    // What sandbox/worker/order_job.cc gives the fleet's referee, so a game
+    // played in a kit is bounded like a rated one.
+    if (match.turn_timeout_ms() > 0) {
+      kit.add_referee_flags(
+          absl::StrCat("--turn_timeout_ms=", match.turn_timeout_ms()));
+    }
+    if (match.game_time_budget_ms() > 0) {
+      kit.add_referee_flags(
+          absl::StrCat("--game_time_budget_ms=", match.game_time_budget_ms()));
+    }
+    if (match.max_moves_per_game() > 0) {
+      kit.add_referee_flags(
+          absl::StrCat("--max_moves_per_game=", match.max_moves_per_game()));
+    }
+    if (!match.registry_options().empty()) {
+      kit.add_referee_flags(
+          absl::StrCat("--registry_options=",
+                       kv_options::Format({match.registry_options().begin(),
+                                           match.registry_options().end()})));
+    }
   }
-  kit.set_source_dir(
-      config.kit().source_dir().empty() ? "rivals" : config.kit().source_dir());
   std::string text;
   google::protobuf::TextFormat::PrintToString(kit, &text);
   return absl::StrCat(
@@ -1400,7 +1352,7 @@ int LayerKitImage(const ImageTools &tools, std::filesystem::path kit,
     settings.insert(settings.end(), {"--env", "ARENA_TOKEN=" + token});
   }
   if (!client_id.empty()) {
-    settings.insert(settings.end(), {"--env", "ARENA_MCP_AUTHOR=" + client_id});
+    settings.insert(settings.end(), {"--env", "ARENA_NAME=" + client_id});
   }
   return DeliverImage(
              tools, stage, tars, settings, image,
@@ -1587,16 +1539,13 @@ int RunKit(const ArenaRunfiles &runfiles) {
     }
   }
 
-  // What the problem tells a participant to submit has to be in what it gave
-  // them. Getting this wrong produces a kit whose one documented command
-  // fails, and the person who finds out is the participant.
-  for (const std::string &file : config->kit().submit_files()) {
-    if (!std::filesystem::exists(out / file)) {
-      LOG(ERROR) << "kit.submit_files names \"" << file
-                 << "\", which is not in the kit. Add it to the macro's "
-                    "kit_files, or name a path that is there";
-      return 1;
-    }
+  // What a participant starts from has to be in what they were given, or the
+  // kit's first documented command fails and the participant finds out.
+  if (!config->kit().starter_dir().empty() &&
+      !std::filesystem::is_directory(out / config->kit().starter_dir())) {
+    LOG(ERROR) << "kit.starter_dir \"" << config->kit().starter_dir()
+               << "\" is not in the kit. Add it to the macro's kit_files";
+    return 1;
   }
 
   bool prime = absl::GetFlag(FLAGS_prime_cache);
@@ -1636,7 +1585,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
     absl::StrAppend(&env, "export ARENA_TOKEN=", token, "\n");
   }
   if (!client_id.empty()) {
-    absl::StrAppend(&env, "export ARENA_MCP_AUTHOR=", client_id, "\n");
+    absl::StrAppend(&env, "export ARENA_NAME=", client_id, "\n");
   }
   WriteFile(out / "arena.env", env);
   WriteFile(out / "arena.textproto",
@@ -1736,8 +1685,8 @@ int RunKit(const ArenaRunfiles &runfiles) {
         layered ? std::vector<std::string>{"--nohome_rc", "--nosystem_rc"}
                 : std::vector<std::string>{};
     if (!absl::GetFlag(FLAGS_prime_bazelrc).empty()) {
-      startup.push_back(
-          "--bazelrc=" + Resolve(absl::GetFlag(FLAGS_prime_bazelrc)).string());
+      startup.push_back("--bazelrc=" +
+                        Resolve(absl::GetFlag(FLAGS_prime_bazelrc)).string());
     }
     const auto bazel = [&](std::vector<std::string> command) {
       command.insert(command.begin(), startup.begin(), startup.end());
@@ -1824,9 +1773,9 @@ std::string TailOf(const std::filesystem::path &file, int lines) {
 }
 
 // `up` and `kit` are run as this binary's own subprocesses rather than called:
-// they already have the flags, the checks and the messages, and the shell is
-// the only thing new here.
-int RunPlay() {
+// they already have the flags, the checks and the messages. What is new here
+// is the shell, and the one worker a tournament on its own does not have.
+int RunPlay(const ArenaRunfiles &runfiles) {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
   if (!config) {
@@ -1882,7 +1831,6 @@ int RunPlay() {
       "--clients=" + clients.string(),
       absl::StrCat("--grpc_port=", grpc_port),
       absl::StrCat("--http_port=", http_port),
-      absl::StrCat("--workers=", absl::GetFlag(FLAGS_workers)),
   };
   // The coordinator writes this once it is serving, so waiting for it means
   // waiting for *our* tournament. Waiting for the port would not: something
@@ -1898,11 +1846,7 @@ int RunPlay() {
     LOG(ERROR) << "cannot start " << self;
     return 1;
   }
-  std::printf(
-      "Starting the tournament (log: %s).\n"
-      "The first run builds the problem's sandbox image, which takes a "
-      "while.\n",
-      log.c_str());
+  std::printf("Starting the tournament (log: %s).\n", log.c_str());
   std::fflush(stdout);
   while (!std::filesystem::exists(pid_file)) {
     if (const auto code = up->Poll()) {
@@ -1915,6 +1859,31 @@ int RunPlay() {
       return 1;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+
+  // A worker, and the image it builds and runs every submission in. The image
+  // holds the problem's tree, so it is made every time -- a cached build --
+  // by running the target that carries its base, which this one must not.
+  const std::filesystem::path worker_bin =
+      runfiles.Locate("game_arena/sandbox/worker/sandbox_worker");
+  if (worker_bin.empty() ||
+      RunInherit("bazel", {"run", EnvOr("ARENA_SANDBOX_LOAD_TARGET", "")},
+                 WorkspaceRoot()) != 0) {
+    LOG(ERROR) << "cannot make the sandbox image";
+    up->Stop(std::chrono::seconds(10));
+    return 1;
+  }
+  process::ChildOptions worker_options;
+  worker_options.stdout_path = data_dir / "logs" / "worker.log";
+  worker_options.stderr_path = worker_options.stdout_path;
+  worker_options.extra_env = {"ARENA_WORK_DIR=" + (data_dir / "work").string()};
+  auto worker = process::Child::Start(
+      worker_bin.string(), {absl::StrCat("--server=localhost:", grpc_port)},
+      worker_options);
+  if (!worker) {
+    LOG(ERROR) << "cannot start " << worker_bin;
+    up->Stop(std::chrono::seconds(10));
+    return 1;
   }
 
   // Your kit, rewritten each time so it has the current kit_files.
@@ -1967,7 +1936,7 @@ int RunPlay() {
   shell_options.extra_env = {
       absl::StrCat("ARENA_SERVER=localhost:", grpc_port),
       "ARENA_TOKEN=" + token,
-      "ARENA_MCP_AUTHOR=" + client_id,
+      "ARENA_NAME=" + client_id,
       "ARENA_KIT=" + kit_dir.string(),
       // The kit's builtins, ahead of whatever else is called arena_cli.
       absl::StrCat("PATH=", (kit_dir / ".arena" / "bin").string(), ":",
@@ -2007,6 +1976,8 @@ int RunPlay() {
   }
   std::printf("Stopping the tournament...\n");
   std::fflush(stdout);
+  // The worker first: an order in flight is cancelled rather than orphaned.
+  worker->Stop(std::chrono::seconds(10));
   const int status = up->Stop(std::chrono::seconds(20));
   return tournament_died ? 1 : (status == 0 ? 0 : 1);
 }
@@ -2015,7 +1986,7 @@ void PrintUsage() {
   std::fprintf(stderr,
                "usage: arena_tournament <up|kit|check|play> "
                "--problem_config=<path> [flags]\n"
-               "  up      run a coordinator and local workers (--image)\n"
+               "  up      run the coordinator\n"
                "  play    up in the background, a kit for you, a shell in it\n"
                "  kit     write a participant's workspace (--out, --mint, "
                "--image)\n"
@@ -2045,7 +2016,7 @@ int main(int argc, char **argv) {
     return RunCheck();
   }
   if (command == "play") {
-    return RunPlay();
+    return RunPlay(runfiles);
   }
   PrintUsage();
   return 2;

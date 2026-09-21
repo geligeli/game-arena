@@ -37,35 +37,15 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "reference_strategy",
-    hdrs = ["reference/strategy.h"],
-    deps = [":bot_api"],
-)
-
-# The local iteration loop: the same harness the arena compiles, around the
-# reference strategy. Point it at a broker and watch it play.
-cc_binary(
-    name = "dev_bot",
-    srcs = ["bot_main.cc"],
-    local_defines = [
-        r'CANDIDATE_ENTRY_HEADER=\"bots/reference/strategy.h\"',
-    ],
-    deps = [
-        ":bot_deps",
-        ":reference_strategy",
-    ],
-)
-
-# What a participant receives: the API, the harness compiled around every
-# submission, and the reference strategy to start from.
+# What a participant receives: the API and the harness compiled around every
+# submission. Each participant is a directory here -- reference/ is the one to
+# start from -- with the BUILD the arena generates.
 filegroup(
     name = "kit",
     srcs = glob([
         "BUILD",
         "*.cc",
         "*.h",
-        "reference/*",
     ]),
 )
 

@@ -271,52 +271,6 @@ grpc::Status ArenaService::ListCandidates(
   return grpc::Status::OK;
 }
 
-grpc::Status ArenaService::Evaluate(grpc::ServerContext *context,
-                                    const proto::EvaluateRequest *request,
-                                    proto::EvaluateResponse *response) {
-  ClientIdentity identity;
-  grpc::Status status;
-  if (!Authenticate(context, &identity, &status)) {
-    return status;
-  }
-  std::string error;
-  auto reservation = scheduler_->TryReserve(identity.client_id, identity.quota,
-                                            request->cancel_running(), &error);
-  if (!reservation.has_value()) {
-    return {grpc::StatusCode::RESOURCE_EXHAUSTED, error};
-  }
-  // Which shape is valid is the problem's, not the caller's. Saying so beats
-  // defaulting: an agent that sends the wrong one learns the problem's shape
-  // from the error rather than from a result that means nothing.
-  if (graded_) {
-    if (request->has_match()) {
-      return {grpc::StatusCode::INVALID_ARGUMENT,
-              "this problem is graded, not played: send `grade`, not `match`"};
-    }
-    const auto job_id = scheduler_->EnqueueRegrade(
-        request->candidate_id(), request->grade().repeats(),
-        std::move(*reservation), &error);
-    if (!job_id.has_value()) {
-      return {grpc::StatusCode::INVALID_ARGUMENT, error};
-    }
-    response->set_job_id(*job_id);
-    return grpc::Status::OK;
-  }
-
-  if (request->has_grade()) {
-    return {grpc::StatusCode::INVALID_ARGUMENT,
-            "this problem is played, not graded: send `match`, not `grade`"};
-  }
-  const auto job_id = scheduler_->EnqueueChallenge(
-      request->candidate_id(), request->match().opponent(),
-      request->match().games(), std::move(*reservation), &error);
-  if (!job_id.has_value()) {
-    return {grpc::StatusCode::INVALID_ARGUMENT, error};
-  }
-  response->set_job_id(*job_id);
-  return grpc::Status::OK;
-}
-
 grpc::Status ArenaService::GetJob(grpc::ServerContext * /*context*/,
                                   const proto::GetJobRequest *request,
                                   proto::Job *response) {

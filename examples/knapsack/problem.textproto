@@ -28,7 +28,7 @@ submission {
   max_files: 16
   # A solution lives in its own directory and touches nothing else. In
   # particular not the grader, and not the cases it is scored on.
-  allow_paths: "solutions/**"
+  allow_paths: "solutions/{submission_id}/**"
 
   files_submit_dir: "solutions"
   harness {
@@ -66,11 +66,10 @@ sandbox {
   network: NETWORK_NONE
 }
 
-# What a participant's environment is: `arena_cli submit --name=...` sends the
-# solution, wherever they started it from.
+# The participant everyone starts as: copied to <submit dir>/<your name>/ the
+# first time, which is then what `arena_cli submit` sends.
 kit {
-  submit_files: "solutions/reference/solve.cc"
-  source_dir: "rivals"
+  starter_dir: "solutions/reference"
 }
 
 grade {

@@ -74,15 +74,24 @@ class SchedulerTest : public ::testing::Test {
                                               CandidateLimits{}, rules);
     elo_ = std::make_unique<tournament_broker::EloStore>(dir_ / "ratings.pb",
                                                          32.0);
-    SchedulerConfig config;
-    config.placement_opponents = {"builtin:random"};
-    config.placement_games = 2;
-    config.build_targets = {"//game_arena/candidates/{submission_id}:bot"};
-    config.bot_target = "//game_arena/candidates/{submission_id}:bot";
+    config_.placement_opponents = {"builtin:random"};
+    config_.placement_games = 2;
+    config_.build_targets = {"//game_arena/candidates/{submission_id}:bot"};
+    config_.bot_target = "//game_arena/candidates/{submission_id}:bot";
     standings_ =
         std::make_unique<EloStandings>(elo_.get(), store_.get(), "risk2");
-    scheduler_ = std::make_unique<Scheduler>(config, store_.get(), elo_.get(),
-                                             standings_.get());
+    scheduler_ =
+        std::make_unique<Scheduler>(config_, store_.get(), standings_.get());
+  }
+
+  // A scheduler whose placement is the ladder alone: one order per rated
+  // rival, which is how a candidate-vs-candidate order comes to exist.
+  void LadderOnly(int games) {
+    SchedulerConfig config = config_;
+    config.placement_opponents.clear();
+    config.placement_games = games;
+    scheduler_ =
+        std::make_unique<Scheduler>(config, store_.get(), standings_.get());
   }
 
   void TearDown() override { std::filesystem::remove_all(dir_); }
@@ -100,8 +109,8 @@ class SchedulerTest : public ::testing::Test {
       const std::string &name,
       proto::Candidate::Status status = proto::Candidate::READY) {
     proto::SubmitRequest request;
+    // No author: the id is the participant, and these are different ones.
     request.set_display_name(name);
-    request.set_author("agent");
     request.set_game("risk2");
     request.set_entry_header("strategy.h");
     auto *file = request.add_files();
@@ -134,6 +143,7 @@ class SchedulerTest : public ::testing::Test {
   std::filesystem::path dir_;
   std::unique_ptr<CandidateStore> store_;
   std::unique_ptr<tournament_broker::EloStore> elo_;
+  SchedulerConfig config_;
   std::unique_ptr<EloStandings> standings_;
   std::unique_ptr<Scheduler> scheduler_;
 };
@@ -185,7 +195,7 @@ TEST_F(SchedulerTest, EveryOrderCarriesTheProblemsSandboxAndTree) {
   config.sandbox.set_image("registry/arena-build:1");
   config.sandbox.set_memory_limit_mb(2048);
   EloStandings standings(elo_.get(), store_.get(), "risk2");
-  Scheduler scheduler(config, store_.get(), elo_.get(), &standings);
+  Scheduler scheduler(config, store_.get(), &standings);
 
   const auto candidate = AddCandidate("Alpha", proto::Candidate::PENDING);
   auto worker = std::make_shared<FakeWorker>("w1", 2);
@@ -256,13 +266,11 @@ TEST_F(SchedulerTest, ProgressForARetiredOrderIsIgnored) {
 TEST_F(SchedulerTest, CandidateMatchDispatchesBothSidesNamingEachOther) {
   const auto alpha = AddCandidate("Alpha");
   const auto beta = AddCandidate("Beta");
+  LadderOnly(6);
   auto worker = std::make_shared<FakeWorker>("w1", 4);
   scheduler_->AddWorker(worker);
 
-  std::string error;
-  const auto job_id = scheduler_->EnqueueChallenge(
-      alpha.candidate_id(), beta.candidate_id(), 6, Reserve(), &error);
-  ASSERT_TRUE(job_id.has_value()) << error;
+  const std::string job_id = scheduler_->EnqueuePlacement(alpha, Reserve());
 
   // One order, both sides. It used to be two mirrored orders that had to be
   // dispatched together; the referee moving into the sandbox removed the pair.
@@ -284,7 +292,7 @@ TEST_F(SchedulerTest, CandidateMatchDispatchesBothSidesNamingEachOther) {
 
   scheduler_->OnResult("w1", Result(order.order_id(), true, 4, 2));
 
-  const auto job = scheduler_->GetJob(*job_id);
+  const auto job = scheduler_->GetJob(job_id);
   ASSERT_TRUE(job.has_value());
   EXPECT_EQ(job->state(), proto::Job::DONE);
   EXPECT_EQ(job->wins(), 4);
@@ -300,13 +308,10 @@ TEST_F(SchedulerTest, CandidateMatchDispatchesBothSidesNamingEachOther) {
 TEST_F(SchedulerTest, AMatchNeedsOnlyOneSlot) {
   const auto alpha = AddCandidate("Alpha");
   const auto beta = AddCandidate("Beta");
+  LadderOnly(2);
   auto small = std::make_shared<FakeWorker>("w1", 1);
   scheduler_->AddWorker(small);
-
-  std::string error;
-  const auto job_id = scheduler_->EnqueueChallenge(
-      alpha.candidate_id(), beta.candidate_id(), 2, Reserve(), &error);
-  ASSERT_TRUE(job_id.has_value()) << error;
+  scheduler_->EnqueuePlacement(alpha, Reserve());
 
   ASSERT_EQ(small->orders.size(), 1u);
   EXPECT_TRUE(small->orders[0].has_opponent());
@@ -335,7 +340,7 @@ TEST_F(SchedulerTest, BuildFailureFailsTheJobAndMarksTheCandidate) {
   config.placement_opponents = {"builtin:random", "builtin:mcts"};
   config.placement_games = 2;
   EloStandings standings(elo_.get(), store_.get(), "risk2");
-  Scheduler scheduler(config, store_.get(), elo_.get(), &standings);
+  Scheduler scheduler(config, store_.get(), &standings);
   scheduler.AddWorker(worker);
   const std::string job_id = scheduler.EnqueuePlacement(candidate, Reserve());
   ASSERT_GE(worker->orders.size(), 1u);
@@ -363,13 +368,10 @@ TEST_F(SchedulerTest, BuildFailureFailsTheJobAndMarksTheCandidate) {
 TEST_F(SchedulerTest, LosingAWorkerRequeuesItsOrder) {
   const auto alpha = AddCandidate("Alpha");
   const auto beta = AddCandidate("Beta");
+  LadderOnly(2);
   auto first = std::make_shared<FakeWorker>("w1", 1);
   scheduler_->AddWorker(first);
-
-  std::string error;
-  const auto job_id = scheduler_->EnqueueChallenge(
-      alpha.candidate_id(), beta.candidate_id(), 2, Reserve(), &error);
-  ASSERT_TRUE(job_id.has_value()) << error;
+  scheduler_->EnqueuePlacement(alpha, Reserve());
   ASSERT_EQ(scheduler_->in_flight_orders(), 1);
 
   scheduler_->RemoveWorker("w1");
@@ -387,88 +389,52 @@ TEST_F(SchedulerTest, LosingAWorkerRequeuesItsOrder) {
             alpha.candidate_id());
 }
 
-TEST_F(SchedulerTest, RejectsUnusableChallenges) {
-  const auto alpha = AddCandidate("Alpha");
-  const auto pending = AddCandidate("Pending", proto::Candidate::PENDING);
-  const auto broken = AddCandidate("Broken", proto::Candidate::BUILD_FAILED);
-  std::string error;
+TEST_F(SchedulerTest, ResubmitSupersedesTheCandidatesUnfinishedJob) {
+  // The older job carries the code this one replaces; were it to finish, its
+  // result would be taken for the new submission's.
+  const auto first = AddCandidate("Alpha", proto::Candidate::PENDING);
+  auto worker = std::make_shared<FakeWorker>("w1", 4);
+  scheduler_->AddWorker(worker);
+  const std::string old_job = scheduler_->EnqueuePlacement(first, Reserve());
+  ASSERT_EQ(worker->orders.size(), 1u);
+  const std::string old_order = worker->orders[0].order_id();
 
-  EXPECT_FALSE(scheduler_
-                   ->EnqueueChallenge("no-such-id", "builtin:random", 2,
-                                      Reserve(), &error)
-                   .has_value());
-  EXPECT_NE(error.find("unknown candidate"), std::string::npos);
+  const auto second = AddCandidate("Alpha", proto::Candidate::PENDING);
+  const std::string new_job = scheduler_->EnqueuePlacement(second, Reserve());
 
-  EXPECT_FALSE(scheduler_
-                   ->EnqueueChallenge(alpha.candidate_id(),
-                                      alpha.candidate_id(), 2, Reserve(),
-                                      &error)
-                   .has_value());
-  EXPECT_NE(error.find("cannot play itself"), std::string::npos);
-
-  EXPECT_FALSE(scheduler_
-                   ->EnqueueChallenge(alpha.candidate_id(),
-                                      pending.candidate_id(), 2, Reserve(),
-                                      &error)
-                   .has_value());
-  EXPECT_NE(error.find("not ready"), std::string::npos);
-
-  EXPECT_FALSE(scheduler_
-                   ->EnqueueChallenge(broken.candidate_id(), "builtin:random",
-                                      2, Reserve(), &error)
-                   .has_value());
-  EXPECT_NE(error.find("failed to build"), std::string::npos);
-
-  EXPECT_FALSE(scheduler_
-                   ->EnqueueChallenge(alpha.candidate_id(), "nonsense", 2,
-                                      Reserve(), &error)
-                   .has_value());
+  EXPECT_EQ(scheduler_->GetJob(old_job)->state(), proto::Job::CANCELLED);
+  EXPECT_EQ(scheduler_->GetJob(new_job)->state(), proto::Job::RUNNING);
+  // A late result for the old order changes nothing.
+  scheduler_->OnResult("w1", Result(old_order));
+  EXPECT_EQ(store_->Get(second.candidate_id())->status(),
+            proto::Candidate::PENDING);
 }
 
-TEST_F(SchedulerTest, TopAndLadderResolveAgainstCurrentStandings) {
-  const auto challenger = AddCandidate("Challenger");
-  const auto weak = AddCandidate("Weak");
-  const auto strong = AddCandidate("Strong");
-  // Give "Strong" the higher rating by having it beat "Weak".
-  elo_->RecordResult("risk2", strong.candidate_id(), weak.candidate_id(), 1.0);
-
+TEST_F(SchedulerTest, PlacementAlsoPlaysTheLadder) {
+  // Nothing else ever plays two submissions against each other: the builtins
+  // first, then rated rivals spread from the top of the board to the bottom.
+  const auto newcomer = AddCandidate("Newcomer", proto::Candidate::PENDING);
+  std::vector<std::string> rivals;
+  for (const char *name : {"A", "B", "C", "D", "E"}) {
+    rivals.push_back(AddCandidate(name).candidate_id());
+    proto::OrderResult won;
+    won.set_wins(static_cast<int>(rivals.size()));
+    won.set_games_played(won.wins());
+    standings_->Record(rivals.back(), "builtin:random", won);
+  }
+  AddCandidate("Unready", proto::Candidate::PENDING);
   auto worker = std::make_shared<FakeWorker>("w1", 8);
   scheduler_->AddWorker(worker);
 
-  std::string error;
-  ASSERT_TRUE(scheduler_
-                  ->EnqueueChallenge(challenger.candidate_id(), "top", 2,
-                                     Reserve(), &error)
-                  .has_value())
-      << error;
-  ASSERT_EQ(worker->orders.size(), 1u);  // one order is one whole match
-  EXPECT_EQ(worker->orders[0].opponent_spec(),
-            "player:" + strong.candidate_id());
+  scheduler_->EnqueuePlacement(newcomer, Reserve());
 
-  worker->orders.clear();
-  ASSERT_TRUE(scheduler_
-                  ->EnqueueChallenge(challenger.candidate_id(), "ladder", 2,
-                                     Reserve(), &error)
-                  .has_value())
-      << error;
-  // Two rivals available and ladder_size is 3, so it takes what exists: one
-  // order per rival.
-  EXPECT_EQ(worker->orders.size(), 2u);
-}
-
-TEST_F(SchedulerTest, GamesPerJobIsCapped) {
-  const auto candidate = AddCandidate("Alpha");
-  auto worker = std::make_shared<FakeWorker>("w1", 2);
-  scheduler_->AddWorker(worker);
-
-  std::string error;
-  ASSERT_TRUE(scheduler_
-                  ->EnqueueChallenge(candidate.candidate_id(), "builtin:random",
-                                     1000000, Reserve(), &error)
-                  .has_value())
-      << error;
-  ASSERT_EQ(worker->orders.size(), 1u);
-  EXPECT_EQ(worker->orders[0].num_games(), SchedulerConfig{}.max_games_per_job);
+  // E has won most and A least: the default ladder of three is top, middle,
+  // bottom.
+  ASSERT_EQ(worker->orders.size(), 4u);
+  EXPECT_EQ(worker->orders[0].opponent_spec(), "builtin:random");
+  EXPECT_EQ(worker->orders[1].opponent_spec(), "player:" + rivals[4]);
+  EXPECT_EQ(worker->orders[2].opponent_spec(), "player:" + rivals[2]);
+  EXPECT_EQ(worker->orders[3].opponent_spec(), "player:" + rivals[0]);
 }
 
 TEST_F(SchedulerTest, UnknownJobAndOrphanResultAreHandled) {
@@ -575,9 +541,11 @@ TEST_F(QuotaTest, BoundsQueuedJobsSeparatelyFromRunningOnes) {
   ASSERT_TRUE(first.has_value()) << error;
   scheduler_->EnqueuePlacement(alpha, std::move(*first));
 
+  // Another participant's, or it would supersede the first instead of queueing.
+  const auto beta = AddCandidate("Beta", proto::Candidate::PENDING);
   auto second = scheduler_->TryReserve("agent-1", Quota(1, 2), false, &error);
   ASSERT_TRUE(second.has_value()) << error;
-  scheduler_->EnqueuePlacement(alpha, std::move(*second));
+  scheduler_->EnqueuePlacement(beta, std::move(*second));
 
   EXPECT_FALSE(scheduler_->TryReserve("agent-1", Quota(1, 2), false, &error)
                    .has_value());

@@ -12,12 +12,12 @@ arena_problem(
     # harness and the reference bot. Not the config, not the tournament.
     kit_files = [
         "//bots:kit",
+        "//bots/reference:kit",
         "//game:kit",
     ],
     # The rest of the tree a submission is built on, package by package.
     tree = [
         "//bots:tree",
-        "//bots/submissions:tree",
         "//game:tree",
     ],
 )

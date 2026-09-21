@@ -5,12 +5,12 @@ arena_cli submit --name="My Bot" --wait          # what the kit says a solution
 is arena_cli submit --name="My Bot" --file=strategy.h --wait arena_cli submit
 --name="My Bot" --patch=my.diff arena_cli job <job_id> [--wait] arena_cli
 candidates [--order=newest] arena_cli leaderboard [--limit=20] arena_cli source
-<candidate_id> [path]           # pulls it into rivals/<id>/ arena_cli evaluate
-<candidate_id> [--opponent=ladder|--repeats=5] [--wait]
+<name> [path]                   # pulls their directory in beside yours
+arena_cli spar <name> [--games=10]   # and plays yours against it, here
 */
 //
 // The human's counterpart to the MCP server: same RPCs, same compact output,
-// drivable from a shell. Submit and Evaluate are the write path and carry the
+// drivable from a shell. Submit is the write path and carries the
 // --token as x-arena-token metadata; the reads are open unless the problem
 // says otherwise (ProblemInfo.source_visibility).
 //
@@ -22,8 +22,12 @@ candidates [--order=newest] arena_cli leaderboard [--limit=20] arena_cli source
 // the participant's to edit: widening it changes what this tool sends, never
 // what the coordinator accepts.
 
+#include <fcntl.h>
 #include <google/protobuf/text_format.h>
 #include <grpcpp/grpcpp.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <array>
@@ -56,12 +60,12 @@ ABSL_FLAG(std::string, kit, "",
           "Default: $ARENA_KIT, else the nearest enclosing directory that "
           "has one");
 ABSL_FLAG(std::string, token, "",
-          "Bearer token for Submit/Evaluate, sent as the x-arena-token "
+          "Bearer token for Submit, sent as the x-arena-token "
           "metadata header (default: $ARENA_TOKEN)");
 ABSL_FLAG(int, timeout_s, 120, "Per-RPC timeout in seconds");
 
 ABSL_FLAG(std::string, name, "",
-          "submit: display name for the candidate (required)");
+          "submit: display name for the candidate. Default: who you are");
 ABSL_FLAG(std::vector<std::string>, file, {},
           "submit: a source file to submit (repeatable). Read from disk, "
           "flattened to its basename; the server generates the BUILD");
@@ -83,10 +87,10 @@ ABSL_FLAG(std::string, game, "",
           "submit/candidates/leaderboard: restrict to this game "
           "(default: the server's)");
 ABSL_FLAG(bool, cancel_running, false,
-          "submit/evaluate: abort this client's in-flight work and take its "
+          "submit: abort this client's in-flight work and take its "
           "place, instead of being refused for being over quota");
 ABSL_FLAG(bool, wait, false,
-          "submit/job/evaluate: poll until the job reaches a terminal state");
+          "submit/job: poll until the job reaches a terminal state");
 
 ABSL_FLAG(std::string, author, "", "candidates: restrict to this author");
 ABSL_FLAG(std::string, order, "best", "candidates: best | newest");
@@ -95,11 +99,7 @@ ABSL_FLAG(int, limit, 20, "candidates/leaderboard: max rows (0: default)");
 ABSL_FLAG(bool, print, false,
           "source: write the files to stdout instead of into the kit");
 
-ABSL_FLAG(std::string, opponent, "",
-          "evaluate: builtin:<spec> | <candidate_id> | top | ladder");
-ABSL_FLAG(int, games, 0, "evaluate: match games (0: the problem's default)");
-ABSL_FLAG(int, repeats, 0,
-          "evaluate: extra measurement runs, for a graded problem");
+ABSL_FLAG(int, games, 10, "spar: games to play");
 
 namespace {
 
@@ -125,6 +125,14 @@ struct Client {
   // given as a flag.
   std::filesystem::path kit_dir;
   proto::KitConfig kit;
+  // Who this kit is: $ARENA_NAME, else the kit's client_id. What the
+  // participant's own directory is called, here and at the tournament.
+  std::string me;
+
+  // <kit>/<submit_dir>/<name>: where a participant's implementation lives.
+  std::filesystem::path DirOf(const std::string &name) const {
+    return kit_dir / kit.submit_dir() / name;
+  }
 };
 
 // The kit this command belongs to: --kit, $ARENA_KIT, or the nearest
@@ -389,16 +397,11 @@ int CmdRules(const Client &client, const std::string &server) {
     std::printf("%s\n\n", problem.description().c_str());
   }
   std::printf("SUBMITTING\n");
-  if (!client.kit.submit_files().empty()) {
-    std::string names;
-    for (const std::string &file : client.kit.submit_files()) {
-      names += (names.empty() ? "" : ", ") + file;
-    }
+  if (!client.me.empty() && !client.kit.submit_dir().empty()) {
     std::printf(
-        "  submit --name=...              sends %s\n"
-        "                                 (arena.textproto; --file "
-        "overrides)\n",
-        names.c_str());
+        "  submit                         sends %s/%s/\n"
+        "                                 (--file overrides)\n",
+        client.kit.submit_dir().c_str(), client.me.c_str());
   }
   if (!problem.files_submit_dir().empty()) {
     std::printf(
@@ -433,9 +436,9 @@ int CmdRules(const Client &client, const std::string &server) {
       break;
     default:
       std::printf(
-          "  every candidate: `source <candidate_id>` pulls one into %s/\n",
-          client.kit.source_dir().empty() ? "rivals"
-                                          : client.kit.source_dir().c_str());
+          "  everyone: `source <name>` pulls theirs into %s/<name>/, and\n"
+          "  `spar <name>` plays yours against it here\n",
+          client.kit.submit_dir().c_str());
       break;
   }
   return 0;
@@ -464,72 +467,41 @@ bool ReadFile(const std::string &path, std::string *content) {
   return true;
 }
 
-// What a solution is made of, per the kit: each entry is a file, or a
-// directory taken whole. Only the extensions a structured submission can
-// carry are collected from a directory -- a kit's own BUILD file is for
-// building locally, and the coordinator generates the one that compiles a
-// submission.
-bool KitSubmitFiles(const Client &client, std::vector<std::string> *files) {
+// The sources in |dir|, sorted. Not its BUILD: the coordinator generates the
+// one a submission is compiled with.
+std::vector<std::string> SourcesIn(const std::filesystem::path &dir) {
   static constexpr std::array<std::string_view, 5> kSources = {
       ".h", ".hpp", ".cc", ".cpp", ".inl"};
-  bool ok = true;
-  for (const std::string &entry : client.kit.submit_files()) {
-    const std::filesystem::path path =
-        std::filesystem::path(entry).is_absolute()
-            ? std::filesystem::path(entry)
-            : client.kit_dir / entry;
-    std::error_code ec;
-    if (std::filesystem::is_directory(path, ec)) {
-      std::vector<std::string> found;
-      for (const auto &item :
-           std::filesystem::recursive_directory_iterator(path, ec)) {
-        if (!item.is_regular_file()) {
-          continue;
-        }
-        const std::string extension = item.path().extension().string();
-        if (std::find(kSources.begin(), kSources.end(), extension) !=
-            kSources.end()) {
-          found.push_back(item.path().string());
-        }
-      }
-      std::sort(found.begin(), found.end());  // a submission is not a set of
-      files->insert(files->end(), found.begin(), found.end());  // guesses
-      continue;
+  std::vector<std::string> found;
+  std::error_code ec;
+  for (const auto &item :
+       std::filesystem::recursive_directory_iterator(dir, ec)) {
+    const std::string extension = item.path().extension().string();
+    if (item.is_regular_file() && std::find(kSources.begin(), kSources.end(),
+                                            extension) != kSources.end()) {
+      found.push_back(item.path().string());
     }
-    if (!std::filesystem::is_regular_file(path, ec)) {
-      std::fprintf(stderr, "submit: %s (from arena.textproto) does not exist\n",
-                   path.c_str());
-      ok = false;
-      continue;
-    }
-    files->push_back(path.string());
   }
-  return ok;
+  std::sort(found.begin(), found.end());
+  return found;
 }
 
 int CmdSubmit(const Client &client, const std::string &server) {
   std::vector<std::string> files = absl::GetFlag(FLAGS_file);
   const std::string patch_path = absl::GetFlag(FLAGS_patch);
-  const std::string name = absl::GetFlag(FLAGS_name);
+  const std::string name =
+      absl::GetFlag(FLAGS_name).empty() ? client.me : absl::GetFlag(FLAGS_name);
 
   if (name.empty()) {
     std::fprintf(stderr, "submit: --name is required\n");
     return kExitUsage;
   }
-  // No files and no patch: the kit says what a solution is. This is the
-  // ordinary way to submit from a kit -- `submit --name=...` and nothing else.
-  if (files.empty() && patch_path.empty() &&
-      !client.kit.submit_files().empty()) {
-    if (!KitSubmitFiles(client, &files)) {
-      return kExitUsage;
-    }
-    if (files.empty()) {
-      std::fprintf(stderr,
-                   "submit: arena.textproto names no files that exist; write "
-                   "your solution first, or pass --file\n");
-      return kExitUsage;
-    }
-    std::printf("submitting %zu file(s) from arena.textproto:\n", files.size());
+  // No files and no patch: your directory is your solution. This is the
+  // ordinary way to submit from a kit -- `submit` and nothing else.
+  if (files.empty() && patch_path.empty() && !client.me.empty()) {
+    files = SourcesIn(client.DirOf(client.me));
+    std::printf("submitting %zu file(s) from %s:\n", files.size(),
+                client.DirOf(client.me).c_str());
     for (const std::string &file : files) {
       std::printf("  %s\n", file.c_str());
     }
@@ -544,6 +516,9 @@ int CmdSubmit(const Client &client, const std::string &server) {
 
   proto::SubmitRequest request;
   request.set_display_name(name);
+  // Who a coordinator with no registry takes this to be from; one with a
+  // registry goes by the token.
+  request.set_author(client.me);
   request.set_game(absl::GetFlag(FLAGS_game));
   request.set_parent_id(absl::GetFlag(FLAGS_parent_id));
   request.set_notes(absl::GetFlag(FLAGS_notes));
@@ -578,9 +553,6 @@ int CmdSubmit(const Client &client, const std::string &server) {
     }
     std::string entry_header = absl::GetFlag(FLAGS_entry_header);
     if (entry_header.empty()) {
-      entry_header = client.kit.entry_header();
-    }
-    if (entry_header.empty()) {
       if (headers.size() == 1) {
         entry_header = headers.front();
       } else if (headers.empty() && files.size() == 1) {
@@ -612,11 +584,6 @@ int CmdSubmit(const Client &client, const std::string &server) {
     }
     for (const std::string &dep : absl::GetFlag(FLAGS_extra_dep)) {
       request.add_extra_deps(dep);
-    }
-    if (request.extra_deps().empty()) {
-      for (const std::string &dep : client.kit.extra_deps()) {
-        request.add_extra_deps(dep);
-      }
     }
   }
 
@@ -732,10 +699,10 @@ int CmdLeaderboard(const Client &client, const std::string &server) {
   return 0;
 }
 
-// One file of a candidate, into |into| (empty: stdout). Paths arrive from the
-// coordinator, which stores them flattened to a basename; a path that climbs
-// out of the directory anyway is a coordinator to stop trusting, so it is
-// refused here rather than written.
+// One file of a candidate, into the kit under |into| (empty: stdout). Paths
+// are repo-relative, which in a kit is where they belong -- but only below
+// the candidate's own directory: one that lands anywhere else is refused
+// rather than written.
 int PullSourceFile(const Client &client, const std::string &server,
                    const std::string &candidate_id, const std::string &path,
                    const std::filesystem::path &into) {
@@ -754,19 +721,11 @@ int PullSourceFile(const Client &client, const std::string &server,
     std::fwrite(source.content().data(), 1, source.content().size(), stdout);
     return 0;
   }
-  // Paths are repo-relative, and a structured submission's live under
-  // <submit dir>/<candidate_id>/. The directory is already named after the
-  // candidate, so keep what is below that rather than rebuilding the
-  // coordinator's layout three levels deep. A patch submission's paths are
-  // arbitrary repo paths and are kept whole.
-  const std::string marker = "/" + candidate_id + "/";
-  const std::size_t at = path.find(marker);
-  const std::string relative =
-      at == std::string::npos ? path : path.substr(at + marker.size());
-  const std::filesystem::path target = (into / relative).lexically_normal();
-  const std::string prefix = into.lexically_normal().string();
+  const std::filesystem::path target =
+      (client.kit_dir / path).lexically_normal();
+  const std::string prefix = into.lexically_normal().string() + "/";
   if (target.string().rfind(prefix, 0) != 0) {
-    std::fprintf(stderr, "source: refusing path '%s'\n", relative.c_str());
+    std::fprintf(stderr, "source: refusing path '%s'\n", path.c_str());
     return kExitError;
   }
   std::error_code ec;
@@ -852,11 +811,11 @@ int CmdSource(const Client &client, const std::string &server,
     return 0;
   }
 
-  // Where it lands: one directory per candidate, so a rival's files never mix
-  // with your own and reading three of them is three directories.
-  const std::string source_dir = client.kit.source_dir();
+  // Where it lands: their directory, beside yours. Your own is printed
+  // instead, because what is there is what you are working on.
   const bool to_stdout = absl::GetFlag(FLAGS_print) || client.kit_dir.empty() ||
-                         source_dir.empty();
+                         client.kit.submit_dir().empty() ||
+                         candidate.candidate_id() == client.me;
   if (to_stdout) {
     for (const std::string &path : candidate.file_paths()) {
       std::printf("----- %s -----\n", path.c_str());
@@ -869,8 +828,7 @@ int CmdSource(const Client &client, const std::string &server,
     return 0;
   }
 
-  const std::filesystem::path into =
-      client.kit_dir / source_dir / candidate.candidate_id();
+  const std::filesystem::path into = client.DirOf(candidate.candidate_id());
   std::error_code ec;
   std::filesystem::create_directories(into, ec);
   if (ec) {
@@ -889,49 +847,124 @@ int CmdSource(const Client &client, const std::string &server,
   return 0;
 }
 
-int CmdEvaluate(const Client &client, const std::string &server,
-                const std::vector<char *> &args) {
-  if (args.empty()) {
-    std::fprintf(stderr, "evaluate: a candidate id is required\n");
-    return kExitUsage;
-  }
-  const std::string opponent = absl::GetFlag(FLAGS_opponent);
-  const int repeats = absl::GetFlag(FLAGS_repeats);
-  const int games = absl::GetFlag(FLAGS_games);
-  if (repeats > 0 && !opponent.empty()) {
-    std::fprintf(stderr,
-                 "evaluate: pass --opponent (match problem) or --repeats "
-                 "(graded problem), not both\n");
-    return kExitUsage;
-  }
+extern "C" char **environ;
 
-  proto::EvaluateRequest request;
-  request.set_candidate_id(args[0]);
-  request.set_cancel_running(absl::GetFlag(FLAGS_cancel_running));
-  if (repeats > 0) {
-    request.mutable_grade()->set_repeats(repeats);
-  } else {
-    request.mutable_match()->set_opponent(opponent.empty() ? "ladder"
-                                                           : opponent);
-    if (games > 0) {
-      request.mutable_match()->set_games(games);
+// Starts |argv| with its output in |log| (empty: this terminal), and with the
+// environment minus ARENA_TOKEN: a rival's code has no use for your
+// credential. posix_spawn rather than fork, which a process with gRPC's
+// threads in it should not do.
+pid_t Spawn(const std::vector<std::string> &argv, const std::string &log) {
+  std::vector<char *> args;
+  for (const std::string &arg : argv) {
+    args.push_back(const_cast<char *>(arg.c_str()));
+  }
+  args.push_back(nullptr);
+  std::vector<char *> env;
+  for (char **entry = environ; *entry != nullptr; ++entry) {
+    if (std::string_view(*entry).rfind("ARENA_TOKEN=", 0) != 0) {
+      env.push_back(*entry);
     }
   }
+  env.push_back(nullptr);
+  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_init(&actions);
+  if (!log.empty()) {
+    posix_spawn_file_actions_addopen(&actions, 1, log.c_str(),
+                                     O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    posix_spawn_file_actions_adddup2(&actions, 1, 2);
+  }
+  pid_t pid = -1;
+  posix_spawnp(&pid, args[0], &actions, nullptr, args.data(), env.data());
+  posix_spawn_file_actions_destroy(&actions);
+  return pid;
+}
 
-  grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/true, &context);
-  proto::EvaluateResponse response;
-  const grpc::Status status =
-      client.stub->Evaluate(&context, request, &response);
-  if (!status.ok()) {
-    return RpcError(status, server);
+int Wait(pid_t pid) {
+  int status = 0;
+  ::waitpid(pid, &status, 0);
+  return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+
+// Yours against |name|'s, here: their directory pulled in beside yours, both
+// built, and the games refereed the way the tournament's workers do it -- the
+// same referee, the same bounds on a game, two bots naming each other.
+int CmdSpar(const Client &client, const std::string &server,
+            const std::vector<char *> &args) {
+  if (args.empty() || client.me.empty() || client.kit.game().empty()) {
+    std::fprintf(stderr,
+                 "spar <name>: from the kit of a problem played as matches, "
+                 "as someone ($ARENA_NAME)\n");
+    return kExitUsage;
   }
-  std::printf("job %s queued\n", response.job_id().c_str());
-  if (!absl::GetFlag(FLAGS_wait)) {
-    std::printf("poll: job %s [--wait]\n", response.job_id().c_str());
-    return 0;
+  const std::string me = client.me;
+  const std::string rival = args[0];
+  // Pulled every time: a name stays, what is under it does not. Someone who
+  // is only in this kit -- the starter -- is played as they are.
+  if (CmdSource(client, server, args) != 0 &&
+      !std::filesystem::exists(client.DirOf(rival))) {
+    return kExitError;
   }
-  return WaitForJob(client, server, response.job_id());
+
+  std::filesystem::current_path(client.kit_dir);
+  const std::string dir = client.kit.submit_dir();
+  const std::string bin = client.kit.bot_binary();
+  if (Wait(Spawn({"bazel", "build", "//" + dir + "/" + me + ":" + bin,
+                  "//" + dir + "/" + rival + ":" + bin, "//:match_referee"},
+                 "")) != 0) {
+    return kExitError;
+  }
+
+  char scratch_template[] = "/tmp/spar.XXXXXX";
+  const std::string scratch = ::mkdtemp(scratch_template);
+  const std::string games = std::to_string(absl::GetFlag(FLAGS_games));
+  std::vector<std::string> referee = {"bazel-bin/match_referee",
+                                      "--port=0",
+                                      "--port_file=" + scratch + "/port",
+                                      "--game=" + client.kit.game(),
+                                      "--games=" + games,
+                                      "--player_a=" + me,
+                                      "--player_b=player:" + rival,
+                                      "--scratch_dir=" + scratch,
+                                      "--deadline_s=900"};
+  referee.insert(referee.end(), client.kit.referee_flags().begin(),
+                 client.kit.referee_flags().end());
+  const pid_t refereeing = Spawn(referee, scratch + "/referee.log");
+  // The port file appears once the referee is listening.
+  while (!std::filesystem::exists(scratch + "/port")) {
+    int status = 0;
+    if (::waitpid(refereeing, &status, WNOHANG) == refereeing) {
+      std::fprintf(stderr, "spar: the referee exited; see %s/referee.log\n",
+                   scratch.c_str());
+      return kExitError;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  std::string port;
+  std::ifstream(scratch + "/port") >> port;
+
+  const auto bot = [&](const std::string &name, const std::string &other) {
+    return Spawn({"bazel-bin/" + dir + "/" + name + "/" + bin, "--name=" + name,
+                  "--server=localhost:" + port, "--opponent=player:" + other,
+                  "--games=" + games},
+                 scratch + "/" + name + ".log");
+  };
+  const pid_t mine = bot(me, rival);
+  const pid_t theirs = bot(rival, me);
+  Wait(refereeing);
+  Wait(mine);
+  Wait(theirs);
+
+  // The referee's one line of output, counted from player_a's side: yours.
+  std::ifstream log(scratch + "/referee.log");
+  int played = 0, wins = 0, draws = 0, losses = 0;
+  for (std::string line; std::getline(log, line);) {
+    std::sscanf(line.c_str(), "RESULT games=%d wins=%d draws=%d losses=%d",
+                &played, &wins, &draws, &losses);
+  }
+  std::printf("\n%s %d   draws %d   %s %d   (%d of %s games; logs in %s)\n",
+              me.c_str(), wins, draws, rival.c_str(), losses, played,
+              games.c_str(), scratch.c_str());
+  return played > 0 ? 0 : kExitError;
 }
 
 void PrintUsage() {
@@ -948,10 +981,10 @@ void PrintUsage() {
       "  candidates [--order=best|newest] [--author=a] [--limit=n]\n"
       "                                 everyone, including pending/broken\n"
       "  leaderboard [--limit=n]        current standings\n"
-      "  source <candidate_id> [path]   pull a candidate into its own\n"
-      "                                 directory (or one file to stdout)\n"
-      "  evaluate <candidate_id> [--opponent=o|--repeats=n] [--wait]\n"
-      "                                 queue more games or more runs\n");
+      "  source <name> [path]           pull a participant's directory in\n"
+      "                                 beside yours (or one file to stdout)\n"
+      "  spar <name> [--games=n]        that, then play yours against it "
+      "here\n");
 }
 
 }  // namespace
@@ -987,10 +1020,24 @@ int main(int argc, char **argv) {
   if (token.empty()) {
     token = EnvOr("ARENA_TOKEN", "");
   }
+  const std::string me = EnvOr("ARENA_NAME", kit.client_id());
   const Client client{proto::Arena::NewStub(grpc::CreateChannel(
                           server, grpc::InsecureChannelCredentials())),
-                      token, absl::GetFlag(FLAGS_timeout_s), kit_dir,
-                      std::move(kit)};
+                      token,
+                      absl::GetFlag(FLAGS_timeout_s),
+                      kit_dir,
+                      std::move(kit),
+                      me};
+  // Yours is a directory like everyone's, named after you. The first time, it
+  // is a copy of the starter's.
+  if (!me.empty() && !client.kit.starter_dir().empty() &&
+      !std::filesystem::exists(client.DirOf(me))) {
+    std::error_code ec;
+    std::filesystem::copy(kit_dir / client.kit.starter_dir(), client.DirOf(me),
+                          std::filesystem::copy_options::recursive, ec);
+    std::printf("%s is yours, started from %s\n\n", client.DirOf(me).c_str(),
+                client.kit.starter_dir().c_str());
+  }
 
   if (command == "rules") {
     return CmdRules(client, server);
@@ -1010,8 +1057,8 @@ int main(int argc, char **argv) {
   if (command == "source") {
     return CmdSource(client, server, args);
   }
-  if (command == "evaluate") {
-    return CmdEvaluate(client, server, args);
+  if (command == "spar") {
+    return CmdSpar(client, server, args);
   }
   PrintUsage();
   return kExitUsage;
