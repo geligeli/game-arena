@@ -58,7 +58,7 @@ everything.
 names, the arena's kit surface vendored as `./arena` (`//:kit_surface` --
 the game side of the arena, not the coordinator or the fleet), `arena_cli` as
 a program in `.arena/bin`, `arena.textproto` telling that CLI what a solution
-is made of and where `source` puts what it pulls, `arena.env`, `mcp.json` and
+is made of and where `source` puts what it pulls, `arena.env`, `.mcp.json` and
 a README generated from the config. It builds the kit once as it writes it,
 keeping a bazel disk cache inside it (`--prime_cache=false` to skip), so the
 participant's first build is warm and a missing `kit_files` entry is found
@@ -340,8 +340,12 @@ row is stored beside it.
 
 ## The MCP surface
 
-`mcp_servers/arena_mcp/server.py` is a thin stdio→gRPC shim. Two things about
-it are load-bearing for an agent loop that has to stay cheap:
+`arena_cli mcp` (`cli/mcp.h`) serves `arena_cli`'s own commands as MCP tools on
+stdio: a tool call is that command run again, its arguments the command's
+flags, its result what the command prints. An agent and a participant at a
+shell get the same operations from one implementation, and it is the binary
+the kit already installs, so an agent's MCP client starts it with no build.
+Two things about it are load-bearing for an agent loop that has to stay cheap:
 
 - `arena_submit` takes **paths, not contents**. The agent just wrote the file;
   making it paste the code back would double the cost of every iteration.
@@ -349,20 +353,15 @@ it are load-bearing for an agent loop that has to stay cheap:
   the bazel log before it crosses the wire, so the full log is never stored,
   forwarded or re-served.
 
-| Tool | What it is for |
-|---|---|
-| `arena_rules()` | *this server's* problem, from its config — not a README that may describe another |
-| `arena_submit(...)` | store a solution — `paths=[…]` or `patch_path=…` — and queue it |
-| `arena_job(job_id)` | build/match status; compiler errors on failure |
-| `arena_leaderboard(...)` | current standings |
-| `arena_candidates(...)` | everyone, including pending and broken, with lineage |
-| `arena_source(id[, path])` | a candidate's manifest or file, as far as the problem's `SourcePolicy` allows |
-
-Regenerate the Python stubs after changing `proto/arena.proto`:
-
-```sh
-mcp_servers/arena_mcp/make_stubs.sh
-```
+| Tool | Command | What it is for |
+|---|---|---|
+| `arena_rules` | `rules` | *this server's* problem, from its config — not a README that may describe another |
+| `arena_submit` | `submit` | your directory, or `file=[…]` / `patch=…`, stored and queued |
+| `arena_job` | `job` | build/match status; compiler errors on failure |
+| `arena_leaderboard` | `leaderboard` | current standings |
+| `arena_candidates` | `candidates` | everyone, including pending and broken |
+| `arena_source` | `source` | a participant's directory pulled in beside yours, or one file, as far as the problem's `SourcePolicy` allows |
+| `arena_spar` | `spar` | yours against theirs, here |
 
 ## Who may submit
 

@@ -4,7 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 # What a participant's kit builds: the referee `arena_cli spar` plays with, the
 # session contract their own code compiles against, the broker protocol, and
-# the MCP server their agent drives. Everything these
+# arena_cli, which is also the MCP server their agent drives. Everything these
 # reach has to be inside //:kit_surface, because that is all a kit gets.
 _KIT_TARGETS = [
     "//game_arena/referee:game_registry",
@@ -13,7 +13,6 @@ _KIT_TARGETS = [
     "//game_arena/cli:arena_cli",
     "//game_arena/client:play_loop",
     "//game_arena/proto:tournament_broker_cc_grpc",
-    "//mcp_servers/arena_mcp:server",
 ]
 
 genquery(

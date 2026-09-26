@@ -80,7 +80,7 @@ registry), `:config_test`, and three runnable targets:
 | --- | --- |
 | `bazel run //:play` | the tournament in the background, a kit minted for you, and a shell in it; leaving the shell stops everything |
 | `bazel run //:tournament` | the coordinator, on this checkout. It builds and runs nothing: a worker is a process of its own, which `deploy.sh` and `play` start |
-| `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, the arena's kit surface as `./arena`, `arena_cli` as a program, `//:mcp_server`, a README from the config, and a token |
+| `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, the arena's kit surface as `./arena`, `arena_cli` as a program and MCP server, a README from the config, and a token |
 | `bazel build //:kit_image` | the same as an image, as a build output: toolchain and kit, no token, nothing built. `:kit_image_load` / `:kit_image_push` deliver it; `docker run -it -e ARENA_TOKEN=... TAG` uses it |
 | `bazel run //:kit_image_issue -- --image=TAG [--push]` | what a build cannot add, added outside one: dependencies vendored and the cache primed. No token or address: `docker run -e ARENA_SERVER=... -e ARENA_TOKEN=...` |
 | `bazel build //:sandbox_image` | the sandbox image `sandbox.image` names: this tree on the arena's base. `:sandbox_image_load` / `:sandbox_image_push` deliver it under that name |
@@ -214,7 +214,7 @@ bazel run //:kit_image_issue -- --image=registry.example.com/kit:1 --push
 T=... # arena_admin mint, below
 E="-e ARENA_SERVER=arena.example.com:50051 -e ARENA_NAME=bob -e ARENA_TOKEN=$T"
 docker run -it $E registry.example.com/kit:1                        # a shell in /kit, ready to submit
-docker run -i  $E registry.example.com/kit:1 bazel run //:mcp_server  # the same, as MCP, for an agent
+docker run -i  $E registry.example.com/kit:1 arena_cli mcp   # the same, as MCP, for an agent
 ```
 
 That adds the vendored dependencies and the primed cache to the kit image

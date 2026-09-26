@@ -25,7 +25,7 @@ game_arena/
   common/     small subprocess wrapper
 ```
 
-The first five of those, plus `cli/` and the MCP server, are the **kit
+The first five of those, plus `cli/` (also the MCP server), are the **kit
 surface** (`//:kit_surface`): the packages a participant's workspace builds
 against, vendored into every kit. The coordinator, the fleet and the sandbox
 are not among them.
@@ -123,14 +123,14 @@ bazel build //:connect4                              # every binary a tournament
 arena's kit surface vendored beside them as `./arena`, `arena_cli` as a
 program in `.arena/bin` (sourcing `arena.env` puts it on `PATH` with the
 address and the token), `arena.textproto` saying what that CLI does by
-default, an MCP server as `bazel run //:mcp_server`, and a README generated
+default (`arena_cli mcp` is the MCP server), and a README generated
 from the config. The grader, the cases, the tournament config and the rest of
 the arena stay behind. By default the kit is built once as it is written, so
 the participant's first build is warm. `bazel build //:kit_image` is the same
 workspace as an image: the kit's tree at `/kit`, stacked by rules_oci on a
 base pulled by digest. It is a build output -- cached, reproducible, made
 without docker -- and it is anyone's: `docker run -it -e ARENA_TOKEN=... TAG`
-is a shell in the kit, `docker run -i TAG bazel run //:mcp_server` the MCP
+is a shell in the kit, `docker run -i TAG arena_cli mcp` the MCP
 server on stdio. `:kit_image_load` and `:kit_image_push` put it in a daemon or
 a registry. What a build cannot put in an image -- the kit's dependencies
 vendored and its cache primed, which is bazel run on the kit -- is added

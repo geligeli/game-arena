@@ -10,12 +10,13 @@ arena_cli leaderboard [--limit=20]
 arena_cli source <name> [path]   # pulls their directory in beside yours
 arena_cli spar <name> [--games=10]   # and plays yours against it, here
 arena_cli spar builtin:greedy        # or against a builtin
+arena_cli mcp                        # all of the above as MCP tools, on stdio
 */
 //
-// The human's counterpart to the MCP server: same RPCs, same compact output,
-// drivable from a shell. Submit is the write path and carries the
-// --token as x-arena-token metadata; the reads are open unless the problem
-// says otherwise (ProblemInfo.source_visibility).
+// Same RPCs, same compact output, for a shell and -- as `mcp` -- for an
+// agent, whose tool calls are this program run again. Submit is the write
+// path and carries the --token as x-arena-token metadata; the reads are open
+// unless the problem says otherwise (ProblemInfo.source_visibility).
 //
 // It ships inside a kit as a binary, not as a bazel target: submitting should
 // not need a toolchain, and a participant should not have to know what the
@@ -39,6 +40,7 @@ arena_cli spar builtin:greedy        # or against a builtin
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
@@ -52,6 +54,7 @@ arena_cli spar builtin:greedy        # or against a builtin
 #include "absl/flags/parse.h"
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
+#include "game_arena/cli/mcp.h"
 #include "game_arena/proto/arena.grpc.pb.h"
 #include "game_arena/proto/kit.pb.h"
 #include "game_arena/proto/tournament_broker.pb.h"
@@ -199,8 +202,7 @@ void ConfigureContext(const Client &client, bool write,
   }
 }
 
-// Prints a mapped error to stderr and returns the process exit code. Mirrors
-// _rpc_error in the MCP server.
+// Prints a mapped error to stderr and returns the process exit code.
 int RpcError(const grpc::Status &status, const std::string &server) {
   switch (status.error_code()) {
     case grpc::StatusCode::UNAUTHENTICATED:
@@ -851,10 +853,11 @@ int CmdSource(const Client &client, const std::string &server,
 extern "C" char **environ;
 
 // Starts |argv| with its output in |log| (empty: this terminal), and with the
-// environment minus ARENA_TOKEN: a rival's code has no use for your
-// credential. posix_spawn rather than fork, which a process with gRPC's
-// threads in it should not do.
-pid_t Spawn(const std::vector<std::string> &argv, const std::string &log) {
+// environment minus ARENA_TOKEN unless |with_token|: a rival's code has no use
+// for your credential. posix_spawn rather than fork, which a process with
+// gRPC's threads in it should not do.
+pid_t Spawn(const std::vector<std::string> &argv, const std::string &log,
+            bool with_token = false) {
   std::vector<char *> args;
   for (const std::string &arg : argv) {
     args.push_back(const_cast<char *>(arg.c_str()));
@@ -862,7 +865,7 @@ pid_t Spawn(const std::vector<std::string> &argv, const std::string &log) {
   args.push_back(nullptr);
   std::vector<char *> env;
   for (char **entry = environ; *entry != nullptr; ++entry) {
-    if (std::string_view(*entry).rfind("ARENA_TOKEN=", 0) != 0) {
+    if (with_token || std::string_view(*entry).rfind("ARENA_TOKEN=", 0) != 0) {
       env.push_back(*entry);
     }
   }
@@ -870,6 +873,7 @@ pid_t Spawn(const std::vector<std::string> &argv, const std::string &log) {
   posix_spawn_file_actions_t actions;
   posix_spawn_file_actions_init(&actions);
   if (!log.empty()) {
+    posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&actions, 1, log.c_str(),
                                      O_WRONLY | O_CREAT | O_TRUNC, 0644);
     posix_spawn_file_actions_adddup2(&actions, 1, 2);
@@ -976,6 +980,34 @@ int CmdSpar(const Client &client, const std::string &server,
   return tally.games > 0 ? 0 : kExitError;
 }
 
+// The commands above as MCP tools on stdio. Each call runs this program again
+// with what this one resolved in its environment, from the kit, so a relative
+// path means what it does in a shell there.
+int CmdMcp(const Client &client, const std::string &server) {
+  ::setenv("ARENA_SERVER", server.c_str(), 1);
+  ::setenv("ARENA_TOKEN", client.token.c_str(), 1);
+  ::setenv("ARENA_NAME", client.me.c_str(), 1);
+  if (!client.kit_dir.empty()) {
+    const std::filesystem::path kit = std::filesystem::absolute(client.kit_dir);
+    ::setenv("ARENA_KIT", kit.c_str(), 1);
+    std::filesystem::current_path(kit);
+  }
+  arena_cli::ServeMcp(
+      std::cin, std::cout, [&](const std::vector<std::string> &argv) {
+        char log[] = "/tmp/arena_mcp.XXXXXX";
+        ::close(::mkstemp(log));
+        // Still this binary if `play` has since replaced the file.
+        std::vector<std::string> command = {"/proc/self/exe"};
+        command.insert(command.end(), argv.begin(), argv.end());
+        const int code = Wait(Spawn(command, log, /*with_token=*/true));
+        std::string output;
+        ReadFile(log, &output);
+        std::filesystem::remove(log);
+        return std::pair{code, output};
+      });
+  return 0;
+}
+
 void PrintUsage() {
   std::fprintf(
       stderr,
@@ -994,7 +1026,8 @@ void PrintUsage() {
       "  spar <name> [--games=n]        that, then play yours against it "
       "here\n"
       "  spar builtin:<name>            yours against one of the problem's "
-      "builtins\n");
+      "builtins\n"
+      "  mcp                            all of these as MCP tools, on stdio\n");
 }
 
 }  // namespace
@@ -1038,6 +1071,10 @@ int main(int argc, char **argv) {
                       kit_dir,
                       std::move(kit),
                       me};
+  // Before anything is printed: stdout is the protocol's.
+  if (command == "mcp") {
+    return CmdMcp(client, server);
+  }
   // Yours is a directory like everyone's, named after you. The first time, it
   // is a copy of the starter's.
   if (!me.empty() && !client.kit.starter_dir().empty() &&

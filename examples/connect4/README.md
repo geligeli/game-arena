@@ -124,10 +124,10 @@ bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):5005
 The kit is a workspace of its own holding only `kit_files` -- here `game/`
 (the rules, so a bot can search them) and `bots/` (the API, the harness, the
 reference strategy) -- plus the arena's kit surface vendored as `./arena`,
-`arena_cli` as a program in `.arena/bin`, `//:mcp_server`, a
+`arena_cli` as a program in `.arena/bin` (`arena_cli mcp` for an agent), a
 `//:match_referee` for `arena_cli spar`, an `ARENA.md` and an `arena.textproto`
 generated from `problem.textproto`, and the token in `arena.env` and
-`mcp.json`. From it:
+`.mcp.json`. From it:
 
 ```sh
 . ./arena.env                             # arena_cli on PATH, address, token
@@ -147,7 +147,7 @@ this problem does, is that every submission is readable.
 `bazel build //:kit_image` is the same kit as an image -- a build output,
 stacked by bazel on a pinned base, with no docker involved and no token
 inside: `docker run -it -e ARENA_TOKEN=... TAG` is a shell in the kit, and
-`docker run -i TAG bazel run //:mcp_server` is the MCP server for an agent
+`docker run -i TAG arena_cli mcp` is the MCP server for an agent
 (`bazel run //:kit_image_load` puts it in your daemon as `connect4-kit`).
 `bazel run //:kit_image_issue -- --mint=alice --image=TAG --push` derives
 alice's from it: dependencies vendored, cache primed, her token baked in.

@@ -18,7 +18,7 @@ fi
 
 # Every package the vendored copy carries. A dependency outside these is what
 # this test exists to catch.
-allowed='^//(game_arena/(proto|referee|client|cli|common/kv_options|standings)|mcp_servers(/arena_mcp)?):'
+allowed='^//game_arena/(proto|referee|client|cli|common/kv_options|standings):'
 
 outside="$(grep -E '^//' "$deps" | grep -Ev "$allowed" || true)"
 if [[ -n "$outside" ]]; then

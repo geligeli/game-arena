@@ -1,4 +1,6 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -17,6 +19,7 @@ cc_binary(
     name = "arena_cli",
     srcs = ["arena_cli.cc"],
     deps = [
+        ":mcp",
         "//game_arena/proto:arena_cc_grpc",
         "//game_arena/proto:kit_cc_proto",
         "//game_arena/proto:tournament_broker_cc_proto",
@@ -27,6 +30,23 @@ cc_binary(
         "@abseil-cpp//absl/log:initialize",
         "@grpc//:grpc++",
         "@protobuf//:protobuf",
+    ],
+)
+
+# `arena_cli mcp`: the same commands as MCP tools, for an agent.
+cc_library(
+    name = "mcp",
+    srcs = ["mcp.cc"],
+    hdrs = ["mcp.h"],
+    deps = ["@boost.json"],
+)
+
+cc_test(
+    name = "mcp_test",
+    srcs = ["mcp_test.cc"],
+    deps = [
+        ":mcp",
+        "@googletest//:gtest_main",
     ],
 )
 

@@ -97,17 +97,6 @@ single_version_override(
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.toolchain(python_version = "3.12")
 
-# Runtime deps for the arena MCP server (mcp_servers/requirements.txt). The hub
-# name carries the module name because pip hub names are global: a consumer
-# with its own MCP servers would otherwise collide with this one.
-pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
-pip.parse(
-    hub_name = "arena_mcp_pip_deps",
-    python_version = "3.12",
-    requirements_lock = "//mcp_servers:requirements.txt",
-)
-use_repo(pip, "arena_mcp_pip_deps")
-
 
 # C++ formatting (//tools/cpp_format.sh). Dev-only, and deliberately so: it is
 # not in the BCR, so it can only be resolved through the archive_override below,

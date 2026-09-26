@@ -107,7 +107,7 @@ fleet, and it is the one with a person on the other end. Its rule: **only what
 they need to work on the problem.**
 
 - `//:kit_surface` is the arena a kit vendors -- `proto/`, `referee/`,
-  `client/`, `cli/`, `standings/`, `common/kv_options/` and the MCP server.
+  `client/`, `cli/`, `standings/` and `common/kv_options/`.
   Each is closed under dependency and `//game_arena:kit_surface_test` fails
   when that stops being true. Adding a package to it is a decision about what
   a participant should be reading, not a build fix.
@@ -219,8 +219,8 @@ Or the pieces `play` runs: `bazel run //:tournament` in one shell,
   No msan: the toolchain has no msan-instrumented libc++ (see `.bazelrc`).
 - Headers are included with the full repo-relative path, e.g.
   `#include "game_arena/referee/game_session.h"`.
-- The MCP server in `mcp_servers/arena_mcp` needs the arena running;
-  see `mcp_servers/README.md`.
+- The MCP server is `arena_cli mcp` (`cli/mcp.h`): a tool call is an
+  `arena_cli` command, run again. It needs the arena running.
 
 ## C++ conventions
 

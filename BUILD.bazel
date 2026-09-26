@@ -21,7 +21,6 @@ filegroup(
         "//game_arena/proto:kit_surface_files",
         "//game_arena/referee:kit_surface_files",
         "//game_arena/standings:kit_surface_files",
-        "//mcp_servers:kit_surface_files",
     ],
     visibility = ["//visibility:public"],
 )

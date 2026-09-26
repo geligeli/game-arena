@@ -20,7 +20,7 @@ That call defines, in the calling package:
                    with docker and the sandbox image
   :kit             `bazel run //:kit -- --out=DIR --server=HOST:PORT --mint=ID`
                    -- a participant's workspace: kit_files, the arena's kit
-                   surface vendored as ./arena, arena_cli as a program, an MCP
+                   surface vendored as ./arena, arena_cli as a program and MCP
                    server, a README and a token. Their own environment, with
                    whatever access they give it; only what they submit runs
                    sandboxed
@@ -82,7 +82,6 @@ _TOURNAMENT_BINARIES = [
     Label("//game_arena/sandbox/worker:sandbox_worker"),
     Label("//game_arena/tools:arena_admin"),
     Label("//game_arena/cli:arena_cli"),
-    Label("//mcp_servers/arena_mcp:server"),
 ]
 
 def arena_problem(
