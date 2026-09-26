@@ -145,12 +145,13 @@ may read of each other is the separate `source` section; the default, and what
 this problem does, is that every submission is readable.
 
 `bazel build //:kit_image` is the same kit as an image -- a build output,
-stacked by bazel on a pinned base, with no docker involved and no token
-inside: `docker run -it -e ARENA_TOKEN=... TAG` is a shell in the kit, and
-`docker run -i TAG arena_cli mcp` is the MCP server for an agent
+stacked by bazel on a pinned base, with no docker involved and no token or
+address inside: `docker run -it -e ARENA_SERVER=... -e ARENA_TOKEN=... TAG`
+is a shell in the kit, and `docker run -i TAG arena_cli mcp` is the MCP
+server for an agent
 (`bazel run //:kit_image_load` puts it in your daemon as `connect4-kit`).
-`bazel run //:kit_image_issue -- --mint=alice --image=TAG --push` derives
-alice's from it: dependencies vendored, cache primed, her token baked in.
+`bazel run //:kit_image_issue -- --image=TAG --push` adds to it what a
+build cannot: dependencies vendored, cache primed. Still no address or token.
 
 `scripts/new_problem.sh match <dir>` copies this out as a repository of its
 own, to start a problem from.
@@ -170,18 +171,20 @@ bazel run //:sandbox_image_load                      # what a worker builds and 
 bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- --server=localhost:50051
 ```
 
-Each participant is one command from that checkout, which mints a token
-into the registry and writes their kit -- as a directory (`//:kit --
---out=DIR`), or as their own image with the address and token baked in:
+Each participant is a token minted into the registry from that checkout,
+and a kit -- as a directory (`//:kit -- --out=DIR --mint=alice
+--server=arena.example.com:50051`), or as the one image everyone runs, told
+where the arena is and who they are when it starts:
 
 ```sh
-bazel run //:kit_image_issue -- --mint=alice \
-    --server=arena.example.com:50051 --http=arena.example.com:8090 \
-    --image=registry.example.com/kit-alice:1 --push
+bazel run //:kit_image_issue -- --image=registry.example.com/connect4-kit:1 --push
+bazel run @game_arena//game_arena/tools:arena_admin -- mint --client_id=alice \
+    --clients="$HOME/.arena/connect4/clients.textproto"   # prints alice's token
 ```
 
 ```sh
-docker run -it registry.example.com/kit-alice:1      # their environment, everything built
+docker run -it -e ARENA_SERVER=arena.example.com:50051 -e ARENA_NAME=alice \
+    -e ARENA_TOKEN=... registry.example.com/connect4-kit:1   # their environment, everything built
 ```
 
 The referee, the registry and `bots/` ride along inside the sandbox image;

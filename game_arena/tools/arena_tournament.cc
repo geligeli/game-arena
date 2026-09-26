@@ -108,11 +108,11 @@ ABSL_FLAG(std::string, out, "",
           "kit: directory to write the kit into (created). Default: "
           "<data_dir>/kits/<client_id>; for --image, <data_dir>/images/kit, "
           "which keeps what was vendored and primed between images");
-ABSL_FLAG(std::string, server, "localhost:50051",
-          "kit: the arena address baked into the kit. An image takes "
-          "$ARENA_SERVER instead");
-ABSL_FLAG(std::string, http, "localhost:8090",
-          "kit: the leaderboard address baked into the kit");
+ABSL_FLAG(std::string, server, "",
+          "kit: the arena address baked into the kit. Empty: the kit takes "
+          "$ARENA_SERVER when it runs");
+ABSL_FLAG(std::string, http, "",
+          "kit: the leaderboard address named in the kit's README");
 ABSL_FLAG(std::string, mint, "",
           "kit: mint a token for this client_id, append the client to "
           "--clients, and bake the token into the kit. Not with --image");
@@ -837,7 +837,11 @@ std::string KitReadme(const proto::ProblemConfig &config,
 
   md << "\n## Submitting\n\n"
         "The arena is at `"
-     << server << "`; the leaderboard at <http://" << http << "/>.";
+     << (server.empty() ? "$ARENA_SERVER" : server) << "`";
+  if (!http.empty()) {
+    md << "; the leaderboard at <http://" << http << "/>";
+  }
+  md << ".";
   if (has_token) {
     md << " Your token is in `arena.env` and `mcp.json`, and identifies you as "
           "`"
@@ -1427,9 +1431,10 @@ int RunKit(const ArenaRunfiles &runfiles) {
       "# . ./arena.env -- your tournament, in this shell.\n"
       "ARENA_KIT=\"$(cd \"$(dirname \"${BASH_SOURCE[0]:-$0}\")\" && pwd)\"\n"
       "export ARENA_KIT\n"
-      "export PATH=\"$ARENA_KIT/.arena/bin:$PATH\"\n"
-      "export ARENA_SERVER=",
-      server, "\n");
+      "export PATH=\"$ARENA_KIT/.arena/bin:$PATH\"\n");
+  if (!server.empty()) {
+    absl::StrAppend(&env, "export ARENA_SERVER=", server, "\n");
+  }
   if (!token.empty()) {
     absl::StrAppend(&env, "export ARENA_TOKEN=", token, "\n");
   }
@@ -1449,9 +1454,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
       absl::GetFlag(FLAGS_kit_path).empty()
           ? out
           : std::filesystem::path(absl::GetFlag(FLAGS_kit_path));
-  // A kit in an image takes its address from the container's ARENA_SERVER.
-  WriteFile(out / ".mcp.json",
-            KitMcpJson(home, home == out ? server : "", token, client_id));
+  WriteFile(out / ".mcp.json", KitMcpJson(home, server, token, client_id));
 
   // bazel-* are symlinks the priming build leaves behind; .bazelrc.local
   // names this host's paths; .arena/cache is a bazel disk cache and

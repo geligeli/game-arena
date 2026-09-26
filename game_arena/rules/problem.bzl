@@ -28,9 +28,9 @@ That call defines, in the calling package:
                    kit's tree at /kit, stacked on `kit_base` by rules_oci. A
                    build output like any other, so making one needs no docker
                    -- only, the first time, the registry the base is pulled
-                   from. It is anyone's: there is no token in it, and nothing
-                   is built in it yet. `docker run -e ARENA_TOKEN=...` is one
-                   way to hand a participant theirs
+                   from. It is anyone's: there is no token or address in it,
+                   and nothing is built in it yet. `docker run -e
+                   ARENA_SERVER=... -e ARENA_TOKEN=...` hands them over
   :kit_image_load  `bazel run //:kit_image_load` -- that image, into the local
                    docker daemon, tagged `<name>-kit:latest`
   :kit_image_push  `bazel run //:kit_image_push` -- that image, to
@@ -91,8 +91,6 @@ def arena_problem(
         kit_files = [],
         tree = [],
         kit_base = None,
-        kit_server = "localhost:50051",
-        kit_http = "localhost:8090",
         kit_repository = None,
         visibility = None):
     """Defines the tournament targets for one problem. See the module docstring.
@@ -110,11 +108,6 @@ def arena_problem(
         glob here cannot reach: one `filegroup(srcs = glob(["**"]))` per
         package. With the root package's own files they are the tree a
         submission is built on, in the sandbox image.
-      kit_server: the arena's address as a participant reaches it, written
-        into the kit image (`docker run -e ARENA_SERVER=...` overrides it).
-        The default is only right for a container sharing the coordinator's
-        network namespace.
-      kit_http: the leaderboard's address, likewise.
       kit_repository: where `:kit_image_push` pushes, e.g.
         "registry.example.com/connect4-kit". Without it that target is still
         defined, and takes `-- --repository=...`.
@@ -257,8 +250,6 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         config = config,
         kit_files = kit_files,
         registry = registry or "",
-        server = kit_server,
-        http = kit_http,
         tool = tool,
         workspace_files = workspace_files,
         tags = ["manual"],
@@ -268,7 +259,6 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         name = "kit_image",
         base = kit_base or str(_KIT_BASE),
         tars = [":kit_tree"],
-        env = {"ARENA_SERVER": kit_server},
         tags = ["manual"],
         visibility = visibility,
     )

@@ -120,10 +120,12 @@ bazel run //:tournament                              # the coordinator
 bazel run //:sandbox_image_load                      # what a worker builds and runs in
 bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- --server=localhost:50051
 
-# one participant: a token in the registry, and their own image
-bazel run //:kit_image_issue -- --mint=bob \
-    --server=arena.example.com:50051 --http=arena.example.com:8090 \
-    --image=registry.example.com/kit-bob:1 --push
+# the kit image, and one participant: a token in the registry
+bazel run //:kit_image_issue -- --image=registry.example.com/knapsack-kit:1 --push
+bazel run @game_arena//game_arena/tools:arena_admin -- mint --client_id=bob \
+    --clients="$HOME/.arena/knapsack/clients.textproto"   # prints bob's token
+docker run -it -e ARENA_SERVER=arena.example.com:50051 -e ARENA_NAME=bob \
+    -e ARENA_TOKEN=... registry.example.com/knapsack-kit:1
 ```
 
 The grader and `cases/` are in the sandbox image and in no kit -- the same

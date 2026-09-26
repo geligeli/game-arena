@@ -25,18 +25,16 @@ def _kit_tree_impl(ctx):
         command = """
 set -euo pipefail
 kit="$(mktemp -d)/kit"
-ARENA_KIT_FILES="$6" ARENA_KIT_REGISTRY="$7" "$1" kit \\
+ARENA_KIT_FILES="$4" ARENA_KIT_REGISTRY="$5" "$1" kit \\
     --problem_config="$2" --out="$kit" --kit_path=/kit --prime_cache=false \\
-    --server="$3" --http="$4" >/dev/null
+    >/dev/null
 tar --sort=name --mtime=@0 --owner=1000 --group=1000 --numeric-owner \\
-    --transform='s,^\\.,kit,S' --create --file "$5" --directory "$kit" .
+    --transform='s,^\\.,kit,S' --create --file "$3" --directory "$kit" .
 rm -rf "$(dirname "$kit")"
 """,
         arguments = [
             ctx.executable.tool.path,
             ctx.file.config.path,
-            ctx.attr.server,
-            ctx.attr.http,
             out.path,
             " ".join([f.path for f in ctx.files.kit_files]),
             ctx.attr.registry,
@@ -60,8 +58,6 @@ kit_tree = rule(
         # workspace root, which in an action is only what was declared.
         "workspace_files": attr.label_list(allow_files = True),
         "registry": attr.string(),
-        "server": attr.string(default = "localhost:50051"),
-        "http": attr.string(default = "localhost:8090"),
         # Target configuration, not exec: the tool carries the coordinator
         # and the worker as data, and an exec copy of it is a second build of
         # all of that for the sake of one action.

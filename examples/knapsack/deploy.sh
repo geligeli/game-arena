@@ -25,4 +25,4 @@ TOKEN="$(bazel run @game_arena//game_arena/tools:arena_admin -- mint --overwrite
 
 # Inside: arena_cli submit --wait
 docker run -it --rm --pull=always --network host \
-    -e ARENA_NAME="$NAME" -e ARENA_TOKEN="$TOKEN" registry.takumi.city/knapsack-kit:1
+    -e ARENA_SERVER=localhost:50051 -e ARENA_NAME="$NAME" -e ARENA_TOKEN="$TOKEN" registry.takumi.city/knapsack-kit:1
