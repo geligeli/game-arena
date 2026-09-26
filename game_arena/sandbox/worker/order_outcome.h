@@ -29,6 +29,8 @@ struct OrderOutcome {
   bool build_ok = false;
   // Already compacted: full bazel logs never leave the worker.
   std::string build_log;
+  // The tail of the build step's raw output, whatever the outcome.
+  std::string build_output;
   // Whose build broke, when build_ok is false. An order builds both sides of
   // a match, and the opponent failing to compile is not the submitter's fault
   // -- without this the coordinator would retire the wrong submission. Empty

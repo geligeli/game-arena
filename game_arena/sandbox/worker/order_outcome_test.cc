@@ -145,6 +145,32 @@ TEST(OutcomeForTest, ABuildTimeoutNamesTheTimeoutThatActuallyApplied) {
             "build timed out after 1800s");
 }
 
+TEST(OutcomeForTest, EveryBuildCarriesItsRawOutput) {
+  sx::JobResult ok;
+  WithBuild(&ok, 0, "INFO: Build completed successfully\n");
+  EXPECT_EQ(OutcomeFor(MatchOrder(), ok).build_output,
+            "INFO: Build completed successfully\n");
+
+  sx::JobResult failed;
+  WithBuild(&failed, 1, "x.cc:1:1: error: nope\n")
+      ->set_stderr("ERROR: build failed\n");
+  EXPECT_EQ(OutcomeFor(MatchOrder(), failed).build_output,
+            "x.cc:1:1: error: nope\nERROR: build failed\n");
+
+  sx::JobResult cancelled;
+  cancelled.mutable_status()->set_code(sx::Status::CANCELLED);
+  WithBuild(&cancelled, 1, "compiling...\n");
+  EXPECT_EQ(OutcomeFor(MatchOrder(), cancelled).build_output, "compiling...\n");
+}
+
+TEST(OutcomeForTest, TheRawOutputKeepsItsTail) {
+  sx::JobResult result;
+  WithBuild(&result, 0, std::string(70 << 10, 'x') + "the end\n");
+  const std::string output = OutcomeFor(MatchOrder(), result).build_output;
+  EXPECT_LT(output.size(), (64 << 10) + 100u);
+  EXPECT_TRUE(output.ends_with("the end\n"));
+}
+
 TEST(OutcomeForTest, AJobTheEngineCouldNotRunIsAnErrorNotAResult) {
   sx::JobResult result;
   result.mutable_status()->set_code(sx::Status::WORKSPACE_FAILED);

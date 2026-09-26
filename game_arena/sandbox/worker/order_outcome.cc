@@ -154,6 +154,10 @@ OrderOutcome OutcomeFor(const proto::WorkOrder &order,
   const sx::PhaseResult *build = PhaseNamed(result, "build");
   const sx::StepResult *build_step =
       build != nullptr ? StepNamed(*build, "build") : nullptr;
+  if (build_step != nullptr) {
+    outcome.build_output = sandbox_common::TailOf(
+        build_step->stdout() + build_step->stderr(), 64 << 10);
+  }
 
   // Whatever the engine says it could not do, before looking at any step: a
   // job that never ran has no result to read.

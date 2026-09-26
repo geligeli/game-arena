@@ -489,6 +489,10 @@ message OrderResult {
   // clock number is meaningless without them.
   string worker_id = 12;
   string machine_class = 13;
+  // The build step's raw output, its last 64 KiB, however the build went: what
+  // the dashboard shows. Bytes, because a byte-offset tail can split a UTF-8
+  // character.
+  bytes build_output = 14;
 }
 
 // One game an order played, sent on its own before the order's result: a

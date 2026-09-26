@@ -199,6 +199,7 @@ class WorkerSession {
       result->set_order_id(order.order_id());
       result->set_build_ok(outcome.build_ok);
       result->set_build_log(outcome.build_log);
+      result->set_build_output(outcome.build_output);
       result->set_games_played(outcome.games_played);
       result->set_wins(outcome.wins);
       result->set_draws(outcome.draws);
