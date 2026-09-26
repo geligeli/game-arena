@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package tournament_arena;
+
+import "game_arena/proto/arena.proto";
+
+// One job as the coordinator keeps it, in <data_dir>/jobs/<job_id>.pb: what
+// was submitted and what each of its orders came back with. Never leaves the
+// coordinator, so it is not in proto/; but the files outlive a restart, so
+// fields are added, never renumbered.
+message JobRecord {
+  proto.Job job = 1;
+  // As submitted, patch included: the candidate store keeps only the latest
+  // submission, so this is a participant's history.
+  proto.Candidate submission = 2;
+
+  message Order {
+    string order_id = 1;
+    string opponent_spec = 2;
+    proto.OrderResult result = 3;  // unset until the order comes back
+    repeated string game_ids = 4;  // as GameHistory stores them
+  }
+  repeated Order orders = 3;
+}

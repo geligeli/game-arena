@@ -290,6 +290,54 @@ TEST_F(SchedulerTest, ARunningOrdersGamesAreKeptAndARetiredOnesAreNot) {
       std::filesystem::exists(dir_ / "games" / (order_id + "-g1_1.pb")));
 }
 
+TEST_F(SchedulerTest, AJobIsLoggedWithItsSubmissionResultAndGames) {
+  tournament_broker::GameHistory history(dir_ / "games");
+  JobLog log(dir_ / "jobs");
+  Scheduler scheduler(config_, store_.get(), standings_.get(), &history, &log);
+  auto worker = std::make_shared<FakeWorker>("w1", 2);
+  scheduler.AddWorker(worker);
+  const std::string job_id = scheduler.EnqueuePlacement(
+      AddCandidate("Alpha", proto::Candidate::PENDING), Reserve());
+  ASSERT_EQ(worker->orders.size(), 1u);
+  const std::string order_id = worker->orders[0].order_id();
+  EXPECT_EQ(log.Get(job_id)->job().state(), proto::Job::RUNNING);
+
+  proto::OrderGame game;
+  game.set_order_id(order_id);
+  tournament_broker::proto::GameRecord record;
+  record.set_game_id("g1_0");
+  record.SerializeToString(game.mutable_record());
+  scheduler.OnGame(game);
+  proto::OrderResult result = Result(order_id);
+  result.set_build_output("INFO: Build completed successfully\n");
+  scheduler.OnResult("w1", result);
+
+  const auto logged = log.Get(job_id);
+  ASSERT_TRUE(logged.has_value());
+  EXPECT_EQ(logged->job().state(), proto::Job::DONE);
+  // The code as submitted: the store keeps only the latest.
+  EXPECT_NE(logged->submission().patch().find("+// Alpha"), std::string::npos);
+  ASSERT_EQ(logged->orders_size(), 1);
+  EXPECT_EQ(logged->orders(0).opponent_spec(), "builtin:random");
+  EXPECT_EQ(logged->orders(0).result().build_output(),
+            "INFO: Build completed successfully\n");
+  ASSERT_EQ(logged->orders(0).game_ids_size(), 1);
+  EXPECT_EQ(logged->orders(0).game_ids(0), order_id + "-g1_0");
+}
+
+TEST_F(SchedulerTest, ASupersededJobIsLoggedCancelled) {
+  JobLog log(dir_ / "jobs");
+  Scheduler scheduler(config_, store_.get(), standings_.get(), nullptr, &log);
+  scheduler.AddWorker(std::make_shared<FakeWorker>("w1", 2));
+  const std::string old_job = scheduler.EnqueuePlacement(
+      AddCandidate("Alpha", proto::Candidate::PENDING), Reserve());
+  scheduler.EnqueuePlacement(AddCandidate("Alpha", proto::Candidate::PENDING),
+                             Reserve());
+
+  EXPECT_EQ(log.Get(old_job)->job().state(), proto::Job::CANCELLED);
+  EXPECT_EQ(log.List().size(), 2u);
+}
+
 TEST_F(SchedulerTest, CandidateMatchDispatchesBothSidesNamingEachOther) {
   const auto alpha = AddCandidate("Alpha");
   const auto beta = AddCandidate("Beta");

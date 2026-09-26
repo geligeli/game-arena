@@ -53,6 +53,7 @@ cc_library(
     deps = [
         "//game_arena/proto:tournament_broker_cc_proto",
         "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/strings",
         "@boost.json",
     ],
 )

@@ -8,10 +8,18 @@
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/strings/ascii.h"
 
 namespace tournament_broker {
 
 namespace json = boost::json;
+
+bool IsSafeId(std::string_view id) {
+  return !id.empty() && std::ranges::all_of(id, [](char c) {
+    return absl::ascii_isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+           c == '-';
+  });
+}
 
 GameHistory::GameHistory(std::filesystem::path dir) : dir_(std::move(dir)) {
   std::error_code ec;

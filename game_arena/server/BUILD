@@ -142,6 +142,38 @@ cc_library(
     deps = ["//game_arena/proto:arena_cc_proto"],
 )
 
+# Every job on disk: what was submitted and what each order came back with.
+proto_library(
+    name = "job_record_proto",
+    srcs = ["job_record.proto"],
+    deps = ["//game_arena/proto:arena_proto"],
+)
+
+cc_proto_library(
+    name = "job_record_cc_proto",
+    deps = [":job_record_proto"],
+)
+
+cc_library(
+    name = "job_log",
+    srcs = ["job_log.cc"],
+    hdrs = ["job_log.h"],
+    deps = [
+        ":job_record_cc_proto",
+        "//game_arena/standings:game_history",
+        "@abseil-cpp//absl/log",
+    ],
+)
+
+cc_test(
+    name = "job_log_test",
+    srcs = ["job_log_test.cc"],
+    deps = [
+        ":job_log",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # Expands "rate this candidate" into work orders and hands them to the fleet.
 proto_library(
     name = "scheduler_config_proto",
@@ -162,6 +194,7 @@ cc_library(
         ":candidate_store",
         "//game_arena/standings:elo_store",
         ":fleet_worker",
+        ":job_log",
         ":problem_config",
         ":scheduler_config_cc_proto",
         "//game_arena/standings:game_history",
@@ -228,6 +261,7 @@ cc_binary(
         ":fleet_service",
         "//game_arena/standings:game_history",
         "//game_arena/standings:http_leaderboard",
+        ":job_log",
         "//game_arena/standings:metric_standings",
         ":problem_config",
         ":scheduler",

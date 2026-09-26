@@ -25,6 +25,15 @@ bool IsBuiltin(const std::string &opponent) {
   return opponent.rfind(kBuiltinPrefix, 0) == 0;
 }
 
+JobRecord::Order *OrderIn(JobRecord *record, const std::string &order_id) {
+  for (JobRecord::Order &order : *record->mutable_orders()) {
+    if (order.order_id() == order_id) {
+      return &order;
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 Scheduler::Reservation::~Reservation() {
@@ -57,11 +66,12 @@ auto Scheduler::Reservation::operator=(Reservation &&other) noexcept
 
 Scheduler::Scheduler(SchedulerConfig config, CandidateStore *candidates,
                      Standings *standings,
-                     tournament_broker::GameHistory *history)
+                     tournament_broker::GameHistory *history, JobLog *job_log)
     : config_(std::move(config)),
       candidates_(candidates),
       standings_(standings),
-      history_(history) {}
+      history_(history),
+      job_log_(job_log) {}
 
 void Scheduler::ReleaseReservationLocked(const std::string &client_id) {
   const auto it = reserved_.find(client_id);
@@ -93,6 +103,7 @@ void Scheduler::AbortJobLocked(Job *job, const std::string &reason) {
   job->status.set_state(proto::Job::CANCELLED);
   job->status.set_error(reason);
   job->status.set_finished_unix_ms(NowUnixMs());
+  PersistLocked(job);
 }
 
 auto Scheduler::TryReserve(const std::string &client_id,
@@ -260,6 +271,7 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
   job.status.set_candidate_id(candidate.candidate_id());
   job.status.set_state(proto::Job::QUEUED);
   job.status.set_created_unix_ms(NowUnixMs());
+  *job.record.mutable_submission() = candidate;
 
   int requested = 0;
   for (const std::string &opponent : opponents) {
@@ -270,6 +282,9 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
       continue;
     }
     requested += games;
+    JobRecord::Order *logged = job.record.add_orders();
+    logged->set_order_id(order->order_id());
+    logged->set_opponent_spec(order->opponent_spec());
     job.pending.push_back(std::move(*order));
   }
   job.status.set_games_requested(requested);
@@ -281,9 +296,11 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
     jobs_[job_id].status.set_state(proto::Job::FAILED);
     jobs_[job_id].status.set_error("no runnable opponent");
     jobs_[job_id].status.set_finished_unix_ms(NowUnixMs());
+    PersistLocked(&jobs_[job_id]);
     return job_id;
   }
   queue_.push_back(job_id);
+  PersistLocked(&jobs_[job_id]);
   DispatchLocked();
   return job_id;
 }
@@ -397,7 +414,10 @@ void Scheduler::DispatchLocked() {
       order_owner_[order.order_id()] = {job.status.job_id(),
                                         best->worker->worker_id()};
       job.running[order.order_id()] = std::move(order);
-      job.status.set_state(proto::Job::RUNNING);
+      if (job.status.state() != proto::Job::RUNNING) {
+        job.status.set_state(proto::Job::RUNNING);
+        PersistLocked(&job);
+      }
       progress = true;
 
       if (job.pending.empty()) {
@@ -473,18 +493,26 @@ void Scheduler::OnProgress(const proto::OrderProgress &progress) {
 }
 
 void Scheduler::OnGame(const proto::OrderGame &game) {
-  {
-    std::lock_guard lock(mutex_);
-    if (!order_owner_.contains(game.order_id())) {
-      return;
-    }
-  }
   tournament_broker::proto::GameRecord record;
   if (history_ == nullptr || !record.ParseFromString(game.record())) {
     return;
   }
   // A referee numbers its games per process, so two of them can pick one id.
   record.set_game_id(game.order_id() + "-" + record.game_id());
+  {
+    std::lock_guard lock(mutex_);
+    const auto owner = order_owner_.find(game.order_id());
+    if (owner == order_owner_.end()) {
+      return;
+    }
+    const auto job = jobs_.find(owner->second.first);
+    if (job != jobs_.end()) {
+      if (JobRecord::Order *order =
+              OrderIn(&job->second.record, game.order_id())) {
+        order->add_game_ids(record.game_id());
+      }
+    }
+  }
   history_->Store(record);
 }
 
@@ -557,12 +585,16 @@ void Scheduler::OnResult(const std::string &worker_id,
     }
   }
 
+  if (JobRecord::Order *order = OrderIn(&job.record, result.order_id())) {
+    *order->mutable_result() = result;
+  }
   job.running.erase(result.order_id());
 
   if (job.aborted) {
     job.pending.clear();
   }
   ConcludeJobLocked(&job);
+  PersistLocked(&job);
   DispatchLocked();
 }
 
@@ -574,6 +606,19 @@ void Scheduler::ConcludeJobLocked(Job *job) {
     job->status.set_state(proto::Job::DONE);
   }
   job->status.set_finished_unix_ms(NowUnixMs());
+}
+
+void Scheduler::PersistLocked(Job *job) {
+  if (job_log_ == nullptr) {
+    return;
+  }
+  *job->record.mutable_job() = job->status;
+  job_log_->Put(job->record);
+  // jobs_ keeps every job since startup, and a record carries its patch and
+  // every build's output. Nothing writes a finished job's record again.
+  if (job->pending.empty() && job->running.empty()) {
+    job->record.Clear();
+  }
 }
 
 std::optional<proto::Job> Scheduler::GetJob(const std::string &job_id) const {

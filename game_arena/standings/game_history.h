@@ -10,11 +10,16 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "game_arena/proto/tournament_broker.pb.h"
 
 namespace tournament_broker {
+
+// True when |id| can name a file: non-empty, [A-Za-z0-9_-]. Game and job ids
+// reach the coordinator's pages from URLs.
+bool IsSafeId(std::string_view id);
 
 class GameHistory {
  public:

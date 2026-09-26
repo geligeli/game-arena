@@ -33,6 +33,7 @@
 #include "game_arena/proto/clients.pb.h"
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/fleet_worker.h"
+#include "game_arena/server/job_log.h"
 #include "game_arena/server/scheduler_config.pb.h"
 #include "game_arena/standings/elo_store.h"
 #include "game_arena/standings/game_history.h"
@@ -44,10 +45,12 @@ class Scheduler {
  public:
   // |standings| is where a finished order's result lands. The coordinator is
   // the only thing that writes standings: a referee's own ratings die with its
-  // container. |history|, when set, keeps the games a running order played.
+  // container. |history|, when set, keeps the games a running order played,
+  // and |job_log| every job: its submission and each order's result.
   Scheduler(SchedulerConfig config, CandidateStore *candidates,
             Standings *standings,
-            tournament_broker::GameHistory *history = nullptr);
+            tournament_broker::GameHistory *history = nullptr,
+            JobLog *job_log = nullptr);
 
   // A held quota slot.
   //
@@ -129,6 +132,8 @@ class Scheduler {
     std::deque<proto::WorkOrder> pending;             // not yet dispatched
     std::map<std::string, proto::WorkOrder> running;  // keyed by order id
     bool aborted = false;
+    // What job_log_ keeps. Cleared once the job has finished and is on disk.
+    JobRecord record;
   };
 
   struct WorkerState {
@@ -158,12 +163,15 @@ class Scheduler {
   void ReleaseReservationLocked(const std::string &client_id);
   void DispatchLocked();
   void ConcludeJobLocked(Job *job);
+  // Writes |job|'s record to job_log_. Caller holds mutex_.
+  void PersistLocked(Job *job);
   int FreeSlotsLocked() const;
 
   const SchedulerConfig config_;
   CandidateStore *candidates_;               // not owned
   Standings *standings_;                     // not owned
   tournament_broker::GameHistory *history_;  // not owned
+  JobLog *job_log_;                          // not owned
 
   mutable std::mutex mutex_;
   std::map<std::string, Job> jobs_;

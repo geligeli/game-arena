@@ -45,6 +45,7 @@ bazel run //game_arena/server:problem_server -- \
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/client_registry.h"
 #include "game_arena/server/fleet_service.h"
+#include "game_arena/server/job_log.h"
 #include "game_arena/server/problem_config.h"
 #include "game_arena/server/scheduler.h"
 #include "game_arena/standings/elo_standings.h"
@@ -240,8 +241,12 @@ int main(int argc, char **argv) {
                     "the caller says it is";
   }
 
+  // Every job, with its submission and each build's output, for the
+  // dashboard: the candidate store keeps only a participant's latest code.
+  tournament_arena::JobLog job_log(data_dir / "jobs");
   tournament_arena::Scheduler scheduler(SchedulerConfigFor(*problem),
-                                        &candidates, standings.get(), &history);
+                                        &candidates, standings.get(), &history,
+                                        &job_log);
   // What an agent needs to know about the problem, curated from the config:
   // the operator's image names and timeouts are not a submitter's business.
   tournament_arena::proto::ProblemInfo info;
