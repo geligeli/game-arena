@@ -1,62 +1,19 @@
 #include "game_arena/grader/report.h"
 
-#include <cstdio>
+#include <boost/json/object.hpp>
+#include <boost/json/serialize.hpp>
 #include <cstdlib>
 #include <fstream>
 #include <map>
-#include <sstream>
 #include <string>
 
 namespace grader {
-namespace {
-
-// Enough digits to round-trip a double, without the exponent noise that a
-// default ostream would produce for large scores.
-std::string FormatNumber(double value) {
-  char buffer[64];
-  std::snprintf(buffer, sizeof(buffer), "%.17g", value);
-  return buffer;
-}
-
-std::string JsonEscape(const std::string &text) {
-  std::string out;
-  out.reserve(text.size());
-  for (const char c : text) {
-    switch (c) {
-      case '"':
-        out += "\\\"";
-        break;
-      case '\\':
-        out += "\\\\";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
-      default:
-        out += c;
-    }
-  }
-  return out;
-}
-
-}  // namespace
 
 std::string RenderReport(const std::map<std::string, double> &metrics) {
-  std::ostringstream out;
-  out << "{\"metrics\": {";
-  bool first = true;
-  for (const auto &[name, value] : metrics) {
-    if (!first) {
-      out << ", ";
-    }
-    first = false;
-    out << '"' << JsonEscape(name) << "\": " << FormatNumber(value);
-  }
-  out << "}}\n";
-  return out.str();
+  boost::json::object values;
+  for (const auto &[name, value] : metrics) values[name] = value;
+  return boost::json::serialize(boost::json::object{{"metrics", values}}) +
+         "\n";
 }
 
 bool WriteReport(const std::string &path,

@@ -9,6 +9,7 @@ cc_library(
     name = "report",
     srcs = ["report.cc"],
     hdrs = ["report.h"],
+    deps = ["@boost.json"],
 )
 
 # Round trips through the worker's real parser: the two halves of this format
