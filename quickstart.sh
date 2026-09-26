@@ -12,9 +12,10 @@ TARGET_DIR=${DIR}/examples/connect4
 cd $TARGET_DIR
 
 bazel run \
- //:kit_image_push -- \
- --repository=${REGISTRY} \
- --tag=${TAG}
+ //:kit_image_issue -- \
+ --image=${REGISTRY}:${TAG} \
+ --prime_bazelrc=prime.bazelrc \
+ --push
 
 
 TOKEN_P1=$( bazel run @game_arena//game_arena/tools:arena_admin \
@@ -31,7 +32,7 @@ TOKEN_P2=$( bazel run @game_arena//game_arena/tools:arena_admin \
  --overwrite )
 
 tmux new-session -d -s $SESSION -c $TARGET_DIR 'bazel run -c opt //:tournament'
-tmux split-window -h -t $SESSION -c $TARGET_DIR 'bazel run  @game_arena//game_arena/sandbox/worker:sandbox_worker -- --server=localhost:50051'
+tmux split-window -h -t $SESSION -c $TARGET_DIR 'bazel run -c opt  @game_arena//game_arena/sandbox/worker:sandbox_worker -- --server=localhost:50051'
 
 tmux split-window -vf -t $SESSION -c $TARGET_DIR "docker run \
  -it \

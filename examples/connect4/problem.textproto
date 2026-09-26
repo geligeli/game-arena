@@ -63,7 +63,7 @@ sandbox {
   # What a worker asks its daemon for, by exactly this name: `bazel build
   # //:sandbox_image`, this tree on the arena's base. `play` loads it under
   # this name; deploy.sh pushes it.
-  image: "registry.takumi.city/connect4-sandbox:1"
+  image: "registry.takumi.city/connect4-sandbox:latest"
   # Nothing is vendored into that image, so the first build in a slot fetches
   # what MODULE.bazel resolves. A build that can fetch can also exfiltrate.
   allow_build_network: true

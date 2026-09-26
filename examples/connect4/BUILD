@@ -8,6 +8,7 @@ arena_problem(
     name = "connect4",
     config = "problem.textproto",
     registry = "//game:registry",
+    kit_base = "@kit_agents",
     # What a participant receives: the rules (so a bot can search them), the
     # harness and the reference bot. Not the config, not the tournament.
     kit_files = [

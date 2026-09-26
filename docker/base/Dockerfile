@@ -7,9 +7,8 @@
 # never runs anything inside it. That split is the point: `apt-get` needs a
 # container to run in, and nothing else an arena image is made of does.
 #
-#   docker build --provenance=false --sbom=false \
+#   docker build --provenance=false --sbom=false --push \
 #       -t registry.takumi.city/game-arena-base:noble-bazel8.8.0-nano docker/base
-#   docker push registry.takumi.city/game-arena-base:noble-bazel8.8.0-nano
 #
 # Then pin what the push printed in MODULE.bazel (oci.pull, name "arena_base").
 # The tag is for people; the digest is what builds use, so a rebuild of this

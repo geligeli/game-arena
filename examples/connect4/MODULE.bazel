@@ -19,3 +19,15 @@ local_path_override(
     module_name = "game_arena",
     path = "../..",
 )
+
+# The kit base with coding agents (docker/coding-agents), in place of the
+# arena's own kit_base.
+bazel_dep(name = "rules_oci", version = "2.3.0")
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+oci.pull(
+    name = "kit_agents",
+    digest = "sha256:b4c50a1e41d5578c3e4b2d99ce203a71ff7346ad66864e32d1b90e163198c99b",
+    image = "registry.takumi.city/game-arena-kit-agents",
+)
+use_repo(oci, "kit_agents")

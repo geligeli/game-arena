@@ -1460,7 +1460,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
           ? out
           : std::filesystem::path(absl::GetFlag(FLAGS_kit_path));
   // A kit in an image takes its address from the container's ARENA_SERVER.
-  WriteFile(out / "mcp.json",
+  WriteFile(out / ".mcp.json",
             KitMcpJson(home, home == out ? server : "", token, client_id));
 
   // bazel-* are symlinks the priming build leaves behind; .bazelrc.local
