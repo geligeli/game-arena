@@ -176,11 +176,15 @@ std::optional<int> Child::Poll() {
   return exit_code_;
 }
 
-int Child::Wait() {
+std::optional<int> Child::Wait(std::chrono::seconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (!Poll()) {
+    if (timeout.count() > 0 && std::chrono::steady_clock::now() >= deadline) {
+      return std::nullopt;
+    }
     ::usleep(20000);
   }
-  return *exit_code_;
+  return exit_code_;
 }
 
 int Child::Stop(std::chrono::seconds grace) {
@@ -188,39 +192,23 @@ int Child::Stop(std::chrono::seconds grace) {
     return *exit_code_;
   }
   ::kill(-pid_, SIGTERM);
-  const auto deadline = std::chrono::steady_clock::now() + grace;
-  while (!Poll()) {
-    if (std::chrono::steady_clock::now() >= deadline) {
-      ::kill(-pid_, SIGKILL);
-    }
-    ::usleep(20000);
+  if (!Wait(grace)) {
+    ::kill(-pid_, SIGKILL);
   }
-  return *exit_code_;
+  return *Wait();
 }
 
 RunResult RunCommand(const std::string& executable,
                      const std::vector<std::string>& arguments,
-                     const Options& options, std::chrono::seconds timeout,
-                     const std::function<void(pid_t)>& on_started) {
-  RunResult result;
+                     const Options& options, std::chrono::seconds timeout) {
   std::optional<Child> child = Child::Start(executable, arguments, options);
   if (!child) {
-    return result;
+    return {};
   }
-  result.started = true;
-  if (on_started) {
-    on_started(child->pid());
-  }
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (!child->Poll()) {
-    if (timeout.count() > 0 && std::chrono::steady_clock::now() >= deadline) {
-      result.timed_out = true;
-      break;
-    }
-    ::usleep(20000);
-  }
-  result.exit_code = child->Stop(std::chrono::seconds(5));
-  return result;
+  const bool timed_out = !child->Wait(timeout);
+  return {.exit_code = child->Stop(std::chrono::seconds(5)),
+          .timed_out = timed_out,
+          .started = true};
 }
 
 }  // namespace process

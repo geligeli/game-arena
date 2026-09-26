@@ -143,7 +143,6 @@ cc_library(
         ":workspace",
         "//game_arena/common/process",
         "//game_arena/sandbox/common:files",
-        "//game_arena/sandbox/common:step",
         "//game_arena/sandbox/common:text",
     ],
 )

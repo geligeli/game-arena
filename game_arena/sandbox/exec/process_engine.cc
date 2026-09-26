@@ -16,7 +16,6 @@
 
 #include "game_arena/common/process/process.h"
 #include "game_arena/sandbox/common/files.h"
-#include "game_arena/sandbox/common/step.h"
 #include "game_arena/sandbox/common/text.h"
 #include "game_arena/sandbox/exec/workspace.h"
 
@@ -243,33 +242,37 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     foreground_env.push_back(key + "=" + value);
   }
 
-  pid_t tracked = 0;
-  const sandbox_common::StepResult ran = sandbox_common::RunStep(
+  std::optional<process::Child> child = process::Child::Start(
       argv.front(), {argv.begin() + 1, argv.end()},
-      foreground.cwd().empty() ? tree : std::filesystem::path(foreground.cwd()),
-      log_dir, foreground.name(), std::chrono::seconds(foreground.timeout_s()),
-      EffectiveIsolation(job, phase, foreground).address_space_limit_bytes(),
-      [this, &job, &tracked](pid_t pgid) {
-        tracked = pgid;
-        Track(job.id(), pgid);
-      },
-      foreground_env);
-  if (tracked != 0) {
-    Untrack(job.id(), tracked);
+      {.cwd = foreground.cwd().empty()
+                  ? tree
+                  : std::filesystem::path(foreground.cwd()),
+       .env = foreground_env,
+       .stdout_path = log_dir / (foreground.name() + ".out"),
+       .stderr_path = log_dir / (foreground.name() + ".err"),
+       .address_space_limit_bytes = EffectiveIsolation(job, phase, foreground)
+                                        .address_space_limit_bytes()});
+  bool timed_out = false;
+  int exit_code = -1;
+  if (child) {
+    Track(job.id(), child->pid());
+    timed_out = !child->Wait(std::chrono::seconds(foreground.timeout_s()));
+    exit_code = child->Stop(std::chrono::seconds(5));
+    Untrack(job.id(), child->pid());
   }
 
   proto::StepResult *foreground_result = result->add_steps();
   foreground_result->set_name(foreground.name());
-  foreground_result->set_started(ran.run.started);
+  foreground_result->set_started(child.has_value());
   foreground_result->set_timeout_s(foreground.timeout_s());
-  foreground_result->set_timed_out(ran.run.timed_out);
-  foreground_result->set_exit_code(ran.run.timed_out ? 124 : ran.run.exit_code);
+  foreground_result->set_timed_out(timed_out);
+  foreground_result->set_exit_code(timed_out ? 124 : exit_code);
   foreground_result->set_stdout(
       ReadFile(log_dir / (foreground.name() + ".out")));
   foreground_result->set_stderr(
       ReadFile(log_dir / (foreground.name() + ".err")));
 
-  if (!ran.run.started) {
+  if (!child) {
     Fail(status, proto::Status::START_FAILED, "cannot run " + argv.front(),
          phase.name(), foreground.name());
     return false;

@@ -5,7 +5,6 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
-#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -51,8 +50,9 @@ class Child {
   // one), nullopt while it runs.
   std::optional<int> Poll();
 
-  // Blocks until the child exits and returns its exit code.
-  int Wait();
+  // Blocks until the child exits and returns its exit code, or nullopt once a
+  // nonzero |timeout| expires with the child still running.
+  std::optional<int> Wait(std::chrono::seconds timeout = {});
 
   // SIGTERM the group, wait up to |grace|, then SIGKILL it. Returns the exit
   // code, or the recorded one if it already exited.
@@ -72,12 +72,9 @@ struct RunResult {
 };
 
 // Runs |executable| to completion. A nonzero |timeout| stops it on expiry.
-// |on_started| gets the child's pgid before the wait begins, so a caller can
-// abort a run it is not the one waiting on; it must not block.
 RunResult RunCommand(const std::string& executable,
                      const std::vector<std::string>& arguments,
-                     const Options& options, std::chrono::seconds timeout = {},
-                     const std::function<void(pid_t)>& on_started = {});
+                     const Options& options, std::chrono::seconds timeout = {});
 
 // Finds |name| on PATH, or returns it unchanged when it already contains '/'.
 // Empty when nothing executable matches.

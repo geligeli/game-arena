@@ -88,20 +88,6 @@ TEST_F(RunStepTest, RunsInTheGivenDirectory) {
   EXPECT_EQ(step.output, where.string() + "\n");
 }
 
-TEST_F(RunStepTest, PublishesTheProcessGroupSoSomeoneElseCanKillIt) {
-  pid_t published = 0;
-  const StepResult step =
-      RunStep("/bin/sh", {"-c", "true"}, /*cwd=*/{}, root_, "pgid", 30s,
-              /*address_space_limit_bytes=*/0,
-              [&published](pid_t pgid) { published = pgid; });
-
-  ASSERT_TRUE(step.run.started);
-  // Its own group, not the test runner's: build tools spawn trees, and
-  // killing only the parent leaves the workers running.
-  EXPECT_GT(published, 0);
-  EXPECT_NE(published, ::getpgrp());
-}
-
 TEST_F(RunStepTest, LogsLandUnderTheTagEvenWhenTheStepSaysNothing) {
   const StepResult step =
       RunStep("/bin/sh", {"-c", "true"}, /*cwd=*/{}, root_, "quiet", 30s);
