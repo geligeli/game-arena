@@ -20,8 +20,8 @@ bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- \
 # Up once the worker has attached.
 until grep -q "attached with" "$LOG"; do sleep 1; done
 NAME="${1:-$USER}"
-TOKEN="$(bazel run @game_arena//game_arena/tools:arena_admin -- mint --client_id="$NAME" \
-    --clients="$HOME/.arena/knapsack/clients.textproto" | grep -oE '[A-Za-z0-9_-]{40,}' | head -1)"
+TOKEN="$(bazel run @game_arena//game_arena/tools:arena_admin -- mint --overwrite --client_id="$NAME" \
+    --clients="$HOME/.arena/knapsack/clients.textproto")"
 
 # Inside: arena_cli submit --wait
 docker run -it --rm --pull=always --network host \

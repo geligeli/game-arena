@@ -214,10 +214,14 @@ TEST(ClientMintTest, ReplacingATokenKeepsTheRestOfTheClient) {
       << error;
 
   const std::string new_token = MintToken();
-  ASSERT_TRUE(ReplaceClientToken(path, "alice", HashToken(new_token), &error))
+  ASSERT_TRUE(SetClientToken(
+      path, MakeClient("alice", "", new_token, proto::ClientQuota()), &error))
       << error;
-  EXPECT_FALSE(
-      ReplaceClientToken(path, "nobody", HashToken(new_token), &error));
+  // Someone not there yet is added rather than refused.
+  const std::string bob_token = MintToken();
+  ASSERT_TRUE(SetClientToken(
+      path, MakeClient("bob", "Bob", bob_token, proto::ClientQuota()), &error))
+      << error;
 
   ClientRegistry registry(path, proto::ClientQuota());
   ASSERT_TRUE(registry.Load(&error)) << error;
@@ -226,6 +230,22 @@ TEST(ClientMintTest, ReplacingATokenKeepsTheRestOfTheClient) {
   ASSERT_TRUE(alice.has_value());
   EXPECT_EQ(alice->display_name, "Alice");
   EXPECT_EQ(alice->quota.max_queued_jobs(), 3u);
+  EXPECT_TRUE(registry.Resolve(bob_token).has_value());
+  std::filesystem::remove(path);
+}
+
+TEST(ClientMintTest, SettingATokenCreatesTheRegistry) {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "client_registry_set_test";
+  std::filesystem::remove(path);
+  const std::string token = MintToken();
+  std::string error;
+  ASSERT_TRUE(SetClientToken(
+      path, MakeClient("alice", "", token, proto::ClientQuota()), &error))
+      << error;
+  ClientRegistry registry(path, proto::ClientQuota());
+  ASSERT_TRUE(registry.Load(&error)) << error;
+  EXPECT_TRUE(registry.Resolve(token).has_value());
   std::filesystem::remove(path);
 }
 

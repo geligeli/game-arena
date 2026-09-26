@@ -387,8 +387,10 @@ bazel run //game_arena/tools:arena_admin -- \
     mint --client_id=some-agent --display_name="Some Agent"
 ```
 
-It prints the token once and the registry block to paste into the file named by
-`--clients`. What is stored is the token's SHA-256, so a leaked registry file is
+It prints the token, and only the token, on stdout, and the registry block to
+paste into the file named by `--clients` on stderr; given `--clients` it writes
+the block there itself, and with `--overwrite` gives that client a new token
+whether or not it was there. What is stored is the token's SHA-256, so a leaked registry file is
 not a set of usable credentials. A token the server does not know rereads it; a
 reread that fails to parse keeps the running set rather than locking everyone
 out.

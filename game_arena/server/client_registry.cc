@@ -123,9 +123,11 @@ bool AppendClientToRegistry(const std::filesystem::path &path,
   return static_cast<bool>(out);
 }
 
-bool ReplaceClientToken(const std::filesystem::path &path,
-                        const std::string &client_id,
-                        const std::string &token_sha256, std::string *error) {
+bool SetClientToken(const std::filesystem::path &path,
+                    const proto::Client &client, std::string *error) {
+  if (!std::filesystem::exists(path)) {
+    return AppendClientToRegistry(path, client, error);
+  }
   std::ifstream in(path, std::ios::binary);
   const std::string existing((std::istreambuf_iterator<char>(in)),
                              std::istreambuf_iterator<char>());
@@ -137,14 +139,13 @@ bool ReplaceClientToken(const std::filesystem::path &path,
   }
   bool found = false;
   for (proto::Client &present : *parsed.mutable_clients()) {
-    if (present.client_id() == client_id) {
-      present.set_token_sha256(token_sha256);
+    if (present.client_id() == client.client_id()) {
+      present.set_token_sha256(client.token_sha256());
       found = true;
     }
   }
   if (!found) {
-    *error = absl::StrCat("client '", client_id, "' is not in ", path.string());
-    return false;
+    return AppendClientToRegistry(path, client, error);
   }
   std::string text;
   google::protobuf::TextFormat::PrintToString(parsed, &text);
