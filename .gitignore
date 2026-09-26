@@ -20,6 +20,6 @@ mcp_servers/arena_mcp/_pb/
 # Machine-local bazel settings (see .bazelrc).
 .bazelrc.local
 
-# Symbol index written by tools/cpp_format.sh index.
-index.pb
-index.pb.sqlite
+# Written by tools/cpp_format.sh index / browse / coverage: the symbol index,
+# the code browser's database and full-text index, and the coverage report.
+index.pb*

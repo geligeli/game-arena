@@ -265,6 +265,8 @@
     "https://bcr.bazel.build/modules/jsoncpp/1.9.6/source.json": "a04756d367a2126c3541682864ecec52f92cdee80a35735a3cb249ce015ca000",
     "https://bcr.bazel.build/modules/libpfm/4.11.0/MODULE.bazel": "45061ff025b301940f1e30d2c16bea596c25b176c8b6b3087e92615adbd52902",
     "https://bcr.bazel.build/modules/libpfm/4.11.0/source.json": "caaffb3ac2b59b8aac456917a4ecf3167d40478ee79f15ab7a877ec9273937c9",
+    "https://bcr.bazel.build/modules/libsais/2.10.4.bcr.2/MODULE.bazel": "2ad53338d0b0488f27bae16fe9d9d1e693cdd50c73bce61ae9de50ce180caf90",
+    "https://bcr.bazel.build/modules/libsais/2.10.4.bcr.2/source.json": "161f863ba801f33afb8f6cb5df3524888cad306e10cd15612638948960b282e9",
     "https://bcr.bazel.build/modules/llvm/0.8.21/MODULE.bazel": "25ef6d4fc7f7a496ea1d32d1ed76a97d56caf54706e047829548e47c33581689",
     "https://bcr.bazel.build/modules/llvm/0.8.21/source.json": "78144685266c0823823ced190f147e56658a5042767b9a732314aee384150eb4",
     "https://bcr.bazel.build/modules/mbedtls/3.6.0/MODULE.bazel": "8e380e4698107c5f8766264d4df92e36766248447858db28187151d884995a09",
@@ -719,13 +721,13 @@
     "@@cpp_formatting+//bazel/integration:extensions.bzl%cpp_format": {
       "general": {
         "bzlTransitiveDigest": "DkWp3HZw4YdutAcprOOF354qE5vrGiMjc53o2O6SppM=",
-        "usagesDigest": "VusNmlD4twSvPWMoyqDJiYBVgU1KIiXRoEIJbsd4A2w=",
+        "usagesDigest": "e3WuuRGuTPSpjx6cW87TsGhAisSyZ2TbT9plSvH6hSg=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
           "cpp_format_bin": {
             "repoRuleId": "@@cpp_formatting+//bazel/integration:extensions.bzl%_binary_repo",
             "attributes": {
-              "version": "20260921-3d3dfec",
+              "version": "20260926-f0228af",
               "base_url": "https://github.com/geligeli/cpp_formatting/releases/download",
               "sha256": {}
             }
@@ -733,7 +735,7 @@
           "code_browser_bin": {
             "repoRuleId": "@@cpp_formatting+//bazel/integration:extensions.bzl%_browser_repo",
             "attributes": {
-              "version": "20260921-3d3dfec",
+              "version": "20260926-f0228af",
               "base_url": "https://github.com/geligeli/cpp_formatting/releases/download",
               "sha256": {}
             }

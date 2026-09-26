@@ -2,14 +2,15 @@
 # cpp_format.sh — lint / diff / fix C++ across a Bazel repo, or any target
 # pattern, with nothing added to your BUILD files.  The same aspect machinery
 # writes a compile_commands.json for your editor, builds the symbol index, and
-# serves the repository in the code browser.
+# serves the repository in the code browser -- with the tests' line coverage on
+# the source, if you like.
 #
 # It runs the cpp_format aspect over the matching cc_* targets (one action per
 # source file emits that file's edit records -- parallel, cached, and per file,
 # so editing one .cpp re-parses one file), then merges every record into one
 # repository-wide change with `cpp_format --aggregate`.
 #
-#   Usage: cpp_format.sh <check|diff|fix|compile_commands|index|browse> [target-pattern] [flags]
+#   Usage: cpp_format.sh <check|diff|fix|compile_commands|index|browse|coverage> [target-pattern] [flags]
 #
 #     check            exit 1 if any edit would be made (CI lint gate); writes nothing
 #     diff             print the merged, git-apply-able unified patch
@@ -27,13 +28,20 @@
 #                      opens a panel with the symbol's definition, relations
 #                      and references -- and every #include a link.  Prints
 #                      the browser binary and its command line first.
+#     coverage         `browse`, with the line coverage of the tests under the
+#                      pattern overlaid: runs `bazel coverage` on them, copies
+#                      the LCOV report next to the index (index.pb.lcov), and
+#                      serves both -- each line hit, missed or partly taken,
+#                      with its count; percentages in the file tree; u / U
+#                      step through what no test ran.
 #
 #   target-pattern defaults to //... (the whole repo). Any argument starting
 #   with `-` is passed through: to `cpp_format --aggregate` by check/diff/fix --
 #   the one worth knowing is --report-rename-conflicts, which lists every rename
 #   the run declined (a count is printed either way -- a skipped rename is the
-#   one outcome the diff cannot show) -- and to the server by browse (--port=N,
-#   --address=A, --check to print the index stats and exit). Examples:
+#   one outcome the diff cannot show) -- and to the server by browse and
+#   coverage (--port=N, --address=A, --check to print the stats and exit).
+#   Examples:
 #     cpp_format.sh fix                 # fix the entire repo
 #     cpp_format.sh diff //app/...      # preview just one package tree
 #     cpp_format.sh check //lib:core    # gate a single target (+ its sources)
@@ -42,10 +50,12 @@
 #     cpp_format.sh index //app/...     # index one package tree
 #     cpp_format.sh browse              # index the entire repo and browse it
 #     cpp_format.sh browse //app/... --port=9000
+#     cpp_format.sh coverage //app/...  # run app's tests and browse their coverage
 #
 #   Tag a target `no-cpp-format` to exclude it from formatting (it still gets
 #   compile_commands entries and is indexed); `no-cpp-index` excludes it from
-#   the index.  COMPILE_COMMANDS_OUT and INDEX_OUT override the output paths.
+#   the index.  COMPILE_COMMANDS_OUT, INDEX_OUT and COVERAGE_OUT override the
+#   output paths.
 #
 #   The index spans languages: `index` and `browse` also index the .proto
 #   files of every proto_library under the pattern, and link the C++ that
@@ -55,14 +65,27 @@
 #   CPP_FORMAT_INDEX_PROTOS=0 leaves the .proto files out.
 #
 #   A target this platform cannot build (target_compatible_with) is skipped,
-#   with a note, in every mode.  Every build is --keep_going: index, browse and
-#   compile_commands go on without the targets that fail (and say what is
-#   missing); check, diff and fix report every failure and stop, because a
-#   rename has to see every reference.
+#   with a note, in every mode.  Every build is --keep_going: index, browse,
+#   coverage and compile_commands go on without the targets that fail (and say
+#   what is missing); check, diff and fix report every failure and stop,
+#   because a rename has to see every reference.
+#
+#   How `coverage` instruments: it asks Bazel which C++ toolchain the
+#   workspace resolves.  One that ships llvm-cov and llvm-profdata (a Clang
+#   toolchain) gets Clang's source-based coverage of the main repository's
+#   sources, with atomic counters (tests run threads) and the tool paths that
+#   Bazel 8's cc_test cannot find in a rules-based toolchain on its own; any
+#   other toolchain gets Bazel's own coverage (gcov).  CPP_FORMAT_COVERAGE_AUTO=0
+#   skips that and leaves everything to the workspace's .bazelrc `coverage`
+#   lines; CPP_FORMAT_COVERAGE_FLAGS adds flags to `bazel coverage`
+#   (e.g. "--test_tag_filters=-slow --test_timeout=600").  A test that fails
+#   contributes no coverage at all: Bazel collects none for it.
 #
 #   The index is a snapshot: the server reads it once, at start.  After editing
 #   sources, stop the server and run `browse` again -- only the translation
 #   units that changed are re-parsed, and an unchanged index is not re-imported.
+#   Coverage likewise: `coverage` again re-runs only the tests whose inputs
+#   changed.
 #
 # This is the one file you keep locally (it runs outside Bazel). Point it at the
 # aspect via CPP_FORMAT_ASPECT:
@@ -113,15 +136,76 @@ merge_compile_commands() {
   mv -f "$out.tmp" "$out"
 }
 
+# `coverage`: which instrumentation the toolchain allows.  Reads the output of
+#   cquery 'filter("bin/llvm-(cov|profdata)$", deps(<current cc toolchain>))' \
+#     --output=files
+# and prints llvm-cov's and llvm-profdata's exec paths, one per line -- two of
+# one toolchain's directory -- or nothing when the toolchain has not both.
+llvm_coverage_tools() {
+  local line dir
+  local -A cov=() prof=()
+  local order=()
+  while IFS= read -r line; do
+    case "$line" in
+      bin/llvm-cov | */bin/llvm-cov) dir="${line%/llvm-cov}"; cov[$dir]="$line"; order+=("$dir") ;;
+      bin/llvm-profdata | */bin/llvm-profdata) dir="${line%/llvm-profdata}"; prof[$dir]="$line"; order+=("$dir") ;;
+    esac
+  done
+  for dir in "${order[@]}"; do
+    if [[ -n "${cov[$dir]:-}" && -n "${prof[$dir]:-}" ]]; then
+      printf '%s\n%s\n' "${cov[$dir]}" "${prof[$dir]}"
+      return 0
+    fi
+  done
+}
+
+# The major version in `llvm-profdata --version` output ("LLVM version 23.1.0").
+llvm_major_version() {
+  sed -n 's/.*LLVM version \([0-9][0-9]*\).*/\1/p' | head -1
+}
+
+# The `bazel coverage` flags, one per line.  Args: <auto 0|1> <llvm-cov>
+# <llvm-profdata> <continuous 0|1>; the tools are "" for a toolchain without
+# them.  Why each one: docs/integration.md, "Coverage".
+coverage_flags() {
+  local auto="$1" cov="$2" profdata="$3" continuous="$4" copts
+  # --build_tests_only: `//...` also holds binaries no test needs.
+  printf '%s\n' --keep_going --build_tests_only --combined_report=lcov
+  if [[ "$auto" == 0 ]]; then
+    return 0
+  fi
+  # Every main-repository target: Bazel's default takes only the packages that
+  # hold a test, and misses a library tested from another package.
+  printf '%s\n' '--instrumentation_filter=^//'
+  if [[ -z "$cov" || -z "$profdata" ]]; then
+    return 0  # not Clang: Bazel's defaults (gcov) do it
+  fi
+  # A per-file regex matches a source's label (`//pkg:f.cc`) or its path, and
+  # `^//` only main-repository labels -- no path, and no external label
+  # (`@@repo//...`).  It cannot hold an `@`: Bazel splits at the first one.
+  copts=-fprofile-instr-generate,-fcoverage-mapping,-fprofile-update=atomic
+  if [[ "$continuous" == 1 ]]; then
+    copts+=,-fprofile-continuous
+  fi
+  printf '%s\n' --experimental_use_llvm_covmap --experimental_generate_llvm_lcov \
+    --features=-llvm_coverage_map_format "--per_file_copt=^//@$copts" \
+    --linkopt=-fprofile-instr-generate \
+    "--test_env=COVERAGE_GCOV_PATH=$profdata" "--test_env=LLVM_COV=$cov"
+  if [[ "$continuous" == 1 ]]; then
+    printf '%s\n' --test_env=LLVM_PROFILE_CONTINUOUS_MODE=1
+  fi
+}
+
 # Sourced rather than run: only the functions above are wanted.  That is how
-# //bazel/testdata:compile_commands_test gets at the merge -- this script drives
-# Bazel, so nothing else in it can run inside a Bazel test.
+# //bazel/testdata:compile_commands_test gets at the merge, and
+# :coverage_flags_test at the coverage helpers -- this script drives Bazel, so
+# nothing else in it can run inside a Bazel test.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
   return 0
 fi
 
 usage() {
-  echo "usage: $0 <check|diff|fix|compile_commands|index|browse> [target-pattern] [--flag...]" >&2
+  echo "usage: $0 <check|diff|fix|compile_commands|index|browse|coverage> [target-pattern] [--flag...]" >&2
   exit 2
 }
 
@@ -130,14 +214,17 @@ case "$mode" in
   check) agg=(--check) ;;
   diff)  agg=() ;;
   fix)   agg=(--apply) ;;
-  compile_commands|index|browse) agg=() ;;
+  compile_commands|index|browse|coverage) agg=() ;;
   *) usage ;;
 esac
 shift || true
+# The modes that build the symbol index.
+indexes=0
+case "$mode" in index|browse|coverage) indexes=1 ;; esac
 
 # The remaining arguments: at most one target pattern, plus flags -- handed to
 # `cpp_format --aggregate` (--report-rename-conflicts being the useful one), or
-# by `browse` to the server (--port=N, --check, ...).  compile_commands and
+# by `browse` and `coverage` to the server (--port=N, --check, ...).  compile_commands and
 # index have nothing to hand them to and would silently drop them, so they
 # refuse.
 pattern=""
@@ -150,7 +237,7 @@ for arg in "$@"; do
           echo "$0: $mode takes no flags (got '$arg')" >&2
           usage
           ;;
-        browse) server_args+=("$arg") ;;
+        browse|coverage) server_args+=("$arg") ;;
         *) agg+=("$arg") ;;
       esac
       ;;
@@ -183,13 +270,13 @@ PROTO_INDEX_ASPECT="${CPP_PROTO_INDEX_ASPECT:-${ASPECT%:*}:proto_index.bzl%proto
 query="kind('cc_(library|binary|test) rule', $pattern)"
 case "$mode" in
   compile_commands) ;;
-  index|browse) query="$query except attr(tags, 'no-cpp-index', $pattern)" ;;
+  index|browse|coverage) query="$query except attr(tags, 'no-cpp-index', $pattern)" ;;
   *) query="$query except attr(tags, 'no-cpp-format', $pattern)" ;;
 esac
 mapfile -t targets < <("$BAZEL" query "$query" 2>/dev/null)
 # The index has a producer per language, each with its own kind of target.
 proto_targets=()
-if [[ ( "$mode" == index || "$mode" == browse ) && "${CPP_FORMAT_INDEX_PROTOS:-1}" != 0 ]]; then
+if [[ $indexes -eq 1 && "${CPP_FORMAT_INDEX_PROTOS:-1}" != 0 ]]; then
   mapfile -t proto_targets < <("$BAZEL" query \
     "kind('proto_library rule', $pattern) except attr(tags, 'no-cpp-index', $pattern)" \
     2>/dev/null)
@@ -247,6 +334,28 @@ bazel_bin="$("$BAZEL" info bazel-bin)"
 workspace="$("$BAZEL" info workspace)"
 exec_root="$("$BAZEL" info execution_root)"
 
+# Builds a binary's label and prints the path of its file.  The build log is
+# kept back unless the build fails: for a prebuilt binary that is where the
+# repository rule says what is missing (no release() tag, no asset for this
+# host, a release that predates the code browser).  The path is good until the
+# next Bazel command: each one replants the exec root's external/ links for the
+# repositories *it* needs, and rebuilds whatever its options say.
+resolve_binary() {
+  local label="$1" log path
+  log="$(mktemp)"
+  if ! "$BAZEL" build "$label" >"$log" 2>&1; then
+    cat "$log" >&2
+    rm -f "$log"
+    echo "cpp_format: cannot build $label" >&2
+    return 1
+  fi
+  rm -f "$log"
+  path="$("$BAZEL" cquery --output=files "$label" 2>/dev/null | tail -1)"
+  [[ -n "$path" ]] || { echo "cpp_format: cannot locate $label" >&2; return 1; }
+  [[ "$path" = /* ]] || path="$exec_root/$path"
+  printf '%s\n' "$path"
+}
+
 if [[ "$mode" == compile_commands ]]; then
   # Only the fragments (plus the generated headers they mention) are built:
   # `--output_groups=` without `+` replaces the default outputs, so nothing is
@@ -271,10 +380,107 @@ if [[ "$mode" == compile_commands ]]; then
   exit 0
 fi
 
+# 1b. coverage: the tests' line coverage, collected first.  Everything after
+#     it builds in the normal configuration, so the server exec'd at the end
+#     is the plain binary, found where the last Bazel command left it -- not a
+#     browser the coverage build instrumented (this repository's own, built
+#     from source), which would write default.profraw where it exits, nor a
+#     path under external/ that `bazel coverage` has since unplanted.  One
+#     switch to the coverage options and one back: each discards Bazel's
+#     analysis cache.
+if [[ "$mode" == coverage ]]; then
+  # Before any test runs: a browser of an older release cannot show it.
+  browser="$(resolve_binary "$BROWSER_LABEL")"
+  probe="$("$browser" --help 2>&1 || true)"
+  if [[ "$probe" != *"--coverage="* ]]; then
+    echo "cpp_format: this code browser cannot show coverage (it has no --coverage; a newer cpp_format.release(version = ...) has it)" >&2
+    exit 1
+  fi
+  auto="${CPP_FORMAT_COVERAGE_AUTO:-1}"
+  cov_tool="" profdata="" continuous=0
+  if [[ "$auto" == 0 ]]; then
+    echo "cpp_format: coverage: CPP_FORMAT_COVERAGE_AUTO=0, so the workspace's own \`coverage\` configuration decides" >&2
+  else
+    tool_files=""
+    for toolchain in @bazel_tools//tools/cpp:current_cc_toolchain @rules_cc//cc:current_cc_toolchain; do
+      if tool_files="$("$BAZEL" cquery "filter('bin/llvm-(cov|profdata)\$', deps($toolchain))" \
+          --output=files 2>/dev/null)"; then
+        break
+      fi
+      tool_files=""
+    done
+    mapfile -t tools < <(llvm_coverage_tools <<< "$tool_files")
+    if [[ ${#tools[@]} -eq 2 ]]; then
+      cov_tool="${tools[0]}" profdata="${tools[1]}"
+      # Continuous mode (counters kept in the mmapped profile, so that a
+      # test's child that is killed still counts) needs Clang 20.
+      output_base="$("$BAZEL" info output_base)"
+      major="$("$output_base/$profdata" --version 2>/dev/null | llvm_major_version || true)"
+      if [[ -n "$major" && "$major" -ge 20 ]]; then
+        continuous=1
+      fi
+      echo "cpp_format: coverage: Clang source-based, with ${cov_tool%/llvm-cov}${major:+ (LLVM $major)}" >&2
+    else
+      echo "cpp_format: coverage: the C++ toolchain has no llvm-cov and llvm-profdata, so Bazel's own coverage (gcov)" >&2
+    fi
+  fi
+  mapfile -t cov_flags < <(coverage_flags "$auto" "$cov_tool" "$profdata" "$continuous")
+  extra=()
+  if [[ -n "${CPP_FORMAT_COVERAGE_FLAGS:-}" ]]; then
+    read -r -a extra <<< "$CPP_FORMAT_COVERAGE_FLAGS"
+  fi
+  # The pattern, not the targets above: Bazel's own test selection leaves out
+  # `manual` and incompatible tests.
+  cov_cmd=("$BAZEL" coverage "${cov_flags[@]}" "${extra[@]}" "$pattern")
+  {
+    printf 'cpp_format: running:\n   '
+    printf ' %q' "${cov_cmd[@]}"
+    printf '\n'
+  } >&2
+  report="$("$BAZEL" info output_path)/_coverage/_coverage_report.dat"
+  marker="$(mktemp)"
+  cov_rc=0
+  "${cov_cmd[@]}" >&2 || cov_rc=$?
+  case $cov_rc in
+    0) ;;
+    3) echo "cpp_format: some tests failed.  A failing test contributes no coverage (Bazel collects none for it): what only it runs shows as missed" >&2 ;;
+    4) rm -f "$marker"; echo "cpp_format: no test targets under $pattern" >&2; exit 4 ;;
+    1)
+      # A report from this run despite a target that did not build -- not the
+      # one a previous run left.
+      if [[ -f "$report" && "$report" -nt "$marker" ]]; then
+        echo "cpp_format: some targets did not build (bazel exited 1); showing the coverage of the tests that did" >&2
+      else
+        rm -f "$marker"
+        echo "cpp_format: bazel coverage failed (exit 1) and wrote no report" >&2
+        exit 1
+      fi
+      ;;
+    *) rm -f "$marker"; echo "cpp_format: bazel coverage exited $cov_rc" >&2; exit "$cov_rc" ;;
+  esac
+  rm -f "$marker"
+  [[ -f "$report" ]] || { echo "cpp_format: bazel coverage wrote no report ($report)" >&2; exit 1; }
+  # Next to the index (index.pb.lcov: what the text index already skips, and
+  # what an `index.pb*` ignore rule covers), writable -- Bazel's outputs are
+  # not -- and with the report's time, which is what "this file changed after
+  # the coverage was collected" is measured against.
+  cov_out="${COVERAGE_OUT:-${INDEX_OUT:-$workspace/index.pb}.lcov}"
+  rm -f "$cov_out.tmp"
+  cp "$report" "$cov_out.tmp"
+  chmod 0644 "$cov_out.tmp"
+  touch -r "$report" "$cov_out.tmp"
+  mv -f "$cov_out.tmp" "$cov_out"
+  covered="$(grep -c '^SF:' "$cov_out" || true)"
+  echo "cpp_format: wrote $cov_out ($covered files)" >&2
+  if [[ "$covered" -eq 0 ]]; then
+    echo "cpp_format: warning: the report covers no file.  A test log under bazel-testlogs/ says why (e.g. \"COVERAGE_GCOV_PATH: unbound variable\" is a toolchain whose coverage tools Bazel cannot find); CPP_FORMAT_COVERAGE_AUTO=0 leaves the flags to your .bazelrc" >&2
+  fi
+fi
+
 # 2. Emit one record file per source file via the aspect: an edit-record JSON
 #    for formatting, an index unit for `index` and `browse`.  The two aspects
 #    share the machinery and differ only in what each per-file action writes.
-if [[ "$mode" == index || "$mode" == browse ]]; then
+if [[ $indexes -eq 1 ]]; then
   aspect="$INDEX_ASPECT"; group=cpp_index; manifest_suffix=cpp_index.manifest
 else
   aspect="$ASPECT"; group=cpp_format_edits; manifest_suffix=cpp_format.manifest
@@ -292,7 +498,7 @@ if [[ ${#targets[@]} -gt 0 ]]; then
     --aspects="$aspect" --output_groups="+$group" >/dev/null || build_rc=$?
 fi
 if [[ $build_rc -ne 0 ]]; then
-  if [[ "$mode" == index || "$mode" == browse ]]; then
+  if [[ $indexes -eq 1 ]]; then
     echo "cpp_format: some targets did not build (bazel exited $build_rc); indexing the rest" >&2
   else
     echo "cpp_format: the build failed (bazel exited $build_rc); nothing was formatted" >&2
@@ -301,26 +507,6 @@ if [[ $build_rc -ne 0 ]]; then
 fi
 
 # 3. Resolve the cpp_format binary and the emitted record files.
-#
-# Builds a binary's label and prints the path of its file.  The build log is
-# kept back unless the build fails: for a prebuilt binary that is where the
-# repository rule says what is missing (no release() tag, no asset for this
-# host, a release that predates the code browser).
-resolve_binary() {
-  local label="$1" log path
-  log="$(mktemp)"
-  if ! "$BAZEL" build "$label" >"$log" 2>&1; then
-    cat "$log" >&2
-    rm -f "$log"
-    echo "cpp_format: cannot build $label" >&2
-    return 1
-  fi
-  rm -f "$log"
-  path="$("$BAZEL" cquery --output=files "$label" 2>/dev/null | tail -1)"
-  [[ -n "$path" ]] || { echo "cpp_format: cannot locate $label" >&2; return 1; }
-  [[ "$path" = /* ]] || path="$exec_root/$path"
-  printf '%s\n' "$path"
-}
 bin="$(resolve_binary "$BIN_LABEL")"
 
 # The .proto files, in a build of their own: whatever goes wrong there -- a
@@ -385,6 +571,20 @@ read_manifests proto_index.manifest "${proto_targets[@]}"
 if [[ $missing -gt 0 ]]; then
   echo "cpp_format: $missing translation unit(s) are not in the index: they did not build" >&2
 fi
+# The index aspect says which files are test code (Bazel's `testonly`) in units
+# of text form, `.txtpb`, which a cpp_format from before them cannot read --
+# and one unreadable unit fails the whole merge.  Ask the binary once; an old
+# one gets an index without the test marks rather than no index.
+if grep -q '\.txtpb$' "$list"; then
+  probe_dir="$(mktemp -d)"
+  printf 'files { path: "probe" }\n' > "$probe_dir/probe.txtpb"
+  if ! "$bin" --merge-index --output="$probe_dir/probe.pb" "$probe_dir/probe.txtpb" >/dev/null 2>&1; then
+    echo "cpp_format: this cpp_format cannot read the aspect's testonly units, so the index does not say which files are test code (a newer cpp_format.release(version = ...) can)" >&2
+    grep -v '\.txtpb$' "$list" > "$probe_dir/list" || true
+    cat "$probe_dir/list" > "$list"
+  fi
+  rm -rf "$probe_dir"
+fi
 if [[ ! -s "$list" ]]; then
   echo "cpp_format: no records emitted for $pattern" >&2
   exit 0
@@ -393,7 +593,7 @@ fi
 # 4. Merge every file's records: into one repository-wide change, or into one
 #    index.
 rc=0
-if [[ "$mode" == index || "$mode" == browse ]]; then
+if [[ $indexes -eq 1 ]]; then
   out="${INDEX_OUT:-$workspace/index.pb}"
   # Merged next to the destination and moved over it only when the bytes
   # differ.  The index is a pure function of its content, and the code browser
@@ -418,22 +618,38 @@ if [[ "$mode" == index || "$mode" == browse ]]; then
   #    workspace; the index names files relative to the execution root, which
   #    is passed explicitly so that a --symlink_prefix hiding the bazel-out
   #    link does not matter.  --index imports index.pb into index.pb.sqlite
-  #    when that is missing or older.
+  #    when that is missing or older.  (Resolved again after `coverage`: see
+  #    1b.)
   browser="$(resolve_binary "$BROWSER_LABEL")"
-  cmd=("$browser" --index="$out" --root="$workspace" --exec-root="$exec_root" "${server_args[@]}")
+  cmd=("$browser" --index="$out" --root="$workspace" --exec-root="$exec_root")
+
+  # The report the coverage run above copied out of bazel-out.
+  if [[ "$mode" == coverage ]]; then
+    cmd+=(--coverage="$cov_out")
+  fi
+  cmd+=("${server_args[@]}")
   {
     echo "cpp_format: code browser binary: $browser"
     printf 'cpp_format: command line:\n   '
     printf ' %q' "${cmd[@]}"
     printf '\n'
-    echo "cpp_format: the index is a snapshot, read once when the server starts.  To update it"
-    echo "  after editing sources, stop the server (Ctrl-C) and run this again:"
-    echo "      $self browse$pattern_arg"
-    echo "  Only the translation units that changed are re-parsed.  Or leave the server"
-    echo "  up, refresh the index on the side, and restart with the command line above"
-    echo "  (it re-imports $out when that is newer than its database):"
-    echo "      $self index$pattern_arg"
+    if [[ "$mode" == coverage ]]; then
+      echo "cpp_format: the index and the coverage are snapshots, read once when the server starts."
+      echo "  To update them after editing sources, stop the server (Ctrl-C) and run this again:"
+      echo "      $self coverage$pattern_arg"
+      echo "  Only the translation units and the tests whose inputs changed run again."
+    else
+      echo "cpp_format: the index is a snapshot, read once when the server starts.  To update it"
+      echo "  after editing sources, stop the server (Ctrl-C) and run this again:"
+      echo "      $self browse$pattern_arg"
+      echo "  Only the translation units that changed are re-parsed.  Or leave the server"
+      echo "  up, refresh the index on the side, and restart with the command line above"
+      echo "  (it re-imports $out when that is newer than its database):"
+      echo "      $self index$pattern_arg"
+    fi
   } >&2
+  # exec runs no EXIT trap.
+  rm -f "$list"
   exec "${cmd[@]}"
 fi
 "$bin" --aggregate "${agg[@]}" --root="$workspace" --records-from="$list" || rc=$?

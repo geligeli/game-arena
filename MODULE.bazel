@@ -119,7 +119,7 @@ use_repo(pip, "arena_mcp_pip_deps")
 # @cpp_format_bin, so nothing in the build graph misses it.
 bazel_dep(name = "cpp_formatting", version = "0.1.0", dev_dependency = True)
 
-CPP_FORMAT_VERSION = "20260921-3d3dfec"
+CPP_FORMAT_VERSION = "20260926-f0228af"
 
 archive_override(
     module_name = "cpp_formatting",
