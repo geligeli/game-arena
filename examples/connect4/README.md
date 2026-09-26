@@ -11,8 +11,8 @@ into its referee at build time**.
 
 ```sh
 bazel test //...                                   # the rules, and the config
-bazel run //:broker_server -- --data_dir=/tmp/c4 & # a broker, this game
-bazel run //bots/reference:bot -- --name=me --opponent=builtin:greedy --games=6
+bazel run //:play                                  # a tournament and your kit
+arena_cli spar builtin:greedy                      # in it: yours vs a builtin, here
 ```
 
 ```
@@ -126,7 +126,7 @@ The kit is a workspace of its own holding only `kit_files` -- here `game/`
 (the rules, so a bot can search them) and `bots/` (the API, the harness, the
 reference strategy) -- plus the arena's kit surface vendored as `./arena`,
 `arena_cli` as a program in `.arena/bin`, `//:mcp_server`, a
-`//:broker_server` to iterate against, an `ARENA.md` and an `arena.textproto`
+`//:match_referee` for `arena_cli spar`, an `ARENA.md` and an `arena.textproto`
 generated from `problem.textproto`, and the token in `arena.env` and
 `mcp.json`. From it:
 

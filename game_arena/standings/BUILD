@@ -8,8 +8,8 @@ package(
 # How a tournament's results are rated, kept and shown.
 #
 # Its own package because two very different things link it: the coordinator,
-# which owns the authoritative standings, and the local broker a participant
-# runs in their kit, which rates whoever dials in. That second one is why
+# which owns the authoritative standings, and the referee -- a worker's, or
+# the one `arena_cli spar` runs in a kit. That second one is why
 # nothing here may reach into //game_arena/server -- a kit gets this package
 # and not the coordinator, and the dependency edge is what keeps that true.
 #
@@ -29,7 +29,7 @@ cc_library(
 # Reading candidates, for the things that only read them: the standings and
 # the leaderboard. Depending on the store that writes them would drag the
 # coordinator's submission machinery -- the patch validator, the BUILD
-# generator -- into every kit that runs a local broker.
+# generator -- into every kit.
 cc_library(
     name = "candidate_view",
     hdrs = ["candidate_view.h"],

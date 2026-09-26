@@ -5,8 +5,7 @@
 //
 // Both functions are DECLARED here and defined nowhere in this repo. A referee
 // or client binary is assembled as "a registry + an entry-point library"
-// (:referee_main, :broker_server_main, //game_arena/client:
-// random_client_main), so which games exist is decided at link time by whoever
+// (:referee_main), so which games exist is decided at link time by whoever
 // builds the binary. //game_arena/testgame is the reference
 // implementation; the game-mcts repo supplies one for its own games.
 

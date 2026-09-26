@@ -153,32 +153,6 @@ cc_library(
     ],
 )
 
-# The long-running broker, for the local development loop: point dev_bot or
-# random_client at it and iterate without an arena or a container. Not on the
-# arena's evaluation path -- that is :referee_main, one match at a time.
-# Same registry-linking contract as :referee_main.
-cc_library(
-    name = "broker_server_main",
-    srcs = ["broker_main.cc"],
-    alwayslink = 1,
-    deps = [
-        "//game_arena/common/kv_options",
-        ":broker_service",
-        ":game_registry",
-        ":matchmaker",
-        "//game_arena/standings:elo_standings",
-        "//game_arena/standings:elo_store",
-        "//game_arena/standings:game_history",
-        "//game_arena/standings:http_leaderboard",
-        "@abseil-cpp//absl/flags:flag",
-        "@abseil-cpp//absl/flags:parse",
-        "@abseil-cpp//absl/log",
-        "@abseil-cpp//absl/log:globals",
-        "@abseil-cpp//absl/log:initialize",
-        "@grpc//:grpc++",
-    ],
-)
-
 cc_test(
     name = "player_connection_test",
     srcs = ["player_connection_test.cc"],

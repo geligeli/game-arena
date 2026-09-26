@@ -11,8 +11,8 @@
 
 That call defines, in the calling package:
 
-  :match_referee, :broker_server, :random_client
-      the registry linked with the arena's entry points (only with `registry`)
+  :match_referee   the registry linked with the arena's referee (only with
+                   `registry`): one match, as a worker or `arena_cli spar` runs it
   :config_test     `bazel test` -- the config parses and is consistent
   :tournament      `bazel run //:tournament` -- the coordinator, and nothing
                    else: it builds and runs nothing. A worker is a process of
@@ -74,8 +74,6 @@ load(":sandbox_tree.bzl", "sandbox_tree")
 _TOOL = Label("//game_arena/tools:arena_tournament")
 _RUN = Label("//game_arena/rules:run_tool.sh")
 _REFEREE_MAIN = Label("//game_arena/referee:referee_main")
-_BROKER_MAIN = Label("//game_arena/referee:broker_server_main")
-_RANDOM_CLIENT_MAIN = Label("//game_arena/client:random_client_main")
 _KIT_BASE = Label("//game_arena/image:kit_base")
 _SANDBOX_BASE = Label("//game_arena/image:sandbox_base")
 _KIT_SURFACE = Label("//:kit_surface")
@@ -137,8 +135,6 @@ def arena_problem(
     if registry:
         for target, main in [
             ("match_referee", _REFEREE_MAIN),
-            ("broker_server", _BROKER_MAIN),
-            ("random_client", _RANDOM_CLIENT_MAIN),
         ]:
             cc_binary(
                 name = target,

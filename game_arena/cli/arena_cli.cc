@@ -9,6 +9,7 @@ arena_cli candidates [--order=newest]
 arena_cli leaderboard [--limit=20]
 arena_cli source <name> [path]   # pulls their directory in beside yours
 arena_cli spar <name> [--games=10]   # and plays yours against it, here
+arena_cli spar builtin:greedy        # or against a builtin
 */
 //
 // The human's counterpart to the MCP server: same RPCs, same compact output,
@@ -897,9 +898,11 @@ int CmdSpar(const Client &client, const std::string &server,
   }
   const std::string me = client.me;
   const std::string rival = args[0];
+  // A builtin plays inside the referee; there is nothing of it to pull or run.
+  const bool builtin = rival.rfind("builtin:", 0) == 0;
   // Pulled every time: a name stays, what is under it does not. Someone who
   // is only in this kit -- the starter -- is played as they are.
-  if (CmdSource(client, server, args) != 0 &&
+  if (!builtin && CmdSource(client, server, args) != 0 &&
       !std::filesystem::exists(client.DirOf(rival))) {
     return kExitError;
   }
@@ -907,12 +910,16 @@ int CmdSpar(const Client &client, const std::string &server,
   std::filesystem::current_path(client.kit_dir);
   const std::string dir = client.kit.submit_dir();
   const std::string bin = client.kit.bot_binary();
-  if (Wait(Spawn({"bazel", "build", "//" + dir + "/" + me + ":" + bin,
-                  "//" + dir + "/" + rival + ":" + bin, "//:match_referee"},
-                 "")) != 0) {
+  std::vector<std::string> build = {"bazel", "build", "//:match_referee",
+                                    "//" + dir + "/" + me + ":" + bin};
+  if (!builtin) {
+    build.push_back("//" + dir + "/" + rival + ":" + bin);
+  }
+  if (Wait(Spawn(build, "")) != 0) {
     return kExitError;
   }
 
+  const std::string opponent = builtin ? rival : "player:" + rival;
   char scratch_template[] = "/tmp/spar.XXXXXX";
   const std::string scratch = ::mkdtemp(scratch_template);
   const std::string games = std::to_string(absl::GetFlag(FLAGS_games));
@@ -922,7 +929,7 @@ int CmdSpar(const Client &client, const std::string &server,
                                       "--game=" + client.kit.game(),
                                       "--games=" + games,
                                       "--player_a=" + me,
-                                      "--player_b=player:" + rival,
+                                      "--player_b=" + opponent,
                                       "--scratch_dir=" + scratch,
                                       "--deadline_s=900"};
   referee.insert(referee.end(), client.kit.referee_flags().begin(),
@@ -941,17 +948,19 @@ int CmdSpar(const Client &client, const std::string &server,
   std::string port;
   std::ifstream(scratch + "/port") >> port;
 
-  const auto bot = [&](const std::string &name, const std::string &other) {
+  const auto bot = [&](const std::string &name, const std::string &against) {
     return Spawn({"bazel-bin/" + dir + "/" + name + "/" + bin, "--name=" + name,
-                  "--server=localhost:" + port, "--opponent=player:" + other,
+                  "--server=localhost:" + port, "--opponent=" + against,
                   "--games=" + games},
                  scratch + "/" + name + ".log");
   };
-  const pid_t mine = bot(me, rival);
-  const pid_t theirs = bot(rival, me);
+  const pid_t mine = bot(me, opponent);
+  const pid_t theirs = builtin ? -1 : bot(rival, "player:" + me);
   Wait(refereeing);
   Wait(mine);
-  Wait(theirs);
+  if (theirs > 0) {
+    Wait(theirs);
+  }
 
   // The referee's one line of output, counted from player_a's side: yours.
   std::ifstream log(scratch + "/referee.log");
@@ -982,7 +991,9 @@ void PrintUsage() {
       "  source <name> [path]           pull a participant's directory in\n"
       "                                 beside yours (or one file to stdout)\n"
       "  spar <name> [--games=n]        that, then play yours against it "
-      "here\n");
+      "here\n"
+      "  spar builtin:<name>            yours against one of the problem's "
+      "builtins\n");
 }
 
 }  // namespace

@@ -28,8 +28,7 @@ the problem's `match.referee_target`, one process per order.
 
 That split is enforced, not merely intended: `problem_server` links no game
 code, and `no_problem_code_test` inspects the linked binary's symbols to keep
-it that way. A long-running broker still exists for the local development loop
-(`//game_arena/testgame:broker_server`), but nothing rated goes through it.
+it that way.
 
 The fleet is separate and pull-based. A worker dials the arena, so adding
 capacity is starting another worker on another host — no inbound port, no
@@ -164,15 +163,8 @@ beside it, and `arena_cli spar <name>` builds both and referees them on your
 machine with the referee and the game bounds the fleet uses. That is a
 rival's code run by you, on your own machine, by your choice: it gets no
 token, and it is not something the tournament ever does.
-
-The loop below needs nothing from the arena at all: a broker you run yourself.
-
-```sh
-# Against a local broker, not the arena.
-bazel run //game_arena/testgame:broker_server -- --port=50051
-bazel run //game_arena/testgame:random_client -- \
-    --name=me-dev --server=localhost:50051 --game=nim --opponent=builtin:optimal
-```
+`arena_cli spar builtin:<name>` plays yours against one of the problem's
+builtins the same way.
 
 ## What happens on submit
 

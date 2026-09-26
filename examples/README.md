@@ -73,7 +73,7 @@ arena_problem(
 )
 ```
 
-and that defines `:match_referee`, `:broker_server`, `:random_client` (with a
+and that defines `:match_referee` (with a
 registry), `:config_test`, and three runnable targets:
 
 | | |

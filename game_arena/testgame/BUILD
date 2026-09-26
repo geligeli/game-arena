@@ -47,22 +47,6 @@ cc_binary(
     ],
 )
 
-cc_binary(
-    name = "broker_server",
-    deps = [
-        ":game_registry",
-        "//game_arena/referee:broker_server_main",
-    ],
-)
-
-cc_binary(
-    name = "random_client",
-    deps = [
-        ":game_registry",
-        "//game_arena/client:random_client_main",
-    ],
-)
-
 cc_test(
     name = "nim_test",
     srcs = ["nim_test.cc"],

@@ -57,8 +57,7 @@ cc_binary(
 )
 ```
 
-`referee:referee_main`, `referee:broker_server_main` and
-`client:random_client_main` are `alwayslink` libraries holding `main()`. Your
+`referee:referee_main` is an `alwayslink` library holding `main()`. Your
 registry needs `alwayslink = 1` too: nothing depends on it by label, it exists
 to satisfy an undefined symbol.
 
@@ -172,12 +171,10 @@ bazel test --config=asan //...   # also tsan / ubsan; see .bazelrc
 ## Try it
 
 ```sh
-# A broker with the reference game, plus a leaderboard on :8080.
-bazel run //game_arena/testgame:broker_server -- --port=50051 --http_port=8080
-
-# Two random players.
-bazel run //game_arena/testgame:random_client -- --name=alice --game=nim
-bazel run //game_arena/testgame:random_client -- --name=bob   --game=nim
+cd examples/connect4
+bazel run //:play                  # a tournament, a worker, your kit, a shell in it
+arena_cli submit --wait            # rated by the fleet
+arena_cli spar builtin:greedy      # or played here, against a builtin
 ```
 
 ## Relationship to game-mcts

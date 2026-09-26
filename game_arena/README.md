@@ -1,19 +1,26 @@
-# Tournament Broker
+# The match referee and the broker protocol
 
-A gRPC server that matches named strategies against each other (or against
-built-in strategies) and runs their games turn by turn, enforcing a per-turn
-time limit. It keeps persistent ELO ratings, stores every completed game to
-disk, and serves a leaderboard over HTTP.
+`match_referee` is a gRPC server that pairs named strategies against each
+other (or against built-in strategies) and runs their games turn by turn,
+enforcing a per-turn time limit. Bots speak the broker protocol below to it.
+It rates the games it plays and stores each one in its scratch directory; the
+coordinator keeps the ratings that count.
 
 ## Running
 
+One match, then exit: the referee a worker starts per order, and `arena_cli
+spar` starts in a kit.
+
 ```
-bazel run //game_arena/testgame:broker_server -- \
-    --grpc_port=50051 --http_port=8080 --data_dir=tournament_data \
+bazel run //game_arena/testgame:match_referee -- \
+    --port=0 --port_file=/tmp/port --game=nim --games=10 \
+    --player_a=alice --player_b=player:bob \
     --turn_timeout_ms=10000 --game_time_budget_ms=0 \
-    --rendezvous_timeout_ms=60000 --max_moves_per_game=50000 \
-    --hello_timeout_ms=30000 --keepalive_s=60 --shutdown_grace_s=5
+    --rendezvous_timeout_ms=60000 --max_moves_per_game=50000
 ```
+
+It prints one `RESULT games= wins= draws= losses= elo=` line, counted from
+`--player_a`'s side, and exits.
 
 `--turn_timeout_ms` bounds a single move. It does not bound a game: a strategy
 that thinks for just under the limit on every one of thousands of moves stays
@@ -114,18 +121,10 @@ State and action bytes are opaque to the broker: whatever the game's
 uses a short ASCII string (`"21:0"`, `"3"`) so a failing test stays legible.
 Chance nodes are resolved by the server and never require client input.
 
-`random_client.cc` is a complete reference client (plays uniformly random
-valid moves):
-
-```
-bazel run //game_arena/testgame:random_client -- \
-    --name=my-bot --game=nim --opponent=builtin:optimal
-```
-
 ## Wrapping a typed strategy
 
-The reference client handles bytes directly, which is fine for a random player
-and tedious for anything else. A problem that expects real strategies usually
+A client that handles bytes directly is fine for a random player and tedious
+for anything else. A problem that expects real strategies usually
 ships a typed wrapper: it deserializes the state into the problem's own type,
 calls a strategy, and serializes the action back — the mirror image of the
 `GameSession` adapter on the referee side.

@@ -13,9 +13,9 @@ Read `README.md` first, then `game_arena/ARENA.md` (the submission loop) and
 ```
 game_arena/proto/      wire protocols; the coordinator's contract
 game_arena/server/     coordinator: submissions, scheduling, HTTP
-game_arena/standings/  rating, history and the leaderboard page -- shared with
-                       the local broker a participant runs, so it depends on
-                       nothing in server/
+game_arena/standings/  rating, history and the leaderboard page -- the referee
+                       in a kit links part of it, so it depends on nothing in
+                       server/
 game_arena/sandbox/    exec/ (the execution engine), common/ (docker mechanics),
                        worker/ (the fleet's own policy), runner/ (dev tool)
 game_arena/referee/    match loop + broker protocol; entry points as libraries
@@ -44,8 +44,7 @@ both invisible to the symbol-level test because they were strings.
 - Rules reach the arena through `tournament_broker::GameRegistry()`, which
   `referee/game_registry.h` **declares and never defines**. A referee, broker
   or client binary is "a registry + an entry-point library"
-  (`referee:referee_main`, `referee:broker_server_main`,
-  `client:random_client_main`). Registry libraries need `alwayslink = 1`:
+  (`referee:referee_main`). Registry libraries need `alwayslink = 1`:
   nothing depends on them by label.
 - `referee/game_session.h` is the contract — serialized states and actions as
   byte strings, nothing else. An adapter for some game framework belongs with
