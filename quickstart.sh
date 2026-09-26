@@ -11,7 +11,12 @@ TARGET_DIR=${DIR}/examples/connect4
 
 cd $TARGET_DIR
 
-bazel run \
+# used by the worker server side: dependencies vendored, cache primed. Pulled
+# back, so the worker here does not run a stale tag.
+bazel run -c opt //:sandbox_image_issue -- --prime_bazelrc=prime.bazelrc --push
+docker pull registry.takumi.city/connect4-sandbox:latest
+
+bazel run -c opt \
  //:kit_image_issue -- \
  --image=${REGISTRY}:${TAG} \
  --prime_bazelrc=prime.bazelrc \

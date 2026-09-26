@@ -1,4 +1,6 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -32,11 +34,15 @@ cc_binary(
         "//game_arena/cli:arena_cli",
         # Copied into every kit as the arena it builds against.
         "//:kit_surface",
+        # The rc a sandbox reads, which priming one on this host follows.
+        "//game_arena/image:sandbox.bazelrc",
     ],
     deps = [
+        ":sandbox_priming",
         "//game_arena/common/kv_options",
         "//game_arena/common/process",
         "//game_arena/proto:kit_cc_proto",
+        "//game_arena/sandbox/common:docker",
         "//game_arena/server:client_registry",
         "//game_arena/server:problem_config",
         "@abseil-cpp//absl/flags:flag",
@@ -48,5 +54,27 @@ cc_binary(
         "@protobuf//:protobuf",
         "@rules_cc//cc/runfiles",
         "@boost.json",
+    ],
+)
+
+# The sandbox's own targets, rc and owners, for a priming build on the host.
+cc_library(
+    name = "sandbox_priming",
+    srcs = ["sandbox_priming.cc"],
+    hdrs = ["sandbox_priming.h"],
+    deps = [
+        "//game_arena/proto:problem_cc_proto",
+        "//game_arena/server:problem_config",
+        "@abseil-cpp//absl/strings",
+    ],
+)
+
+cc_test(
+    name = "sandbox_priming_test",
+    srcs = ["sandbox_priming_test.cc"],
+    data = ["//game_arena/image:sandbox.bazelrc"],
+    deps = [
+        ":sandbox_priming",
+        "@googletest//:gtest_main",
     ],
 )

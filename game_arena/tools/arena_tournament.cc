@@ -7,6 +7,7 @@ kit bazel run //:kit -- --out=/srv/kits/alice --server=arena:50051 --mint=alice
 bazel build //:kit_image
 bazel run //:kit_image_issue -- --image=registry/kit --push
 bazel build //:sandbox_image
+bazel run //:sandbox_image_issue -- --push
 bazel test //:config_test
 
 Without the macro, from a problem repo:
@@ -14,8 +15,7 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
     up --problem_config=problem.textproto
 */
 //
-// Four subcommands, one problem config. (The sandbox image is not one of them:
-// it is a build output and nothing else, the macro's sandbox_image.)
+// Five subcommands, one problem config.
 //
 //   up      the coordinator, on this checkout, and nothing else: it builds
 //           and runs nothing. A worker is a process of its own
@@ -30,6 +30,11 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 //           primed -- with no docker involved. The token and the address
 //           go in when it runs: `docker run -e ARENA_TOKEN=... -e
 //           ARENA_SERVER=...`.
+//   sandbox the same for the sandbox image, which is a build output (the
+//           macro's sandbox_image) the way the kit's is: run as the macro's
+//           sandbox_image_issue, this adds the dependencies its builds
+//           resolve, vendored, and a disk cache of building them, primed on
+//           this host, and delivers it under sandbox.image.
 //   check   the config parses and is consistent with the tree. What
 //           :config_test runs.
 //   play    up, in the background with its logs in a file, a kit minted for
@@ -80,8 +85,10 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 #include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/common/process/process.h"
 #include "game_arena/proto/kit.pb.h"
+#include "game_arena/sandbox/common/docker.h"
 #include "game_arena/server/client_registry.h"
 #include "game_arena/server/problem_config.h"
+#include "game_arena/tools/sandbox_priming.h"
 #include "rules_cc/cc/runfiles/runfiles.h"
 
 ABSL_FLAG(std::string, problem_config, "",
@@ -132,10 +139,14 @@ ABSL_FLAG(std::string, cache_limit, "5G",
 ABSL_FLAG(bool, prime_cache, true,
           "kit: build the kit once when it is written, keeping the result in "
           "a bazel disk cache inside it, so a participant's first build is "
-          "warm and a missing kit file is found here rather than by them");
+          "warm and a missing kit file is found here rather than by them. "
+          "sandbox: add a disk cache of building it to the image, which fills "
+          "a worker's empty cache volume; without it, only the vendored "
+          "dependencies");
 ABSL_FLAG(std::string, prime_bazelrc, "",
-          "kit: a bazelrc for the priming build and vendoring only, e.g. a "
-          "remote cache that executes locally. Not copied into the kit");
+          "kit, sandbox: a bazelrc for the priming build and vendoring only, "
+          "e.g. a remote cache that executes locally. Not copied into what "
+          "is made");
 ABSL_FLAG(bool, force, false, "kit: write into a non-empty --out");
 ABSL_FLAG(std::string, kit_path, "",
           "kit: where the kit will be used from, when that is not --out: the "
@@ -151,7 +162,7 @@ ABSL_FLAG(std::string, kit_base, "",
           "`bazel build //:kit_image` makes. Supplied by the arena_problem "
           "macro's kit_image_issue target; default $ARENA_KIT_BASE");
 ABSL_FLAG(std::string, regctl, "",
-          "--image: the regctl binary that adds the layers and "
+          "kit --image, sandbox: the regctl binary that adds the layers and "
           "pushes. Supplied with the base; default $ARENA_REGCTL");
 
 // play
@@ -159,8 +170,8 @@ ABSL_FLAG(std::string, shell, "",
           "play: the shell to drop into the kit. Default: $SHELL, else bash");
 
 ABSL_FLAG(bool, push, false,
-          "--image: push the result to its registry, with the logins "
-          "docker keeps. Without it the image is loaded into the local "
+          "kit --image, sandbox: push the result to its registry, with the "
+          "logins docker keeps. Without it the image is loaded into the local "
           "daemon, or left as an archive when there is none");
 ABSL_FLAG(std::string, docker, "docker",
           "up: the docker binary the sandbox image is looked for with. "
@@ -496,11 +507,13 @@ bool HaveGnuTar() {
   return true;
 }
 
-// Stacks |tar| on the built image and delivers the result as |image|:
-// pushed under --push, else loaded into the local daemon when there is one,
-// else left in |archive|. |stage| is scratch for the layout being assembled.
+// Stacks |tars|, in order, on the built image and delivers the result as
+// |image|: pushed under --push, else loaded into the local daemon when there
+// is one, else left in |archive|. |stage| is scratch for the layout being
+// assembled.
 bool DeliverImage(const ImageTools &tools, const std::filesystem::path &stage,
-                  const std::filesystem::path &tar, const std::string &image,
+                  const std::vector<std::filesystem::path> &tars,
+                  const std::string &image,
                   const std::filesystem::path &archive) {
   const auto digest = LayoutManifestDigest(tools.base);
   if (!digest) {
@@ -510,14 +523,23 @@ bool DeliverImage(const ImageTools &tools, const std::filesystem::path &stage,
   const std::string regctl = tools.regctl.string();
   const std::string layered =
       absl::StrCat("ocidir://", (stage / "layout").string(), ":image");
-  // Compressing a large layer is most of the time taken.
-  if (RunInherit(regctl,
-                 {"image", "mod",
-                  absl::StrCat("ocidir://", tools.base.string(), "@", *digest),
-                  "--create", layered, "--layer-add", "tar=" + tar.string()},
-                 stage) != 0) {
-    LOG(ERROR) << "regctl could not add to " << tools.base;
-    return false;
+  // One `image mod` per layer: --layer-add takes one. Compressing a large
+  // layer is most of the time taken.
+  std::string from =
+      absl::StrCat("ocidir://", tools.base.string(), "@", *digest);
+  for (const std::filesystem::path &tar : tars) {
+    std::vector<std::string> mod = {"image", "mod", from};
+    if (from == layered) {
+      mod.push_back("--replace");
+    } else {
+      mod.insert(mod.end(), {"--create", layered});
+    }
+    mod.insert(mod.end(), {"--layer-add", "tar=" + tar.string()});
+    if (RunInherit(regctl, mod, stage) != 0) {
+      LOG(ERROR) << "regctl could not add " << tar << " to " << tools.base;
+      return false;
+    }
+    from = layered;
   }
 
   if (absl::GetFlag(FLAGS_push)) {
@@ -562,6 +584,22 @@ struct ScopedRemove {
     std::filesystem::remove_all(path, ignored);
   }
 };
+
+// A priming build's startup options: |startup|, then --prime_bazelrc.
+std::vector<std::string> PrimeStartup(std::vector<std::string> startup) {
+  if (!absl::GetFlag(FLAGS_prime_bazelrc).empty()) {
+    startup.push_back("--bazelrc=" +
+                      Resolve(absl::GetFlag(FLAGS_prime_bazelrc)).string());
+  }
+  return startup;
+}
+
+// `bazel <startup> <command>`, in |cwd|.
+int Bazel(const std::vector<std::string> &startup,
+          std::vector<std::string> command, const std::filesystem::path &cwd) {
+  command.insert(command.begin(), startup.begin(), startup.end());
+  return RunInherit("bazel", command, cwd);
+}
 
 // ---------------------------------------------------------------------------
 // up
@@ -1217,7 +1255,7 @@ int LayerKitImage(const ImageTools &tools, std::filesystem::path kit,
     return 1;
   }
   return DeliverImage(
-             tools, stage, stage / "kit.tar", image,
+             tools, stage, {stage / "kit.tar"}, image,
              kit.parent_path() / (kit.filename().string() + ".image.tar"))
              ? 0
              : 1;
@@ -1534,16 +1572,11 @@ int RunKit(const ArenaRunfiles &runfiles) {
     // properties are part of every action's key, and a container has no
     // ~/.bazelrc -- so they are left out, and the kit's .bazelrc.local
     // carries the rest (KitBuildSettings).
-    std::vector<std::string> startup =
+    const std::vector<std::string> startup = PrimeStartup(
         layered ? std::vector<std::string>{"--nohome_rc", "--nosystem_rc"}
-                : std::vector<std::string>{};
-    if (!absl::GetFlag(FLAGS_prime_bazelrc).empty()) {
-      startup.push_back("--bazelrc=" +
-                        Resolve(absl::GetFlag(FLAGS_prime_bazelrc)).string());
-    }
+                : std::vector<std::string>{});
     const auto bazel = [&](std::vector<std::string> command) {
-      command.insert(command.begin(), startup.begin(), startup.end());
-      return RunInherit("bazel", command, out);
+      return Bazel(startup, std::move(command), out);
     };
     if (vendored) {
       std::printf("\nVendoring the kit's dependencies into %s...\n",
@@ -1582,6 +1615,203 @@ int RunKit(const ArenaRunfiles &runfiles) {
     return code;
   }
   PrintKitImageUsage(image);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// sandbox
+// ---------------------------------------------------------------------------
+
+// Where the vendored dependencies are in the image, below /.
+constexpr char kSandboxVendor[] = "opt/arena/vendor";
+
+// The sandbox image bazel built, with what a build cannot put in it added
+// outside one: the dependencies its builds resolve, vendored, and with
+// --prime_cache a disk cache of building them, which fills a worker's cache
+// volume the first time the worker mounts it empty. The priming build runs on
+// this host in a copy of the image's own tree and arena, read with the image's
+// own rc in the image's order: a cache hits only for the build that filled it.
+int RunSandbox(const ArenaRunfiles &runfiles) {
+  std::filesystem::path config_path;
+  const auto config = LoadConfig(&config_path);
+  if (!config) {
+    return 1;
+  }
+  const std::string image = config->sandbox().image();
+  if (!CanPush(image, "Set sandbox.image to REGISTRY/NAME:TAG.")) {
+    return 1;
+  }
+  const std::optional<ImageTools> tools =
+      FindImageTools("", "ARENA_SANDBOX_BASE");
+  if (!tools) {
+    LOG(ERROR) << "the sandbox image bazel built comes with the target that "
+                  "adds to it: bazel run //:sandbox_image_issue";
+    return 1;
+  }
+  const std::filesystem::path image_rc =
+      runfiles.Locate("game_arena/image/sandbox.bazelrc");
+  if (image_rc.empty() || !HaveGnuTar()) {
+    return 1;
+  }
+  if (process::ResolveExecutable("bazel").empty()) {
+    LOG(ERROR) << "priming the sandbox image needs bazel on PATH";
+    return 1;
+  }
+  const bool prime = absl::GetFlag(FLAGS_prime_cache);
+
+  // The image's tree and arena, unpacked from the layers bazel built, and the
+  // vendored dependencies, kept between issues: the next one starts from them.
+  const std::filesystem::path stage =
+      StateDir(config->problem_id()) / "images" / "sandbox";
+  const std::filesystem::path root = stage / "root";
+  const std::filesystem::path workspace =
+      root / std::string(sandbox_common::kWorkspace).substr(1);
+  const std::filesystem::path vendor = root / kSandboxVendor;
+  const std::string cache_dir =
+      std::string(sandbox_common::kDiskCacheMount).substr(1);
+  const std::filesystem::path scratch = stage / "image";
+  std::error_code ec;
+  for (const std::filesystem::path &dir :
+       {workspace, root / "opt/arena/src", root / cache_dir, scratch}) {
+    std::filesystem::remove_all(dir, ec);
+  }
+  std::filesystem::create_directories(vendor, ec);
+  std::filesystem::create_directories(scratch, ec);
+  const ScopedRemove cleanup{scratch};
+  for (const std::string_view tar : absl::StrSplit(
+           EnvOr("ARENA_SANDBOX_TARS", ""), ' ', absl::SkipWhitespace())) {
+    if (RunInherit("tar",
+                   {"--extract", "--file",
+                    std::filesystem::absolute(std::string(tar)).string(),
+                    "--directory", root.string()},
+                   root) != 0) {
+      LOG(ERROR) << "cannot unpack " << tar;
+      return 1;
+    }
+  }
+
+  // Every build a sandbox runs is the tree plus one submission, and the tree
+  // leaves them all out: the one primed with is the starter a kit hands out.
+  std::string submission;
+  const std::string &submit_dir = config->submission().files_submit_dir();
+  const std::string &starter = config->kit().starter_dir();
+  if (!submit_dir.empty() && !starter.empty()) {
+    submission = std::filesystem::path(starter).filename().string();
+    std::filesystem::create_directories(workspace / submit_dir, ec);
+    std::filesystem::copy(WorkspaceRoot() / starter,
+                          workspace / submit_dir / submission,
+                          std::filesystem::copy_options::recursive |
+                              std::filesystem::copy_options::overwrite_existing,
+                          ec);
+    if (ec) {
+      LOG(ERROR) << "cannot copy the starter " << starter << ": "
+                 << ec.message();
+      return 1;
+    }
+  }
+  // A sandbox that fetches nothing resolves the module graph from the lockfile.
+  if (!std::filesystem::exists(workspace / "MODULE.bazel.lock")) {
+    LOG(ERROR) << "no MODULE.bazel.lock in the sandbox's tree; run a build "
+                  "and commit it";
+    return 1;
+  }
+
+  const auto rc = ReadFile(image_rc);
+  WriteFile(stage / "prime.bazelrc",
+            tournament_arena::PrimeBazelrc(rc.value_or(""), root));
+  const std::vector<std::string> startup =
+      PrimeStartup({"--nohome_rc", "--nosystem_rc", "--noworkspace_rc",
+                    "--bazelrc=" + (stage / "prime.bazelrc").string()});
+  // A lockfile the sandbox would find stale fails here, not in the sandbox.
+  std::vector<std::string> flags = {"--lockfile_mode=error",
+                                    "--vendor_dir=" + vendor.string()};
+  flags.insert(flags.end(), config->build().bazel_flags().begin(),
+               config->build().bazel_flags().end());
+  const std::vector<std::string> targets =
+      tournament_arena::PrimeTargets(*config, submission);
+  const auto bazel = [&](std::string_view command,
+                         std::vector<std::string> extra) {
+    std::vector<std::string> args = {std::string(command)};
+    args.insert(args.end(), flags.begin(), flags.end());
+    args.insert(args.end(), extra.begin(), extra.end());
+    args.insert(args.end(), targets.begin(), targets.end());
+    return Bazel(startup, std::move(args), workspace);
+  };
+
+  std::printf("\nVendoring what %s builds into %s...\n",
+              absl::StrJoin(targets, " ").c_str(), vendor.c_str());
+  std::fflush(stdout);
+  if (bazel("vendor", {}) != 0) {
+    LOG(ERROR) << "cannot vendor the sandbox's dependencies";
+    return 1;
+  }
+  if (prime) {
+    std::printf(
+        "\nBuilding it once, into a fresh cache (--prime_cache=false "
+        "skips it)...\n");
+    std::fflush(stdout);
+    // Clean first: an output already up to date is never put in a cache.
+    // The remote cache a --prime_bazelrc names has to land in this one.
+    if (Bazel(startup, {"clean"}, workspace) != 0 ||
+        bazel("build", {"--disk_cache=" + (root / cache_dir).string(),
+                        "--remote_download_outputs=all"}) != 0) {
+      Bazel(startup, {"shutdown"}, workspace);
+      LOG(ERROR) << "the sandbox's build fails here";
+      return 1;
+    }
+  }
+  Bazel(startup, {"shutdown"}, workspace);
+
+  // bazel points bazel-external at its output base, which in a sandbox is
+  // /output_base; the image's copy is read-only, so it has to point there
+  // already.
+  const std::filesystem::path external = vendor / "bazel-external";
+  std::filesystem::remove(external, ec);
+  std::filesystem::create_symlink(
+      std::string(sandbox_common::kOutputBaseMount) + "/external", external,
+      ec);
+  WriteFile(scratch / "layer" / "opt/arena/primed.bazelrc",
+            absl::StrCat("# Written by sandbox_image_issue.\n"
+                         "common --vendor_dir=/",
+                         kSandboxVendor, "\n"));
+  // The vendored layer is the same bytes for the same dependencies, so a
+  // registry and a daemon that have it already skip it.
+  std::vector<std::filesystem::path> layers = {scratch / "vendor.tar"};
+  if (RunInherit("tar",
+                 {"--create", "--file", layers[0].string(), "--sort=name",
+                  "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner",
+                  "--mode=a+rX", "--directory", root.string(), kSandboxVendor,
+                  "--directory", (scratch / "layer").string(),
+                  "opt/arena/primed.bazelrc"},
+                 scratch) != 0) {
+    LOG(ERROR) << "cannot archive " << vendor;
+    return 1;
+  }
+  // The cache is the sandbox's user's: bazel adds to it and touches what hits.
+  if (prime) {
+    layers.push_back(scratch / "cache.tar");
+    std::vector<std::string> tar = {"--create", "--file", layers[1].string()};
+    const std::vector<std::string> owner =
+        tournament_arena::TarOwner(config->sandbox().run_as_user());
+    tar.insert(tar.end(), owner.begin(), owner.end());
+    tar.insert(tar.end(),
+               {"--numeric-owner", "--directory", root.string(), cache_dir});
+    if (RunInherit("tar", tar, scratch) != 0) {
+      LOG(ERROR) << "cannot archive " << root / cache_dir;
+      return 1;
+    }
+  }
+  std::printf("\nAdding to %s, as %s...\n", tools->base.filename().c_str(),
+              image.c_str());
+  std::fflush(stdout);
+  if (!DeliverImage(*tools, scratch, layers, image,
+                    stage.parent_path() / "sandbox.image.tar")) {
+    return 1;
+  }
+  std::printf(
+      "\n%s %s: the sandbox image with its dependencies vendored%s.\n",
+      absl::GetFlag(FLAGS_push) ? "Pushed" : "Made", image.c_str(),
+      prime ? ", and a cache that fills a worker's empty cache volume" : "");
   return 0;
 }
 
@@ -1706,12 +1936,20 @@ int RunPlay(const ArenaRunfiles &runfiles) {
 
   // A worker, and the image it builds and runs every submission in. The image
   // holds the problem's tree, so it is made every time -- a cached build --
-  // by running the target that carries its base, which this one must not.
+  // by running the target that carries its base, which this one must not. A
+  // build without the network needs the dependencies vendored into it; the
+  // worker's own cache volume warms up as it builds.
   const std::filesystem::path worker_bin =
       runfiles.Locate("game_arena/sandbox/worker/sandbox_worker");
+  const std::vector<std::string> make_image =
+      config->sandbox().allow_build_network()
+          ? std::vector<std::string>{"run",
+                                     EnvOr("ARENA_SANDBOX_LOAD_TARGET", "")}
+          : std::vector<std::string>{"run",
+                                     EnvOr("ARENA_SANDBOX_ISSUE_TARGET", ""),
+                                     "--", "--prime_cache=false"};
   if (worker_bin.empty() ||
-      RunInherit("bazel", {"run", EnvOr("ARENA_SANDBOX_LOAD_TARGET", "")},
-                 WorkspaceRoot()) != 0) {
+      RunInherit("bazel", make_image, WorkspaceRoot()) != 0) {
     LOG(ERROR) << "cannot make the sandbox image";
     up->Stop(std::chrono::seconds(10));
     return 1;
@@ -1826,13 +2064,14 @@ int RunPlay(const ArenaRunfiles &runfiles) {
 
 void PrintUsage() {
   std::fprintf(stderr,
-               "usage: arena_tournament <up|kit|check|play> "
+               "usage: arena_tournament <up|kit|sandbox|check|play> "
                "--problem_config=<path> [flags]\n"
-               "  up      run the coordinator\n"
-               "  play    up in the background, a kit for you, a shell in it\n"
-               "  kit     write a participant's workspace (--out, --mint, "
+               "  up       run the coordinator\n"
+               "  play     up in the background, a kit for you, a shell in it\n"
+               "  kit      write a participant's workspace (--out, --mint, "
                "--image)\n"
-               "  check   validate the config\n");
+               "  sandbox  vendor and prime the sandbox image (--push)\n"
+               "  check    validate the config\n");
 }
 
 }  // namespace
@@ -1853,6 +2092,9 @@ int main(int argc, char **argv) {
   }
   if (command == "kit") {
     return RunKit(runfiles);
+  }
+  if (command == "sandbox") {
+    return RunSandbox(runfiles);
   }
   if (command == "check") {
     return RunCheck();

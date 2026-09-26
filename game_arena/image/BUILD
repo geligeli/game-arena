@@ -3,6 +3,9 @@ load(":defs.bzl", "regctl")
 
 package(default_visibility = ["//visibility:public"])
 
+# Read by sandbox_image_issue, which primes a build the way this rc makes one.
+exports_files(["sandbox.bazelrc"])
+
 # The arena's images, as far as the arena can build them: the base
 # (docker/base/Dockerfile, pulled by digest -- see MODULE.bazel) with what is
 # true of any kit, or of any sandbox, set on it. A problem's own images are

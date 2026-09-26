@@ -15,8 +15,9 @@ bazel run //:tournament >"$LOG" 2>&1 &
 trap 'kill $(jobs -p)' EXIT
 
 # A worker, as another -- one more of these, here or on any host with docker,
-# is more capacity -- and the sandbox image it builds and runs submissions in.
-bazel run //:sandbox_image_load
+# is more capacity -- and the sandbox image it builds and runs submissions in:
+# dependencies vendored and the cache primed, through prime.bazelrc.
+bazel run //:sandbox_image_issue -- --prime_bazelrc=prime.bazelrc
 bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- \
     --server=localhost:50051 >>"$LOG" 2>&1 &
 

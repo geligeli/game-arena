@@ -196,9 +196,10 @@ message SandboxSpec {
   //
   // Off by default, and worth keeping off: a build that can fetch can also
   // exfiltrate, and a submitted genrule is arbitrary code. The cost is that the
-  // image must carry a warm bazel repository cache, because a module fetch will
-  // fail. That failure is the correct outcome -- it is a submission depending
-  // on something the problem did not offer.
+  // image must carry every dependency vendored, as `sandbox_image_issue`
+  // makes it, because a module fetch will fail. That failure is the correct
+  // outcome -- it is a submission depending on something the problem did not
+  // offer.
   bool allow_build_network = 7;
 
   // Run as this user inside the container, e.g. "1000:1000". Empty runs as

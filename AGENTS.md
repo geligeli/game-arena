@@ -156,15 +156,23 @@ one split, and it is the thing to keep:
   and the arena's own `kit_base` and `sandbox_base`. Nothing runs inside an image while it is made.
 - **What a build cannot hold is added outside one**, as more layers, by
   `arena_tournament` with the regctl rules_oci built the image with: the
-  result of running bazel -- a kit's vendored dependencies and primed cache --
-  by `kit_image_issue`, and nothing else. Do not turn it into an action: bazel
-  does not run bazel. A token goes into no image at all.
-- **The sandbox image vendors nothing.** It is the base, the arena's sources
-  (`//:sandbox_surface`, which its bazelrc overrides `game_arena` to) and the
-  problem's tree. The first build in a slot fetches what the problem resolves
-  into that slot's output-base volume, so a problem sets
-  `sandbox.allow_build_network`, and `run_as_user` to someone who is not root
-  (unpacking an archive as root restores owners, which a sandbox cannot).
+  result of running bazel -- vendored dependencies and a primed cache -- by
+  `kit_image_issue` and `sandbox_image_issue`, and nothing else. Do not turn
+  it into an action: bazel does not run bazel. A token goes into no image at
+  all.
+- **The built sandbox image vendors nothing; the issued one does.**
+  `//:sandbox_image` is the base, the arena's sources (`//:sandbox_surface`,
+  which its bazelrc overrides `game_arena` to) and the problem's tree, and a
+  build in it fetches, so it needs `sandbox.allow_build_network`.
+  `sandbox_image_issue` primes a build of the problem's own targets on the host,
+  in that image's tree read with that image's rc, and adds two layers: the
+  dependencies vendored at `/opt/arena/vendor` (byte-reproducible, read-only,
+  its `bazel-external` pointing at `/output_base/external` already) and a disk
+  cache at `/disk_cache`, owned by `run_as_user`, which docker copies into a
+  worker's cache volume the first time one mounts it empty. Its builds need no
+  network, and `play` issues it when a problem builds offline. The image's rc
+  keeps `--incompatible_strict_action_env`: without it the host's `PATH` is in
+  every primed key and nothing hits.
 - **The problem's tree is in its sandbox image**, at `/workspace`: the root
   package's files and the `tree` filegroups each other package exports, since
   a glob does not cross packages. Every job gets a fresh volume mounted there, and docker
@@ -174,7 +182,8 @@ one split, and it is the thing to keep:
   tag is what two comparable submissions have in common. `up` from a checkout
   loads it every time, a cached build, so an edit is never missed.
 - Every target that reaches the base is tagged `manual`. `//...` must not need
-  a registry, and a sandbox's `bazel vendor //...` must not carry an image.
+  a registry, and a kit's `bazel vendor //...` must not carry an image. A
+  sandbox is vendored by its build targets, never `//...`.
   `up` makes the sandbox image by *running* `//:sandbox_image_load`, for the
   same reason: carrying the base itself would put it in `//...`.
 - `tournament` is the coordinator alone: it never starts a worker, makes an

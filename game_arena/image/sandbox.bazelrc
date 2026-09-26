@@ -12,3 +12,11 @@ common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 # MODULE.bazel finds it: a path on the host that made the image means nothing
 # in here.
 common --override_module=game_arena=/opt/arena/src/game_arena
+
+# A fixed PATH in every action's key rather than the image's, so a cache primed
+# outside the image (sandbox_image_issue) hits in it.
+build --incompatible_strict_action_env
+
+# What sandbox_image_issue adds: the vendored dependencies. Absent from the
+# built image, which fetches.
+try-import /opt/arena/primed.bazelrc

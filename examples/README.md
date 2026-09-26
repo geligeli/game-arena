@@ -124,11 +124,14 @@ Three things about what you deploy that `play` did not care about:
   comparable if they were built in the same image, and a moving `:latest`
   quietly breaks that. For a graded problem it holds the hidden cases too, so
   it does not belong on a registry anyone can read.
-- **The sandbox fetches its dependencies.** Nothing is vendored into the
-  image, so both examples set `sandbox.allow_build_network` and a
-  `run_as_user` who is not root. The first submission in a slot downloads the
-  toolchain and builds everything (about three minutes here); after that a
-  submission is about twenty seconds.
+- **The sandbox fetches its dependencies, unless it is issued.**
+  `//:sandbox_image` vendors nothing, so a build in it fetches: knapsack sets
+  `sandbox.allow_build_network`, and the first submission in a slot downloads
+  the toolchain and builds everything (about three minutes here); after that a
+  submission is about twenty seconds. connect4 builds offline instead, in the
+  image `bazel run //:sandbox_image_issue` makes -- dependencies vendored, a
+  primed cache for a worker's new cache volume -- which `play`, `deploy.sh`
+  and `quickstart.sh` issue. Both set a `run_as_user` who is not root.
 - **Every package exports its files.** The image's tree is the root package's
   files plus `arena_problem(tree = [...])`: one `filegroup(name = "tree",
   srcs = glob(["**"]))` per package, because a glob does not cross packages.

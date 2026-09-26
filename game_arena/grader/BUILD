@@ -23,3 +23,10 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+# Every file of this package, for the arena a sandbox builds against: a graded
+# problem's api_dep may be :report (see //:sandbox_surface).
+filegroup(
+    name = "sandbox_surface_files",
+    srcs = glob(["**"]),
+)

@@ -60,15 +60,15 @@ build {
 }
 
 sandbox {
-  # What a worker asks its daemon for, by exactly this name: `bazel build
-  # //:sandbox_image`, this tree on the arena's base. `play` loads it under
-  # this name; deploy.sh pushes it.
+  # What a worker asks its daemon for, by exactly this name: this tree on the
+  # arena's base with every dependency it resolves vendored into it, as
+  # `bazel run //:sandbox_image_issue` makes it. `play` and deploy.sh issue
+  # it here under this name; quickstart.sh pushes it.
   image: "registry.takumi.city/connect4-sandbox:latest"
-  # Nothing is vendored into that image, so the first build in a slot fetches
-  # what MODULE.bazel resolves. A build that can fetch can also exfiltrate.
-  allow_build_network: true
-  # Not root: unpacking a fetched archive as root restores its owners, and a
-  # sandbox has dropped the capability to.
+  # So a build needs no network, and a submitted genrule cannot exfiltrate.
+  allow_build_network: false
+  # The user the image's primed cache belongs to, which fills a worker's
+  # empty cache volume.
   run_as_user: "1000:1000"
   memory_limit_mb: 4096
   # The two bots must reach their referee, and nothing else.

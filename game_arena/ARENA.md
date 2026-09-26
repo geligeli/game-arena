@@ -267,12 +267,16 @@ What is enforced above that, at submit time:
 - **A problem that lets patches touch BUILD files has given that last one up**,
   deliberately, and must rely on the sandbox instead.
 
-The image is still trusted — it carries bazel. It does not carry the
-problem's external dependencies: nothing is vendored into it, so a problem
-sets `sandbox.allow_build_network` and the first build in a slot fetches them
-into that slot's output-base volume, where they stay. That is a trade for
-simplicity -- a build that can fetch can also exfiltrate -- and a problem that
-cannot make it needs an image of its own with the dependencies in it. The C++
+The image is still trusted — it carries bazel. As bazel builds it
+(`//:sandbox_image`) it does not carry the problem's external dependencies, so
+a build in it fetches them into its slot's output-base volume -- and a build
+that can fetch can also exfiltrate. `bazel run //:sandbox_image_issue` adds
+them: the dependencies the problem's build targets resolve, vendored, and a
+disk cache of building them, primed on the host and copied into a worker's
+cache volume the first time the worker mounts it empty. Builds in the issued
+image need no network (`sandbox.allow_build_network: false`), and a new slot's
+first build is analysis and cache hits rather than a download and a compile of
+everything. `play` issues it for a problem that builds offline. The C++
 toolchain is one of those dependencies: the arena depends on hermetic-llvm, a bazel module carrying
 clang, libc++ and compiler-rt, so the compiler is pinned by
 `MODULE.bazel.lock` rather than by whatever the image's distro ships, and a
@@ -280,9 +284,12 @@ kit, a developer's checkout and the sandbox all build with the same one.
 `bazel build //:sandbox_image` makes the image:
 `//game_arena/image:sandbox_base` -- a small base with bazel and no compiler,
 and a system bazelrc that overrides `game_arena` to `/opt/arena/src` -- with
-the arena's sources there and the problem's tree at `/workspace`. The fetch
+the arena's sources there and the problem's tree at `/workspace`. A fetch
 unpacks archives, which as root restores their owners and a sandbox cannot,
-so such a problem also sets `sandbox.run_as_user`.
+and the primed cache belongs to one user, so a problem sets
+`sandbox.run_as_user`. Only an empty cache volume is filled from the image:
+`docker volume rm <prefix>-disk_cache-u<user>` gives a worker the new one, and
+a bind-mounted cache (`ARENA_BIND_DISK_CACHE`) never gets it.
 
 ## Slots, checkouts and build cost
 

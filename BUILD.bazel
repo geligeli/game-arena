@@ -26,11 +26,14 @@ filegroup(
 )
 
 # The arena a sandbox image carries, which its bazelrc overrides game_arena
-# to: what a participant's kit has, and the macro a problem's root BUILD loads.
+# to: what a participant's kit has, the macro a problem's root BUILD loads, and
+# what a graded problem's grader builds with.
 filegroup(
     name = "sandbox_surface",
     srcs = [
         ":kit_surface",
+        "//game_arena/common/process:sandbox_surface_files",
+        "//game_arena/grader:sandbox_surface_files",
         "//game_arena/rules:sandbox_surface_files",
     ],
     visibility = ["//visibility:public"],

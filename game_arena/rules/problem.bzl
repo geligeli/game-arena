@@ -50,8 +50,15 @@ That call defines, in the calling package:
                    the problem's tree (the root package's files and `tree`) at
                    /workspace. `:sandbox_image_load` and `:sandbox_image_push`
                    deliver it as sandbox.image in the config names it. Nothing
-                   is vendored into it: the first build in a slot fetches what
-                   the problem resolves, so sandbox.allow_build_network
+                   is vendored into it: a build in it fetches what the problem
+                   resolves, so it needs sandbox.allow_build_network
+  :sandbox_image_issue `bazel run //:sandbox_image_issue -- [--push]` -- what
+                   a build cannot add to that image, added outside one: the
+                   dependencies its builds resolve, vendored, and a disk cache
+                   of building them, which fills a worker's empty cache volume
+                   (`--prime_cache=false` for the dependencies alone). Its
+                   builds need no network. Delivered as sandbox.image names it;
+                   `play` issues it when the problem builds offline
   :<name>          a filegroup of every binary a tournament needs, so
                    `bazel build //:<name>` builds all of them
 
@@ -237,8 +244,8 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
     # The kit as an image, built. manual, all of it: these are the targets
     # that need a registry -- the base is pulled the first time -- and `//...`
     # must not. That covers `bazel test //...` here, and the `bazel vendor
-    # //...` a sandbox image is made with, which would otherwise carry the
-    # base's layers into every sandbox.
+    # //...` a kit image is primed with, which would otherwise carry the
+    # base's layers into every kit.
     # MODULE.bazel and what goes with it: what the tool reads from the
     # workspace root, which in an action is only what was declared.
     workspace_files = native.glob(
@@ -291,6 +298,26 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         tags = ["manual"],
         visibility = visibility,
     )
+    # What a build cannot add to :sandbox_image, added to it outside one:
+    # primed in a copy of the image's own tree and arena, its two layers.
+    sh_binary(
+        name = "sandbox_image_issue",
+        srcs = [run],
+        data = base_data + [
+            ":sandbox_image",
+            ":sandbox_arena",
+            ":sandbox_tree",
+            str(_REGCTL),
+        ],
+        args = base_args + ["sandbox", config_arg],
+        env = {
+            "ARENA_SANDBOX_BASE": "$(rootpath :sandbox_image)",
+            "ARENA_SANDBOX_TARS": "$(rootpath :sandbox_arena) $(rootpath :sandbox_tree)",
+            "ARENA_REGCTL": "$(rootpath %s)" % _REGCTL,
+        },
+        tags = ["manual"],
+        visibility = visibility,
+    )
     sh_binary(
         name = "play",
         srcs = [run],
@@ -300,6 +327,7 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         # does, rather than carrying that target's base itself.
         env = kit_env | {
             "ARENA_SANDBOX_LOAD_TARGET": "//%s:sandbox_image_load" % native.package_name(),
+            "ARENA_SANDBOX_ISSUE_TARGET": "//%s:sandbox_image_issue" % native.package_name(),
         },
         visibility = visibility,
     )

@@ -144,9 +144,10 @@ problem that needs more in its kits layers its own `oci_image` on
 The other image follows the same split. `bazel build //:sandbox_image`
 is the arena's sandbox base with the arena's sources and the problem's tree
 added to it. A worker has no repository: each job's fresh volume is filled
-from the tree in that image, and the first build in a slot fetches what the
-problem resolves. Neither is a docker build, and making either needs no
-daemon. The coordinator and the workers are not images at all: they are
+from the tree in that image. `bazel run //:sandbox_image_issue` adds what a
+build cannot, the way the kit's does: the dependencies vendored, so a build
+needs no network, and a primed cache. Neither is a docker build, and making
+either needs no daemon. The coordinator and the workers are not images at all: they are
 processes, and only what they build and run is in a container. See
 `game_arena/ARENA.md`. `scripts/new_problem.sh match|graded <dir>` scaffolds a
 new repo from an example.
