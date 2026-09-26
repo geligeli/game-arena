@@ -41,12 +41,13 @@ Create a player token:
 ```bash
 
 REGISTRY=registry.takumi.city/connect4-kit
+TAG=latest
 NAME=alice
 
 bazel run \
  //:kit_image_push -- \
  --repository=${REGISTRY} \
- --tag=latest
+ --tag=${TAG}
 
 TOKEN=$( bazel run @game_arena//game_arena/tools:arena_admin \
  -- mint \
@@ -62,8 +63,6 @@ docker run \
  -e ARENA_SERVER=localhost:50051 \
  -e ARENA_NAME=${NAME} \
  -e ARENA_TOKEN=${TOKEN} \
- ${REGISTRY}:latest
+ ${REGISTRY}:${TAG}
 
 ```
-
-
