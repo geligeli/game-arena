@@ -32,8 +32,6 @@ class GameHistory {
   // Last |limit| index lines, oldest first.
   std::vector<std::string> RecentGames(int limit) const;
 
-  const std::filesystem::path &dir() const { return dir_; }
-
  private:
   const std::filesystem::path dir_;  // <data_dir>/games
   mutable std::mutex mutex_;         // serializes index appends

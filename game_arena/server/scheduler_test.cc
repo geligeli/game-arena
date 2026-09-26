@@ -74,10 +74,10 @@ class SchedulerTest : public ::testing::Test {
                                               CandidateLimits{}, rules);
     elo_ = std::make_unique<tournament_broker::EloStore>(dir_ / "ratings.pb",
                                                          32.0);
-    config_.placement_opponents = {"builtin:random"};
-    config_.placement_games = 2;
-    config_.build_targets = {"//game_arena/candidates/{submission_id}:bot"};
-    config_.bot_target = "//game_arena/candidates/{submission_id}:bot";
+    config_.add_placement_opponents("builtin:random");
+    config_.set_placement_games(2);
+    config_.add_build_targets("//game_arena/candidates/{submission_id}:bot");
+    config_.set_bot_target("//game_arena/candidates/{submission_id}:bot");
     standings_ =
         std::make_unique<EloStandings>(elo_.get(), store_.get(), "risk2");
     scheduler_ =
@@ -88,8 +88,8 @@ class SchedulerTest : public ::testing::Test {
   // rival, which is how a candidate-vs-candidate order comes to exist.
   void LadderOnly(int games) {
     SchedulerConfig config = config_;
-    config.placement_opponents.clear();
-    config.placement_games = games;
+    config.clear_placement_opponents();
+    config.set_placement_games(games);
     scheduler_ =
         std::make_unique<Scheduler>(config, store_.get(), standings_.get());
   }
@@ -136,7 +136,6 @@ class SchedulerTest : public ::testing::Test {
     result.set_games_played(wins + losses);
     result.set_wins(wins);
     result.set_losses(losses);
-    result.set_elo(1520.0);
     return result;
   }
 
@@ -186,14 +185,14 @@ TEST_F(SchedulerTest, EveryOrderCarriesTheProblemsSandboxAndTree) {
   // what to build and what the sandbox may do travel with every order. The
   // tree does too: it is in the image.
   SchedulerConfig config;
-  config.placement_opponents = {"builtin:random"};
-  config.placement_games = 2;
-  config.bazel_flags = {"--config=native"};
-  config.turn_timeout_ms = 5000;
-  config.game_time_budget_ms = 60000;
-  config.max_moves_per_game = 100;
-  config.sandbox.set_image("registry/arena-build:1");
-  config.sandbox.set_memory_limit_mb(2048);
+  config.add_placement_opponents("builtin:random");
+  config.set_placement_games(2);
+  config.add_bazel_flags("--config=native");
+  config.set_turn_timeout_ms(5000);
+  config.set_game_time_budget_ms(60000);
+  config.set_max_moves_per_game(100);
+  config.mutable_sandbox()->set_image("registry/arena-build:1");
+  config.mutable_sandbox()->set_memory_limit_mb(2048);
   EloStandings standings(elo_.get(), store_.get(), "risk2");
   Scheduler scheduler(config, store_.get(), &standings);
 
@@ -337,8 +336,9 @@ TEST_F(SchedulerTest, BuildFailureFailsTheJobAndMarksTheCandidate) {
   scheduler_->AddWorker(worker);
 
   SchedulerConfig config;
-  config.placement_opponents = {"builtin:random", "builtin:mcts"};
-  config.placement_games = 2;
+  config.add_placement_opponents("builtin:random");
+  config.add_placement_opponents("builtin:mcts");
+  config.set_placement_games(2);
   EloStandings standings(elo_.get(), store_.get(), "risk2");
   Scheduler scheduler(config, store_.get(), &standings);
   scheduler.AddWorker(worker);

@@ -56,12 +56,7 @@ void EloStandings::Record(const std::string &candidate_id,
 }
 
 Standing EloStandings::Get(const std::string &candidate_id) const {
-  return GetIn(problem_id_, candidate_id);
-}
-
-Standing EloStandings::GetIn(const std::string &problem_id,
-                             const std::string &candidate_id) const {
-  const auto rating = elo_store_->Get(problem_id, candidate_id);
+  const auto rating = elo_store_->Get(problem_id_, candidate_id);
   Standing standing;
   standing.candidate_id = candidate_id;
   standing.score = rating.elo();
@@ -78,34 +73,11 @@ bool EloStandings::has(const std::string &candidate_id) const {
 
 std::vector<Standing> EloStandings::Rank(int limit) const {
   std::vector<Standing> rows;
-  if (candidates_ != nullptr) {
-    for (const proto::Candidate &candidate : candidates_->List()) {
-      if (candidate.status() != proto::Candidate::READY) {
-        continue;
-      }
-      rows.push_back(Get(candidate.candidate_id()));
+  for (const proto::Candidate &candidate : candidates_->List()) {
+    if (candidate.status() != proto::Candidate::READY) {
+      continue;
     }
-  } else {
-    // No submission registry: rank whoever has played. The rating store keys
-    // are "<problem>\t<player>".
-    //
-    // An empty problem_id_ means "every problem in the store". The development
-    // broker passes exactly that, because it is not serving a problem at all --
-    // it is serving whatever game its registry was linked with, and filtering
-    // on "" against keys like "connect4\tsomebody" matched nothing, so its
-    // leaderboard was always empty.
-    const tournament_broker::proto::RatingStore snapshot =
-        elo_store_->Snapshot();
-    for (const auto &[key, rating] : snapshot.ratings()) {
-      const auto tab = key.find('\t');
-      if (tab == std::string::npos) {
-        continue;
-      }
-      if (!problem_id_.empty() && key.substr(0, tab) != problem_id_) {
-        continue;
-      }
-      rows.push_back(GetIn(key.substr(0, tab), key.substr(tab + 1)));
-    }
+    rows.push_back(Get(candidate.candidate_id()));
   }
   std::sort(rows.begin(), rows.end(), [](const Standing &a, const Standing &b) {
     if (a.score != b.score) {

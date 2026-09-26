@@ -2,9 +2,9 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# What a participant's kit builds: a local broker with the problem's rules, a
-# random opponent, the session contract their own code compiles against, the
-# broker protocol, and the MCP server their agent drives. Everything these
+# What a participant's kit builds: the referee `arena_cli spar` plays with, the
+# session contract their own code compiles against, the broker protocol, and
+# the MCP server their agent drives. Everything these
 # reach has to be inside //:kit_surface, because that is all a kit gets.
 _KIT_TARGETS = [
     "//game_arena/referee:game_registry",

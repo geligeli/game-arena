@@ -19,7 +19,6 @@ service TournamentBroker {
 message Hello {
   string player_name = 1;  // identity, used for ELO and the leaderboard
   string game = 2;         // game registry key, e.g. "risk2" or "tictactoe"
-  // "any" or empty: queue for the next human opponent on the same game.
   // "builtin:<spec>": play a built-in strategy immediately (e.g.
   // "builtin:random", "builtin:mcts", "builtin:minimax").
   // "player:<name>": wait for that one named player, who must ask for this
@@ -63,7 +62,6 @@ message GameOver {
   // "normal" | "timeout" | "time_budget" | "opponent_disconnect" |
   // "illegal_action" | "max_moves"
   string reason = 2;
-  double new_elo = 3;  // this player's rating after the game
 }
 
 message ServerMessage {

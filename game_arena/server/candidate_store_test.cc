@@ -96,13 +96,12 @@ TEST_F(CandidateStoreTest, StoresSourcesAsReadableFiles) {
 
   // The patch is the canonical stored form; the extracted files are a
   // convenience derived from it.
-  const auto patch = store_->ReadPatch(candidate->candidate_id(), &error);
-  ASSERT_TRUE(patch.has_value()) << error;
-  EXPECT_NE(patch->find("+#pragma once"), std::string::npos) << *patch;
-  EXPECT_NE(patch->find("new file mode"), std::string::npos) << *patch;
+  const std::string &patch = candidate->patch();
+  EXPECT_NE(patch.find("+#pragma once"), std::string::npos) << patch;
+  EXPECT_NE(patch.find("new file mode"), std::string::npos) << patch;
   // The BUILD is generated, never submitted: a submitter who could write their
   // own could write a genrule, and a genrule runs code at build time.
-  EXPECT_NE(patch->find("/BUILD"), std::string::npos) << *patch;
+  EXPECT_NE(patch.find("/BUILD"), std::string::npos) << patch;
   EXPECT_TRUE(
       std::filesystem::exists(dir_ / candidate->candidate_id() / "patch.diff"));
 }
@@ -234,8 +233,7 @@ TEST_F(CandidateStoreTest, SynthesizedPatchAppliesWithGit) {
   std::string error;
   const auto candidate = store_->Create(request, &error);
   ASSERT_TRUE(candidate.has_value()) << error;
-  const auto patch = store_->ReadPatch(candidate->candidate_id(), &error);
-  ASSERT_TRUE(patch.has_value()) << error;
+  const std::string &patch = candidate->patch();
 
   const std::filesystem::path repo = dir_ / "fake_repo";
   std::filesystem::create_directories(repo);
@@ -246,14 +244,14 @@ TEST_F(CandidateStoreTest, SynthesizedPatchAppliesWithGit) {
   const std::filesystem::path patch_path = dir_ / "candidate.diff";
   {
     std::ofstream out(patch_path, std::ios::binary);
-    out << *patch;
+    out << patch;
   }
   ASSERT_EQ(
       std::system(("git -C " + repo.string() + " apply " + patch_path.string())
                       .c_str()),
       0)
       << "git rejected the synthesized patch:\n"
-      << *patch;
+      << patch;
 
   // Everything lands where the generated build targets say it will.
   const std::filesystem::path root =
@@ -477,7 +475,6 @@ TEST_F(CandidateStoreTest, EnforcesSizeAndCountLimits) {
   CandidateLimits limits;
   limits.max_files = 2;
   limits.max_file_bytes = 100;
-  limits.max_total_bytes = 150;
   CandidateStore store(dir_, limits, MakeRules());
   std::string error;
 

@@ -154,7 +154,6 @@ class NimGameRunTest : public ::testing::Test {
            ("nim_game_run_" + std::to_string(::getpid()));
     std::filesystem::remove_all(dir_);
     std::filesystem::create_directories(dir_);
-    elo_ = std::make_unique<EloStore>(dir_ / "ratings.pb", /*k_factor=*/32.0);
     history_ = std::make_unique<GameHistory>(dir_ / "games");
     pool_ = std::make_unique<WorkerPool>(2);
     timer_ = std::make_unique<Timer>();
@@ -185,8 +184,8 @@ class NimGameRunTest : public ::testing::Test {
     auto done = finished.get_future();
     auto run =
         GameRun::Create(GameRegistry().at("nim"), config, std::move(seats),
-                        ++counter_, elo_.get(), history_.get(), pool_.get(),
-                        timer_.get(), [&finished] { finished.set_value(); });
+                        ++counter_, history_.get(), pool_.get(), timer_.get(),
+                        [&finished] { finished.set_value(); });
     run->Start();
     ASSERT_EQ(done.wait_for(std::chrono::seconds(10)),
               std::future_status::ready)
@@ -194,7 +193,6 @@ class NimGameRunTest : public ::testing::Test {
   }
 
   std::filesystem::path dir_;
-  std::unique_ptr<EloStore> elo_;
   std::unique_ptr<GameHistory> history_;
   std::unique_ptr<WorkerPool> pool_;
   std::unique_ptr<Timer> timer_;

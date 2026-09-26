@@ -178,12 +178,12 @@ bool Scheduler::FillSideLocked(const proto::Candidate &candidate,
 
   // "{submission_id}" is expanded here, so the worker never sees a template and
   // needs no problem config of its own.
-  for (const std::string &target : config_.build_targets) {
+  for (const std::string &target : config_.build_targets()) {
     side->add_build_targets(
         ExpandSubmissionId(target, candidate.candidate_id()));
   }
   side->set_bot_target(
-      ExpandSubmissionId(config_.bot_target, candidate.candidate_id()));
+      ExpandSubmissionId(config_.bot_target(), candidate.candidate_id()));
   return true;
 }
 
@@ -197,28 +197,27 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
   order.set_game(candidate.game());
   order.set_opponent_spec(opponent);
   order.set_num_games(games);
-  order.set_build_timeout_s(config_.build_timeout_s);
-  order.set_run_timeout_s(config_.run_timeout_s);
-  order.set_referee_target(config_.referee_target);
-  order.set_match_deadline_s(config_.match_deadline_s);
-  *order.mutable_sandbox() = config_.sandbox;
-  order.mutable_bazel_flags()->Assign(config_.bazel_flags.begin(),
-                                      config_.bazel_flags.end());
-  order.set_turn_timeout_ms(config_.turn_timeout_ms);
-  order.set_game_time_budget_ms(config_.game_time_budget_ms);
-  order.set_max_moves_per_game(config_.max_moves_per_game);
-  *order.mutable_registry_options() = config_.registry_options;
+  order.set_build_timeout_s(config_.build_timeout_s());
+  order.set_run_timeout_s(config_.run_timeout_s());
+  order.set_referee_target(config_.referee_target());
+  order.set_match_deadline_s(config_.match_deadline_s());
+  *order.mutable_sandbox() = config_.sandbox();
+  *order.mutable_bazel_flags() = config_.bazel_flags();
+  order.set_turn_timeout_ms(config_.turn_timeout_ms());
+  order.set_game_time_budget_ms(config_.game_time_budget_ms());
+  order.set_max_moves_per_game(config_.max_moves_per_game());
+  *order.mutable_registry_options() = config_.registry_options();
 
   if (!FillSideLocked(candidate, order.mutable_candidate())) {
     return std::nullopt;
   }
 
-  if (config_.grade.has_value()) {
+  if (config_.has_grade()) {
     // A graded order has no opponent: running the command *is* the whole
     // evaluation.
-    *order.mutable_grade() = *config_.grade;
+    *order.mutable_grade() = config_.grade();
     order.mutable_grade()->clear_argv();
-    for (const std::string &arg : config_.grade->argv()) {
+    for (const std::string &arg : config_.grade().argv()) {
       order.mutable_grade()->add_argv(
           ExpandSubmissionId(arg, candidate.candidate_id()));
     }
@@ -306,16 +305,17 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
       AbortJobLocked(&job, "superseded by a newer submission");
     }
   }
-  if (config_.grade.has_value()) {
+  if (config_.has_grade()) {
     // A graded problem has no opponents to be placed against: the one order is
     // the whole measurement. The empty entry is that order.
-    return EnqueueLocked(candidate, {""}, config_.placement_games, client_id);
+    return EnqueueLocked(candidate, {""}, config_.placement_games(), client_id);
   }
-  std::vector<std::string> opponents = config_.placement_opponents;
+  std::vector<std::string> opponents(config_.placement_opponents().begin(),
+                                     config_.placement_opponents().end());
   const std::vector<std::string> ladder =
       LadderLocked(candidate.candidate_id());
   opponents.insert(opponents.end(), ladder.begin(), ladder.end());
-  return EnqueueLocked(candidate, opponents, config_.placement_games,
+  return EnqueueLocked(candidate, opponents, config_.placement_games(),
                        client_id);
 }
 
@@ -332,7 +332,7 @@ std::vector<std::string> Scheduler::LadderLocked(
   }
   const std::size_t n = rated.size();
   const std::size_t k =
-      std::min(n, static_cast<std::size_t>(std::max(0, config_.ladder_size)));
+      std::min(n, static_cast<std::size_t>(std::max(0, config_.ladder_size())));
   std::vector<std::string> ladder;
   for (std::size_t i = 0; i < k; ++i) {
     ladder.push_back(rated[k == 1 ? 0 : i * (n - 1) / (k - 1)]);
@@ -500,9 +500,6 @@ void Scheduler::OnResult(const std::string &worker_id,
   job.status.set_wins(job.status.wins() + result.wins());
   job.status.set_draws(job.status.draws() + result.draws());
   job.status.set_losses(job.status.losses() + result.losses());
-  if (result.elo() != 0.0) {
-    job.status.set_elo(result.elo());
-  }
 
   if (!result.build_ok()) {
     // An order builds both sides. Whose build broke decides who gets retired,

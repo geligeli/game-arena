@@ -107,7 +107,7 @@ bool PlayReactor::HandleHello() {
   }
   LOG(INFO) << "Player '" << hello.player_name() << "' joined game '"
             << hello.game() << "' (opponent: '"
-            << (hello.opponent().empty() ? "any" : hello.opponent()) << "')";
+            << hello.opponent() << "')";
 
   // The hello arrived, so the deadline no longer applies. Cancel is best
   // effort; OnHelloDeadline() re-checks for a connection and does nothing once

@@ -93,8 +93,8 @@ ABSL_FLAG(int, grpc_port, 50051, "up: the Arena and SandboxFleet port");
 ABSL_FLAG(int, http_port, 8090, "up: the leaderboard port");
 ABSL_FLAG(std::string, clients, "",
           "up/kit: the client registry. up passes it to the coordinator, "
-          "creating it empty if it does not exist; kit --mint appends to it "
-          "and tells the coordinator to reload. Default: "
+          "creating it empty if it does not exist; kit --mint appends to it, "
+          "and the coordinator reads it on the token's first use. Default: "
           "<data_dir>/clients.textproto");
 
 // kit
@@ -165,10 +165,8 @@ namespace proto = tournament_arena::proto;
 using rules_cc::cc::runfiles::Runfiles;
 
 volatile std::sig_atomic_t g_stop_requested = 0;
-volatile std::sig_atomic_t g_reload_requested = 0;
 
 extern "C" void OnStopSignal(int /*signum*/) { g_stop_requested = 1; }
-extern "C" void OnReloadSignal(int /*signum*/) { g_reload_requested = 1; }
 
 std::string EnvOr(const char *name, std::string fallback) {
   const char *value = std::getenv(name);
@@ -626,7 +624,7 @@ int RunUp(const ArenaRunfiles &runfiles) {
   }
 
   // Always gated: an empty registry is one nobody can write to, and
-  // `kit --mint` adds a client and reloads it. A coordinator with no registry
+  // `kit --mint` adds a client to it. A coordinator with no registry
   // takes any token from anyone on the port, which is never what a deployed
   // one should do, and on a dev host costs one `kit --mint` to avoid.
   std::filesystem::path clients = absl::GetFlag(FLAGS_clients).empty()
@@ -654,9 +652,6 @@ int RunUp(const ArenaRunfiles &runfiles) {
   action.sa_handler = OnStopSignal;
   ::sigaction(SIGINT, &action, nullptr);
   ::sigaction(SIGTERM, &action, nullptr);
-  struct sigaction reload {};
-  reload.sa_handler = OnReloadSignal;
-  ::sigaction(SIGHUP, &reload, nullptr);
 
   auto server = process::Child::Start(server_bin.string(), server_args,
                                       process::ChildOptions{});
@@ -664,16 +659,15 @@ int RunUp(const ArenaRunfiles &runfiles) {
     LOG(ERROR) << "cannot start " << server_bin;
     return 1;
   }
-  // For `kit --mint` to find the coordinator and have it reload the registry.
   const std::filesystem::path pid_file = data_dir / "problem_server.pid";
   if (!WaitForPort(grpc_port, std::chrono::seconds(60))) {
     LOG(ERROR) << "problem_server did not open port " << grpc_port;
     server->Stop(std::chrono::seconds(5));
     return 1;
   }
-  // Written only once the coordinator is actually serving: it is both how
-  // `kit --mint` finds it and how `play` knows the tournament in front of it
-  // is this one rather than whatever else had the port.
+  // Written only once the coordinator is actually serving: it is how `play`
+  // knows the tournament in front of it is this one rather than whatever else
+  // had the port.
   WriteFile(pid_file, absl::StrCat(server->pid(), "\n"));
 
   std::printf(
@@ -688,7 +682,7 @@ int RunUp(const ArenaRunfiles &runfiles) {
       "the\nsandbox image %s:\n"
       "  sandbox_worker --server=<this host>:%d\n"
       "\n"
-      "A participant's kit (mints a token and reloads the registry):\n"
+      "A participant's kit (mints a token into the registry):\n"
       "  bazel run //:kit -- --mint=<client_id> --server=<this host>:%d\n"
       "\n"
       "Ctrl-C stops it.\n\n",
@@ -700,10 +694,6 @@ int RunUp(const ArenaRunfiles &runfiles) {
 
   int status = 0;
   while (!g_stop_requested) {
-    if (g_reload_requested) {
-      g_reload_requested = 0;
-      server->Signal(SIGHUP);
-    }
     if (const auto code = server->Poll()) {
       LOG(ERROR) << "problem_server exited with " << *code;
       status = 1;
@@ -1148,12 +1138,10 @@ bool InstallBuiltins(const ArenaRunfiles &runfiles,
 // they do not say. Everything in it is theirs to change -- the coordinator
 // enforces the problem's policy on what actually arrives.
 std::string KitConfigText(const proto::ProblemConfig &config,
-                          const std::string &server, const std::string &http,
+                          const std::string &server,
                           const std::string &client_id) {
   proto::KitConfig kit;
-  kit.set_problem_id(config.problem_id());
   kit.set_server(server);
-  kit.set_http(http);
   kit.set_client_id(client_id);
   kit.set_submit_dir(config.submission().files_submit_dir());
   kit.set_starter_dir(config.kit().starter_dir());
@@ -1480,18 +1468,6 @@ int RunKit(const ArenaRunfiles &runfiles) {
     }
     std::printf("Minted a token for '%s' into %s.\n", client_id.c_str(),
                 clients.c_str());
-    // The coordinator `up` started on that registry, if it is running here:
-    // tell it, so the token works now rather than after a restart.
-    const auto pid_text =
-        ReadFile(clients.parent_path() / "problem_server.pid");
-    const pid_t pid = pid_text ? std::atoi(pid_text->c_str()) : 0;
-    if (pid > 0 && ::kill(pid, SIGHUP) == 0) {
-      std::printf("The coordinator (pid %d) is reloading it.\n", pid);
-    } else {
-      std::printf(
-          "A coordinator already running on that registry needs a SIGHUP to "
-          "see it.\n");
-    }
   }
 
   // The workspace skeleton, as the problem has it.
@@ -1578,7 +1554,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
   }
   WriteFile(out / "arena.env", env);
   WriteFile(out / "arena.textproto",
-            KitConfigText(*config, server, http, client_id));
+            KitConfigText(*config, server, client_id));
   if (!InstallBuiltins(runfiles, out)) {
     return 1;
   }

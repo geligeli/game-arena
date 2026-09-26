@@ -36,5 +36,3 @@ bazel run \
   --server=localhost:50051
 ```
 
-
-fa9f7c011f816e9f88fed22d8f220d4a0f6bf01bf33aab44200fa6ccad800a6b

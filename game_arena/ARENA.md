@@ -93,7 +93,7 @@ remote cache reachable from inside the image, say, in a `~/.bazelrc` its own
 `tournament` writes the effective config and all state under
 `~/.arena/<problem_id>` (`$ARENA_STATE_DIR` to move it), starts
 `problem_server` on it with a client registry (created empty: writes always
-need a token, and `kit --mint` adds one and has the coordinator reload),
+need a token, and `kit --mint` adds one, read on its first use),
 and waits for the port. That is all of it: the coordinator builds and runs
 nothing, and needs no docker. Capacity is a separate concern -- a
 `sandbox_worker` pointed at it, on any host with docker and the problem's
@@ -379,12 +379,13 @@ bazel run //game_arena/tools:arena_admin -- \
 
 It prints the token once and the registry block to paste into the file named by
 `--clients`. What is stored is the token's SHA-256, so a leaked registry file is
-not a set of usable credentials. `SIGHUP` reloads it; a reload that fails to
-parse keeps the running set rather than locking everyone out.
+not a set of usable credentials. A token the server does not know rereads it; a
+reread that fails to parse keeps the running set rather than locking everyone
+out.
 
 Without `--clients` the server logs a warning and leaves writes open, which is
 fine for a single-agent loop and nothing else; `arena_tournament up` never
-runs it that way, and `kit --mint` does the mint and the reload in one step.
+runs it that way, and `kit --mint` does the mint.
 It is a bearer token over
 whatever transport the operator configured — if that is insecure gRPC, the
 token is visible on the path, and terminating TLS in front is the operator's

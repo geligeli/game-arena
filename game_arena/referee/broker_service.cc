@@ -7,7 +7,7 @@ namespace tournament_broker {
 grpc::ServerBidiReactor<proto::ClientMessage, proto::ServerMessage>*
 BrokerService::Play(grpc::CallbackServerContext* /*context*/) {
   // Owned by gRPC from here on; it deletes itself in OnDone().
-  return new PlayReactor(matchmaker_, hello_timeout_);
+  return new PlayReactor(matchmaker_, std::chrono::seconds(30));
 }
 
 }  // namespace tournament_broker

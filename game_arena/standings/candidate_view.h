@@ -5,12 +5,8 @@
 //
 // The standings and the leaderboard show who submitted what. They do not
 // store submissions, validate patches or generate BUILD files, and depending
-// on the thing that does drags all of that behind them -- which is how a
-// participant's local broker came to link the coordinator's submission
-// machinery. This is the half they actually use.
-//
-// CandidateStore implements it. A local broker passes nullptr: it rates
-// whoever plays, and nobody there has submitted anything.
+// on the thing that does drags all of that behind them. This is the half they
+// actually use; CandidateStore implements it.
 
 #include <optional>
 #include <string>

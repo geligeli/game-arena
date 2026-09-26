@@ -2,17 +2,15 @@
 #define GAME_ARENA_GAME_ARENA_REFEREE_MATCHMAKER_H
 
 // Matchmaking and game execution. Clients join with a Hello; "builtin:<spec>"
-// opponents start immediately, "any" opponents queue FIFO per game, and
-// "player:<name>" opponents rendezvous with that one named partner. Every game
-// runs on its own thread: chance nodes are resolved server-side, built-in
-// seats move inline, remote seats get YourTurn + a wall-clock deadline and
-// lose on timeout/disconnect/illegal action.
+// opponents start immediately, and "player:<name>" opponents rendezvous with
+// that one named partner. Every game runs on its own thread: chance nodes are
+// resolved server-side, built-in seats move inline, remote seats get YourTurn +
+// a wall-clock deadline and lose on timeout/disconnect/illegal action.
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -26,7 +24,6 @@
 #include "game_arena/referee/game_run.h"
 #include "game_arena/referee/game_session.h"
 #include "game_arena/referee/worker_pool.h"
-#include "game_arena/standings/elo_store.h"
 #include "game_arena/standings/game_history.h"
 
 namespace tournament_broker {
@@ -54,23 +51,21 @@ struct MatchmakerConfig {
 
 class Matchmaker {
  public:
-  Matchmaker(MatchmakerConfig config, EloStore *elo_store,
-             GameHistory *history);
+  Matchmaker(MatchmakerConfig config, GameHistory *history);
   ~Matchmaker();
 
   Matchmaker(const Matchmaker &) = delete;
   Matchmaker &operator=(const Matchmaker &) = delete;
 
-  // Queues the client ("any"), parks it for a named partner
-  // ("player:<name>"), or starts a game against a built-in ("builtin:<spec>")
-  // immediately. Returns false with *error set when the game, builtin spec or
-  // partner name is unusable. Non-blocking: games run on their own threads.
+  // Parks the client for a named partner ("player:<name>"), or starts a game
+  // against a built-in ("builtin:<spec>") immediately. Returns false with
+  // *error set when the game, builtin spec or partner name is unusable.
+  // Non-blocking: games run on their own threads.
   bool Join(std::shared_ptr<ClientHandle> client, const proto::Hello &hello,
             std::string *error);
 
-  // Dequeues the client if still waiting (in either the "any" queue or a
-  // rendezvous slot); marks it disconnected so a running game awards the win
-  // to the opponent.
+  // Unparks the client if still waiting for its partner; marks it disconnected
+  // so a running game awards the win to the opponent.
   void Disconnect(const std::shared_ptr<ClientHandle> &client);
 
   // Refuses further joins, releases everyone still waiting, and aborts every
@@ -82,14 +77,6 @@ class Matchmaker {
   // Pair with Shutdown() to make it bounded.
   void Drain();
 
-  int running_games() const { return running_games_.load(); }
-
-  // Clients currently waiting for any opponent in |game|.
-  int queued(const std::string &game) const;
-
-  // Clients currently parked for a specific named partner in |game|.
-  int parked(const std::string &game) const;
-
  private:
   // A client waiting for one specific partner to show up.
   struct Parked {
@@ -98,7 +85,6 @@ class Matchmaker {
     std::chrono::steady_clock::time_point deadline;
   };
 
-  void MaybeStartGame(const std::string &game);
   // Hands two seats to a self-owning GameRun and counts it as running until it
   // concludes. Seat 0 moves first.
   void StartGame(const GameDescriptor &descriptor, Seat seat0, Seat seat1);
@@ -112,11 +98,9 @@ class Matchmaker {
   void ReaperLoop();
 
   const MatchmakerConfig config_;
-  EloStore *elo_store_;   // not owned
   GameHistory *history_;  // not owned
 
-  mutable std::mutex mutex_;  // guards queues_, rendezvous_*, stopping_
-  std::map<std::string, std::deque<std::weak_ptr<ClientHandle>>> queues_;
+  mutable std::mutex mutex_;  // guards rendezvous_*, stopping_
   // Key: game + '\t' + the two player names, sorted. Both sides therefore
   // derive the same key, and a key collision already implies each side named
   // the other.

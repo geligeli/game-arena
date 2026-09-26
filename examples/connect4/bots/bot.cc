@@ -31,8 +31,8 @@
 
 ABSL_FLAG(std::string, server, "localhost:50051", "host:port of the broker");
 ABSL_FLAG(std::string, name, "", "Player name (required)");
-ABSL_FLAG(std::string, opponent, "any",
-          "any | builtin:random | builtin:greedy | player:<name>");
+ABSL_FLAG(std::string, opponent, "builtin:random",
+          "builtin:random | builtin:greedy | player:<name>");
 ABSL_FLAG(int, games, 1, "Number of games to play");
 
 auto main(int argc, char **argv) -> int {

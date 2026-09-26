@@ -57,8 +57,7 @@ TEST(OutcomeForTest, AGoodMatchCarriesTheRefereesTally) {
   match->set_name("match");
   AddStep(match, "bot", 0);
   // The referee's tally, not the bot's: the bot only knows what it was told.
-  AddStep(match, "referee", 0,
-          "RESULT games=2 wins=1 draws=1 losses=0 elo=1512.5\n");
+  AddStep(match, "referee", 0, "RESULT games=2 wins=1 draws=1 losses=0\n");
 
   const OrderOutcome outcome = OutcomeFor(MatchOrder(), result);
   EXPECT_TRUE(outcome.build_ok);
@@ -67,7 +66,6 @@ TEST(OutcomeForTest, AGoodMatchCarriesTheRefereesTally) {
   EXPECT_EQ(outcome.wins, 1);
   EXPECT_EQ(outcome.draws, 1);
   EXPECT_EQ(outcome.losses, 0);
-  EXPECT_DOUBLE_EQ(outcome.elo, 1512.5);
 }
 
 TEST(OutcomeForTest, ABuildFailureIsACompletedOrderWithDiagnostics) {
@@ -165,8 +163,7 @@ TEST(OutcomeForTest, AShortMatchIsRecordedNotDiscarded) {
   sx::PhaseResult *match = result.add_phases();
   match->set_name("match");
   AddStep(match, "bot", 0);
-  AddStep(match, "referee", 0,
-          "RESULT games=1 wins=1 draws=0 losses=0 elo=1505.0\n");
+  AddStep(match, "referee", 0, "RESULT games=1 wins=1 draws=0 losses=0\n");
 
   // The games that were played are real results: an agent is better served by
   // a short match plus the reason than by nothing.

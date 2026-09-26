@@ -86,7 +86,6 @@ void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
   outcome->wins = tally.wins;
   outcome->draws = tally.draws;
   outcome->losses = tally.losses;
-  outcome->elo = tally.elo;
 }
 
 void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,

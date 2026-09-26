@@ -44,7 +44,6 @@ namespace tournament_arena {
 struct CandidateLimits {
   std::size_t max_files = 32;
   std::size_t max_file_bytes = 512 * 1024;
-  std::size_t max_total_bytes = 2 * 1024 * 1024;
   // Trimmed rather than rejected: a build log is diagnostic, and a truncated
   // one is far more useful than none.
   std::size_t max_build_error_bytes = 8 * 1024;
@@ -94,10 +93,6 @@ class CandidateStore : public CandidateView {
   std::optional<std::string> ReadSource(const std::string &candidate_id,
                                         const std::string &path,
                                         std::string *error) const;
-
-  // The stored patch, verbatim. This is what the scheduler puts on the wire.
-  std::optional<std::string> ReadPatch(const std::string &candidate_id,
-                                       std::string *error) const;
 
   // All candidates, newest first.
   std::vector<proto::Candidate> List() const override;

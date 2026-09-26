@@ -16,8 +16,7 @@ arena_cli spar builtin:greedy                      # in it: yours vs a builtin, 
 ```
 
 ```
-Game over: WIN (reason: normal), new ELO 1516.0
-...
+me 6   draws 0   builtin:greedy 2   (8 of 8 games; logs in /tmp/spar-…)
 ```
 
 The leaderboard is on <http://localhost:8080>. The reference bot beats
@@ -28,7 +27,7 @@ which is roughly where a submission should start.
 
 | | |
 | --- | --- |
-| `BUILD` | one `arena_problem()` call: the referee, the broker, the tests, the tournament, the kit |
+| `BUILD` | one `arena_problem()` call: the referee, the tests, the tournament, the kit |
 | `problem.textproto` | the whole problem: what to build, how matches run, what to rank |
 | `game/connect4.{h,cc}` | the rules, as a `tournament_broker::GameSession` |
 | `game/registry.cc` | **the seam** — defines `GameRegistry()` |
@@ -50,7 +49,7 @@ cc_binary(
 ```
 
 `arena_problem(registry = "//game:registry")` in the root `BUILD` writes that
-rule, and the broker and random client beside it. `:registry` needs
+rule. `:registry` needs
 `alwayslink = 1` — nothing depends on it by label, so the linker would
 otherwise skip the archive member that satisfies the symbol.
 
@@ -171,8 +170,8 @@ bazel run //:sandbox_image_load                      # what a worker builds and 
 bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- --server=localhost:50051
 ```
 
-Each participant is one command from that checkout, which mints a token,
-reloads the registry and writes their kit -- as a directory (`//:kit --
+Each participant is one command from that checkout, which mints a token
+into the registry and writes their kit -- as a directory (`//:kit --
 --out=DIR`), or as their own image with the address and token baked in:
 
 ```sh

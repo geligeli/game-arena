@@ -532,27 +532,6 @@ std::optional<proto::Candidate> CandidateStore::Create(
   return candidate;
 }
 
-std::optional<std::string> CandidateStore::ReadPatch(
-    const std::string &candidate_id, std::string *error) const {
-  std::lock_guard lock(mutex_);
-  const auto it = candidates_.find(candidate_id);
-  if (it == candidates_.end()) {
-    *error = "unknown candidate '" + candidate_id + "'";
-    return std::nullopt;
-  }
-  if (!it->second.patch().empty()) {
-    return std::string(it->second.patch());
-  }
-  // Manifests written before the patch was inlined keep it only on disk.
-  std::ifstream in(CandidateDir(candidate_id) / "patch.diff", std::ios::binary);
-  if (!in) {
-    *error = "candidate '" + candidate_id + "' has no stored patch";
-    return std::nullopt;
-  }
-  return std::string(std::istreambuf_iterator<char>(in),
-                     std::istreambuf_iterator<char>());
-}
-
 std::optional<proto::Candidate> CandidateStore::Get(
     const std::string &candidate_id) const {
   std::lock_guard lock(mutex_);

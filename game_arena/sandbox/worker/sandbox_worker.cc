@@ -195,7 +195,6 @@ class WorkerSession {
       result->set_wins(outcome.wins);
       result->set_draws(outcome.draws);
       result->set_losses(outcome.losses);
-      result->set_elo(outcome.elo);
       result->set_error(outcome.error);
       // Whose build broke, when one did. An order builds both sides of a
       // match, and the opponent failing to compile is not the submitter's
@@ -309,7 +308,6 @@ int main(int argc, char **argv) {
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id(worker_id);
     hello.mutable_hello()->set_slots(slots);
-    hello.mutable_hello()->set_backend(runner.engines());
     // The class of host this is. Stamped on every result too, but the
     // arena cannot schedule on what it is never told up front.
     hello.mutable_hello()->set_machine_class(machine_class);

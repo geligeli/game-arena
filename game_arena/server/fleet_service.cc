@@ -104,7 +104,6 @@ grpc::Status FleetService::Attach(
       // job is in rather than only that it is running.
       scheduler_->OnProgress(msg.progress());
     }
-    // Heartbeats need no action: the stream itself is the liveness signal.
   }
 
   // Detach before stopping the writer, so the scheduler stops handing this

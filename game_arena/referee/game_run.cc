@@ -18,11 +18,10 @@ int64_t NowUnixMs() {
 
 GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
                  std::array<Seat, 2> seats, uint64_t game_counter,
-                 EloStore *elo_store, GameHistory *history, WorkerPool *pool,
-                 Timer *timer, Task on_finished)
+                 GameHistory *history, WorkerPool *pool, Timer *timer,
+                 Task on_finished)
     : descriptor_(descriptor),
       config_(config),
-      elo_store_(elo_store),
       history_(history),
       timer_(timer),
       on_finished_(std::move(on_finished)),
@@ -33,13 +32,15 @@ GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
       session_(descriptor.new_session()),
       gen_(std::random_device{}() ^ static_cast<uint32_t>(game_counter)) {}
 
-std::shared_ptr<GameRun> GameRun::Create(
-    const GameDescriptor &descriptor, GameRunConfig config,
-    std::array<Seat, 2> seats, uint64_t game_counter, EloStore *elo_store,
-    GameHistory *history, WorkerPool *pool, Timer *timer, Task on_finished) {
+std::shared_ptr<GameRun> GameRun::Create(const GameDescriptor &descriptor,
+                                         GameRunConfig config,
+                                         std::array<Seat, 2> seats,
+                                         uint64_t game_counter,
+                                         GameHistory *history, WorkerPool *pool,
+                                         Timer *timer, Task on_finished) {
   return std::shared_ptr<GameRun>(
-      new GameRun(descriptor, config, std::move(seats), game_counter, elo_store,
-                  history, pool, timer, std::move(on_finished)));
+      new GameRun(descriptor, config, std::move(seats), game_counter, history,
+                  pool, timer, std::move(on_finished)));
 }
 
 void GameRun::Start() {
@@ -254,8 +255,6 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
                                      : proto::GameRecord::WIN);
   record_.set_winning_player(outcome.winning_player);
 
-  const auto new_elos = elo_store_->RecordResult(
-      descriptor_.name, seats_[0].display_name, seats_[1].display_name, score0);
   history_->Store(record_);
   if (config_.on_record) {
     config_.on_record(record_);
@@ -281,7 +280,6 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
       over->set_result(proto::GameOver::LOSS);
     }
     over->set_reason(reason);
-    over->set_new_elo(seat == 0 ? new_elos.first : new_elos.second);
     client.Send(msg);
     client.CloseAfterFlush();
   }

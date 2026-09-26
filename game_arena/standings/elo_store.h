@@ -37,8 +37,6 @@ class EloStore {
 
   proto::Rating Get(const std::string &game, const std::string &player) const;
 
-  proto::RatingStore Snapshot() const;
-
  private:
   static std::string Key(const std::string &game, const std::string &player);
   // Atomic rewrite (tmp + rename) of an already-serialized store. Must be

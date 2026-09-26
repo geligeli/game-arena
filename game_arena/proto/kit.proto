@@ -19,20 +19,13 @@ package tournament_arena.proto;
 // Deliberately free-standing: no import, nothing about orders, sandboxes or
 // scheduling. It is the one schema a participant is expected to read.
 message KitConfig {
-  // The problem this kit is for, for the messages arena_cli prints.
-  string problem_id = 1;
-
   // The Arena service, host:port. $ARENA_SERVER wins over this, --server over
   // both -- so the same kit runs against another coordinator with one
   // environment variable.
   string server = 2;
-  // The leaderboard's address, for the URL arena_cli prints after a submit.
-  string http = 3;
   // Who the kit's token says you are. Display only: the coordinator derives
   // the author of a submission from the token, never from what is sent.
   string client_id = 4;
-
-  reserved 5 to 8;
 
   // Where every participant's implementation lives, one directory each, named
   // after them: yours is <submit_dir>/<your name>, which is what `submit`

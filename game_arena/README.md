@@ -1,10 +1,9 @@
 # The match referee and the broker protocol
 
-`match_referee` is a gRPC server that pairs named strategies against each
-other (or against built-in strategies) and runs their games turn by turn,
-enforcing a per-turn time limit. Bots speak the broker protocol below to it.
-It rates the games it plays and stores each one in its scratch directory; the
-coordinator keeps the ratings that count.
+`match_referee` is a gRPC server that plays one match -- two named strategies,
+or one against a built-in -- turn by turn, enforcing a per-turn time limit,
+and exits. Bots speak the broker protocol below to it. It stores each game in
+its scratch directory and reports the tally; the coordinator does the rating.
 
 ## Running
 
@@ -19,7 +18,7 @@ bazel run //game_arena/testgame:match_referee -- \
     --rendezvous_timeout_ms=60000 --max_moves_per_game=50000
 ```
 
-It prints one `RESULT games= wins= draws= losses= elo=` line, counted from
+It prints one `RESULT games= wins= draws= losses=` line, counted from
 `--player_a`'s side, and exits.
 
 `--turn_timeout_ms` bounds a single move. It does not bound a game: a strategy
@@ -35,8 +34,6 @@ One bidirectional `TournamentBroker.Play` stream per game
 
 1. Client opens the stream and sends `hello` with `player_name`, `game` (a key
    into the linked registry, e.g. `"nim"`), and `opponent`:
-   - `any` (or empty): queue until another client with the same game
-     arrives;
    - `builtin:<spec>`: play a built-in immediately. Which specs exist is up to
      the registry — the reference one offers `builtin:random` and
      `builtin:optimal`; a spec may carry knobs, as in
@@ -53,13 +50,9 @@ One bidirectional `TournamentBroker.Play` stream per game
    (`reason="timeout"`, or `"time_budget"` when it was the game budget rather
    than the per-turn limit that ran out); an invalid action loses with
    `"illegal_action"`; disconnecting loses with `"opponent_disconnect"`.
-4. The game ends with `game_over` (result, reason, your new ELO), after which
+4. The game ends with `game_over` (result and reason), after which
    the server closes the stream itself. Clients may half-close at any point;
    they no longer have to in order for the server to release the call.
-
-`any` is a FIFO queue, so it cannot express "these two specific players play
-each other" — that is what `player:<name>` is for, and it is what lets a
-scheduler dispatch both sides of a match to two separate sandbox hosts.
 
 **Draining before `Finish()`.** A client whose deadline expires mid-think will
 find its next write rejected, because the server has already finished the call.
@@ -71,11 +64,8 @@ clients must too.
 ## Concurrency
 
 The broker uses gRPC's **callback (reactor) API**: each `Play` stream is a
-`PlayReactor` driven by completions on gRPC's EventEngine, so a connected or
-queued player costs memory rather than a parked OS thread. Idle client count
-does not move the server's thread count at all — 200 queued clients cost the
-same 20 threads as an empty server, where the previous synchronous handler cost
-one thread each (221 threads at 200 clients).
+`PlayReactor` driven by completions on gRPC's EventEngine, so a connected
+player costs memory rather than a parked OS thread.
 
 Per-player state lives in a `shared_ptr`-owned `PlayerConnection`, deliberately
 split from the reactor: gRPC reclaims the reactor after `OnDone()`, while a
@@ -93,27 +83,13 @@ locking, while costing no thread. CPU-heavy built-in moves (MCTS, minimax) are
 bounded by the `WorkerPool` (`--worker_threads`, default
 `hardware_concurrency()`) instead of fanning out one thread per game.
 
-Net effect: thread count is flat in load. On a 20-core host, 40 idle clients
-plus 30 concurrent search-heavy games cost the same 43 threads as an idle
-server.
+## Bounding a match
 
-## Bounding connections
-
-Three limits keep a connection from outliving its usefulness:
-
-- `--hello_timeout_ms` closes a stream that opens and then says nothing.
-  Keepalive does not cover this case — the peer is alive, just silent.
-- `--keepalive_s` pings otherwise idle connections, so a bot host that is
-  powered off mid-game is reclaimed rather than lingering until TCP gives up.
-- `--shutdown_grace_s` bounds how long a shutdown waits on stragglers.
-
-On `SIGINT`/`SIGTERM` the broker closes first: it refuses new joins, releases
-everyone queued, and aborts games in flight — each of which still writes its
-final `GameOver` and persists its record — and only then shuts the gRPC server
-down. Doing it the other way round works but is far slower, because the server
-sits on the grace period waiting for RPCs that the broker is about to end
-anyway. Shutdown with 70 connected clients and 30 running games takes ~200 ms,
-independent of `--turn_timeout_ms`.
+A stream that opens and says nothing is closed after 30 s, and a
+`player:<name>` side whose partner never arrives after
+`--rendezvous_timeout_ms`. `--deadline_s` bounds the whole match: at the
+deadline the referee aborts what is still running, prints the tally, and
+exits 3.
 
 State and action bytes are opaque to the broker: whatever the game's
 `GameSession` produces from `SerializeState()` and accepts in
@@ -173,23 +149,27 @@ bring their own BUILD. `game_arena/problems/nim.textproto` is that form; the
 [game-mcts](https://github.com/geligeli/game-mcts) repo's
 `game_mcts/arena/candidate_api` is a worked example of the structured one.
 
-Whatever the harness is, it prints one line the sandbox worker parses:
+Whatever the harness is, the referee it plays prints one line the sandbox
+worker parses, and the coordinator rates from the counts:
 
 ```
-RESULT games=5 wins=3 draws=0 losses=2 elo=1512.4
+RESULT games=5 wins=3 draws=0 losses=2
 ```
 
 ## Leaderboard and history
 
-- `http://localhost:8080/` — HTML leaderboard (auto-refresh).
-- `/api/leaderboard` — ratings as JSON.
-- `/api/games` — recent games as JSON.
+The coordinator serves them, on `tournament`'s HTTP port (8090):
 
-Ratings live in `<data_dir>/ratings.pb` (per game + player name, ELO with
-K=32 by default), each completed game is written to
-`<data_dir>/games/<game_id>.pb` as a `GameRecord` proto (initial state, every
-step with timestamps, result), and `<data_dir>/games/index.jsonl` indexes
-them.
+- `/` — HTML leaderboard (auto-refresh).
+- `/api/leaderboard` — ratings as JSON.
+- `/api/games` — recent games as JSON; empty for now, see below.
+
+Ratings live in the state directory's `ratings.pb` (per problem + candidate,
+ELO with K=32 by default), updated from each match's tally. The referee writes
+every game to `<scratch_dir>/games/<game_id>.pb` as a `GameRecord` proto
+(initial state, every step with timestamps, result), indexed by
+`<scratch_dir>/games/index.jsonl` -- and a worker's scratch directory goes with
+its sandbox, so no game reaches the coordinator yet.
 
 ## Adding a game
 

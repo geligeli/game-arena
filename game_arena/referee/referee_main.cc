@@ -19,12 +19,9 @@ bazel run //game_arena/testgame:match_referee -- \
 //
 // Output contract, last line, parsed by sandbox/worker/match_tally.h:
 //
-//   RESULT games=10 wins=6 draws=1 losses=3 elo=1523.4
+//   RESULT games=10 wins=6 draws=1 losses=3
 //
-// counted from --player_a's side. The elo figure is this match's own, from a
-// fresh 1500: the coordinator keeps the authoritative rating and recomputes it
-// from the w/d/l above. Reporting it anyway keeps the line identical to the one
-// the candidate harness already prints.
+// counted from --player_a's side. The coordinator rates from these counts.
 
 #include <grpcpp/grpcpp.h>
 
@@ -49,7 +46,6 @@ bazel run //game_arena/testgame:match_referee -- \
 #include "game_arena/referee/broker_service.h"
 #include "game_arena/referee/game_registry.h"
 #include "game_arena/referee/matchmaker.h"
-#include "game_arena/standings/elo_store.h"
 #include "game_arena/standings/game_history.h"
 
 ABSL_FLAG(int, port, 50051, "Port the two sides dial");
@@ -61,9 +57,7 @@ ABSL_FLAG(std::string, player_b, "",
           "The opponent, for the log only: a builtin plays because the bot "
           "named it, and a rival plays because both bots rendezvous");
 ABSL_FLAG(std::string, scratch_dir, "",
-          "Where the per-match ELO and game records are written. Both are "
-          "thrown away with the container; the coordinator holds the real "
-          "ratings. Empty: a temp directory");
+          "Where the game records are written. Empty: a temp directory");
 ABSL_FLAG(int, turn_timeout_ms, 10000,
           "Per-turn wall-clock limit; exceeding it loses the game");
 ABSL_FLAG(int, game_time_budget_ms, 0,
@@ -189,11 +183,6 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Both are per-match and discarded: the coordinator owns the real standings.
-  // They exist because a game insists on somewhere to record itself, and a
-  // referee that dropped its records on the floor would be harder to debug.
-  tournament_broker::EloStore elo_store(scratch / "ratings.pb");
-  elo_store.Load();
   tournament_broker::GameHistory history(scratch / "games");
 
   Tally tally(player_a, target_games);
@@ -210,7 +199,7 @@ int main(int argc, char **argv) {
   config.on_record = [&tally](const tournament_broker::proto::GameRecord &r) {
     tally.Observe(r);
   };
-  tournament_broker::Matchmaker matchmaker(config, &elo_store, &history);
+  tournament_broker::Matchmaker matchmaker(config, &history);
   tournament_broker::BrokerService service(&matchmaker);
 
   grpc::ServerBuilder builder;
@@ -274,9 +263,8 @@ int main(int argc, char **argv) {
   // Last line, and the whole point of the process. Printed even on a partial
   // match: the games that were played are real results, and the worker can
   // tell the match was short because games < the number it asked for.
-  std::printf("RESULT games=%d wins=%d draws=%d losses=%d elo=%.1f\n",
-              counts.games, counts.wins, counts.draws, counts.losses,
-              elo_store.Get(game, player_a).elo());
+  std::printf("RESULT games=%d wins=%d draws=%d losses=%d\n", counts.games,
+              counts.wins, counts.draws, counts.losses);
   std::fflush(stdout);
   return complete ? 0 : 3;
 }

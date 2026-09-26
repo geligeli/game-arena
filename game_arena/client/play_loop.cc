@@ -45,8 +45,7 @@ bool PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
       LOG(INFO) << "Game over: "
                 << tournament_broker::proto::GameOver::Result_Name(
                        over.result())
-                << " (reason: " << over.reason() << "), new ELO "
-                << over.new_elo();
+                << " (reason: " << over.reason() << ")";
       break;  // One game per stream; half-close so the server handler exits.
     }
   }

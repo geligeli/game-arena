@@ -29,10 +29,8 @@ std::string RendezvousKey(const std::string &game, const std::string &a,
 
 }  // namespace
 
-Matchmaker::Matchmaker(MatchmakerConfig config, EloStore *elo_store,
-                       GameHistory *history)
+Matchmaker::Matchmaker(MatchmakerConfig config, GameHistory *history)
     : config_(config),
-      elo_store_(elo_store),
       history_(history),
       pool_(config.worker_threads > 0
                 ? config.worker_threads
@@ -84,15 +82,6 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
   }
   const GameDescriptor &descriptor = it->second;
 
-  if (hello.opponent().empty() || hello.opponent() == "any") {
-    {
-      std::lock_guard lock(mutex_);
-      queues_[hello.game()].push_back(client);
-    }
-    MaybeStartGame(hello.game());
-    return true;
-  }
-
   if (hello.opponent().substr(0, kBuiltinPrefix.size()) == kBuiltinPrefix) {
     const std::string_view spec =
         std::string_view(hello.opponent()).substr(kBuiltinPrefix.size());
@@ -124,7 +113,7 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
   }
 
   *error = "unknown opponent '" + hello.opponent() +
-           "' (expected: any | builtin:<spec> | player:<name>)";
+           "' (expected: builtin:<spec> | player:<name>)";
   return false;
 }
 
@@ -197,7 +186,7 @@ void Matchmaker::StartGame(const GameDescriptor &descriptor, Seat seat0,
   auto run =
       GameRun::Create(descriptor, run_config,
                       std::array<Seat, 2>{std::move(seat0), std::move(seat1)},
-                      id, elo_store_, history_, &pool_, &timer_, [this, id] {
+                      id, history_, &pool_, &timer_, [this, id] {
                         {
                           std::lock_guard lock(mutex_);
                           running_.erase(id);
@@ -228,14 +217,6 @@ void Matchmaker::Shutdown() {
     // Release everyone still waiting for an opponent: nothing will ever pair
     // them now, and their streams would otherwise stay open until the client
     // gave up.
-    for (auto &[game, queue] : queues_) {
-      for (const std::weak_ptr<ClientHandle> &weak : queue) {
-        if (auto client = weak.lock()) {
-          waiting.push_back(std::move(client));
-        }
-      }
-    }
-    queues_.clear();
     for (auto &[key, parked] : rendezvous_) {
       waiting.push_back(parked.client);
     }
@@ -305,86 +286,9 @@ void Matchmaker::ReaperLoop() {
 void Matchmaker::Disconnect(const std::shared_ptr<ClientHandle> &client) {
   client->MarkDisconnected();
   std::lock_guard lock(mutex_);
-  for (auto &[game, queue] : queues_) {
-    std::erase_if(queue, [&](const std::weak_ptr<ClientHandle> &weak) {
-      const auto stored = weak.lock();
-      return !stored || stored == client;
-    });
-  }
   std::erase_if(rendezvous_, [&](const auto &entry) {
     return entry.second.client == client;
   });
-}
-
-int Matchmaker::queued(const std::string &game) const {
-  std::lock_guard lock(mutex_);
-  const auto it = queues_.find(game);
-  return it == queues_.end() ? 0 : static_cast<int>(it->second.size());
-}
-
-int Matchmaker::parked(const std::string &game) const {
-  std::lock_guard lock(mutex_);
-  return static_cast<int>(std::count_if(
-      rendezvous_.begin(), rendezvous_.end(),
-      [&](const auto &entry) { return entry.second.game == game; }));
-}
-
-void Matchmaker::MaybeStartGame(const std::string &game) {
-  std::array<std::shared_ptr<ClientHandle>, 2> pair;
-  {
-    std::lock_guard lock(mutex_);
-    auto &queue = queues_[game];
-
-    // Compact the queue, dropping entries whose client is gone, in FIFO order.
-    std::vector<std::shared_ptr<ClientHandle>> live;
-    live.reserve(queue.size());
-    for (const std::weak_ptr<ClientHandle> &weak : queue) {
-      auto client = weak.lock();
-      if (client && !client->disconnected()) {
-        live.push_back(std::move(client));
-      }
-    }
-
-    // Earliest pair of *distinct* players. A player must not play themselves,
-    // but same-named entries at the head must not block a valid pairing
-    // further back: [alice, alice, bob] has to match alice with bob.
-    size_t first = 0;
-    size_t second = 0;
-    bool found = false;
-    for (size_t i = 0; i < live.size() && !found; ++i) {
-      for (size_t j = i + 1; j < live.size(); ++j) {
-        if (live[i]->name() != live[j]->name()) {
-          first = i;
-          second = j;
-          found = true;
-          break;
-        }
-      }
-    }
-
-    queue.clear();
-    if (!found) {
-      for (const auto &client : live) {
-        queue.push_back(client);
-      }
-      return;
-    }
-    for (size_t i = 0; i < live.size(); ++i) {
-      if (i != first && i != second) {
-        queue.push_back(live[i]);
-      }
-    }
-    pair[0] = std::move(live[first]);
-    pair[1] = std::move(live[second]);
-  }
-  const GameDescriptor &descriptor = GameRegistry().at(game);
-  Seat a{.display_name = pair[0]->name(),
-         .client = std::move(pair[0]),
-         .builtin = nullptr};
-  Seat b{.display_name = pair[1]->name(),
-         .client = std::move(pair[1]),
-         .builtin = nullptr};
-  StartGame(descriptor, std::move(a), std::move(b));
 }
 
 void Matchmaker::Drain() {

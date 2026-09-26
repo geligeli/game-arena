@@ -57,11 +57,11 @@ class ArenaIntegrationTest : public ::testing::Test {
     elo_ = std::make_unique<tournament_broker::EloStore>(dir_ / "ratings.pb",
                                                          32.0);
     SchedulerConfig config;
-    config.placement_opponents = {"builtin:random"};
-    config.placement_games = 2;
-    config.referee_target = "//game_arena/referee:match_referee";
-    config.build_targets = {"//game_arena/candidates/{submission_id}:bot"};
-    config.bot_target = "//game_arena/candidates/{submission_id}:bot";
+    config.add_placement_opponents("builtin:random");
+    config.set_placement_games(2);
+    config.set_referee_target("//game_arena/referee:match_referee");
+    config.add_build_targets("//game_arena/candidates/{submission_id}:bot");
+    config.set_bot_target("//game_arena/candidates/{submission_id}:bot");
     standings_ =
         std::make_unique<EloStandings>(elo_.get(), store_.get(), "risk2");
     scheduler_ =
@@ -130,13 +130,12 @@ class ArenaIntegrationTest : public ::testing::Test {
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id(id);
     hello.mutable_hello()->set_slots(slots);
-    hello.mutable_hello()->set_backend("stub");
     EXPECT_TRUE(stream->Write(hello));
     return stream;
   }
 
   static void ReportSuccess(Stream *stream, const std::string &order_id,
-                            int wins, int losses, double elo) {
+                            int wins, int losses) {
     proto::WorkerMessage msg;
     auto *result = msg.mutable_result();
     result->set_order_id(order_id);
@@ -144,7 +143,6 @@ class ArenaIntegrationTest : public ::testing::Test {
     result->set_games_played(wins + losses);
     result->set_wins(wins);
     result->set_losses(losses);
-    result->set_elo(elo);
     EXPECT_TRUE(stream->Write(msg));
   }
 
@@ -213,8 +211,7 @@ TEST_F(ArenaIntegrationTest, SubmitReachesAWorkerAndComesBackRated) {
   EXPECT_EQ(order.candidate().bot_target(),
             "//game_arena/candidates/" + submitted.candidate_id() + ":bot");
 
-  ReportSuccess(worker.get(), order.order_id(), /*wins=*/2, /*losses=*/0,
-                /*elo=*/1532.0);
+  ReportSuccess(worker.get(), order.order_id(), /*wins=*/2, /*losses=*/0);
 
   const proto::Job job = WaitForJob(submitted.job_id(), proto::Job::DONE);
   EXPECT_EQ(job.wins(), 2);
@@ -343,7 +340,6 @@ TEST_F(ArenaIntegrationTest, LeaderboardRanksReadyCandidatesByElo) {
 
   grpc::ClientContext context;
   proto::LeaderboardRequest request;
-  request.set_game("risk2");
   proto::LeaderboardResponse response;
   ASSERT_TRUE(arena_stub_->Leaderboard(&context, request, &response).ok());
   ASSERT_EQ(response.rows_size(), 2);
@@ -400,7 +396,7 @@ TEST_F(ArenaIntegrationTest, OrderIsRequeuedWhenAWorkerDisconnects) {
   EXPECT_EQ(message.order().candidate().candidate_id(),
             submitted.candidate_id());
 
-  ReportSuccess(replacement.get(), message.order().order_id(), 1, 1, 1500.0);
+  ReportSuccess(replacement.get(), message.order().order_id(), 1, 1);
   WaitForJob(submitted.job_id(), proto::Job::DONE);
   second_context.TryCancel();
 }
@@ -482,7 +478,7 @@ TEST_F(AuthenticatedArenaTest, RefusesWritesWithoutAUsableToken) {
 
 // The leaderboard is public and readable source is the point of the arena.
 TEST_F(AuthenticatedArenaTest, ATokenMintedSinceStartupIsReadOnFirstUse) {
-  // Minted into the file with no SIGHUP: an unknown token rereads it.
+  // Minted into the file after startup: an unknown token rereads it.
   std::string error;
   ASSERT_TRUE(AppendClientToRegistry(
       dir_ / "clients.textproto",

@@ -281,7 +281,6 @@ message Job {
 }
 
 message LeaderboardRequest {
-  string game = 1;
   int32 limit = 2;
 }
 
@@ -300,9 +299,7 @@ message WorkerHello {
   // Stable across reconnects, so a returning worker is recognised rather than
   // counted twice.
   string worker_id = 1;
-  int32 slots = 2;            // orders it will run concurrently
-  string backend = 3;         // "local" | "docker"
-  repeated string games = 4;  // empty: any game the server knows
+  int32 slots = 2;  // orders it will run concurrently
   // What kind of host this is, e.g. "bench-c7i". A graded problem can require
   // one (GradeSpec.require_machine_class): a timing from a laptop and one from
   // a server are not the same measurement, and a board that mixes them ranks
@@ -372,15 +369,6 @@ message WorkOrder {
   // what was played. Bounded below run_timeout_s, so a stuck match produces a
   // partial tally rather than an order-level failure.
   int32 match_deadline_s = 17;
-
-  // Was require_container: whether this order refused a non-container
-  // backend. Every order does now, so there is nothing to carry: a worker
-  // runs an order in a container or hands it back (sandbox/worker/
-  // order_runner.cc). An older worker still reading this field sees it unset
-  // and refuses nothing it would have run anyway -- it has no unsandboxed
-  // backend to fall onto either.
-  reserved 19;
-  reserved "require_container";
 
   // Everything else about the sandbox this order runs in.
   SandboxOrder sandbox = 21;
@@ -455,11 +443,6 @@ message SandboxOrder {
   uint32 pids_limit = 4;
   string run_as_user = 5;
 
-  // Was host_overlay. The workspace is copied into a volume through the
-  // daemon now; nothing is mounted and no sandbox needs a capability. A
-  // worker from before this ignores the absence and assembles an overlay.
-  reserved 6;
-  reserved "host_overlay";
   // Let the build reach the network. A build that can fetch can also
   // exfiltrate, and a submitted genrule is arbitrary code.
   bool allow_build_network = 7;
@@ -489,7 +472,6 @@ message OrderResult {
   int32 wins = 5;
   int32 draws = 6;
   int32 losses = 7;
-  double elo = 8;
   // Non-empty when the order could not be completed at all (clone failed, bot
   // crashed, timed out). Distinct from a clean build that lost every game.
   string error = 9;
@@ -509,16 +491,11 @@ message OrderResult {
   string machine_class = 13;
 }
 
-message Heartbeat {
-  int32 free_slots = 1;
-}
-
 message WorkerMessage {
   oneof msg {
     WorkerHello hello = 1;
     OrderProgress progress = 2;
     OrderResult result = 3;
-    Heartbeat heartbeat = 4;
   }
 }
 

@@ -20,13 +20,11 @@ bazel run //:sandbox_image_load
 bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- \
     --server=localhost:50051 >>"$LOG" 2>&1 &
 
-# Up once the worker has attached. A token is only read once the coordinator
-# is up to be told about it.
+# Up once the worker has attached.
 until grep -q "attached with" "$LOG"; do sleep 1; done
 NAME="${1:-$USER}"
 TOKEN="$(bazel run @game_arena//game_arena/tools:arena_admin -- mint --client_id="$NAME" \
     --clients="$HOME/.arena/connect4/clients.textproto" | grep -oE '[A-Za-z0-9_-]{40,}' | head -1)"
-kill -HUP "$(cat "$HOME/.arena/connect4/problem_server.pid")" && sleep 1
 
 # Inside: arena_cli submit --wait, arena_cli spar <someone>
 docker run -it --rm --pull=always --network host \

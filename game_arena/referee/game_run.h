@@ -28,7 +28,6 @@
 #include "game_arena/referee/client_handle.h"
 #include "game_arena/referee/game_session.h"
 #include "game_arena/referee/worker_pool.h"
-#include "game_arena/standings/elo_store.h"
 #include "game_arena/standings/game_history.h"
 
 namespace tournament_broker {
@@ -44,7 +43,7 @@ struct GameRunConfig {
 
   // Called with the finished game's record, on the game's own strand, right
   // after it is persisted. The match referee tallies through this rather than
-  // reading the history back off disk; the broker leaves it unset.
+  // reading the history back off disk.
   std::function<void(const proto::GameRecord &)> on_record;
 };
 
@@ -57,10 +56,12 @@ struct Seat {
 
 class GameRun : public std::enable_shared_from_this<GameRun> {
  public:
-  static std::shared_ptr<GameRun> Create(
-      const GameDescriptor &descriptor, GameRunConfig config,
-      std::array<Seat, 2> seats, uint64_t game_counter, EloStore *elo_store,
-      GameHistory *history, WorkerPool *pool, Timer *timer, Task on_finished);
+  static std::shared_ptr<GameRun> Create(const GameDescriptor &descriptor,
+                                         GameRunConfig config,
+                                         std::array<Seat, 2> seats,
+                                         uint64_t game_counter,
+                                         GameHistory *history, WorkerPool *pool,
+                                         Timer *timer, Task on_finished);
 
   // Posts the opening work. Call exactly once, after Create().
   void Start();
@@ -68,11 +69,9 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   // Ends the game early (server shutdown). Safe from any thread.
   void Abort(std::string reason);
 
-  const std::string &game_id() const { return game_id_; }
-
  private:
   GameRun(const GameDescriptor &descriptor, GameRunConfig config,
-          std::array<Seat, 2> seats, uint64_t game_counter, EloStore *elo_store,
+          std::array<Seat, 2> seats, uint64_t game_counter,
           GameHistory *history, WorkerPool *pool, Timer *timer,
           Task on_finished);
 
@@ -89,7 +88,6 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
 
   const GameDescriptor &descriptor_;  // static registry entry; outlives us
   const GameRunConfig config_;
-  EloStore *elo_store_;   // not owned
   GameHistory *history_;  // not owned
   Timer *timer_;          // not owned
   Task on_finished_;

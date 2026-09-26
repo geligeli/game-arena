@@ -9,14 +9,14 @@ namespace tournament_arena {
 
 bool ParseResultLine(const std::string &output, RunTally *tally) {
   static const RE2 kResult(
-      R"(RESULT games=(\d+) wins=(\d+) draws=(\d+) losses=(\d+) elo=([-\d.]+))");
+      R"(RESULT games=(\d+) wins=(\d+) draws=(\d+) losses=(\d+))");
   std::istringstream lines(output);
   std::string line;
   bool found = false;
   while (std::getline(lines, line)) {
     RunTally parsed;
     if (RE2::PartialMatch(line, kResult, &parsed.games, &parsed.wins,
-                          &parsed.draws, &parsed.losses, &parsed.elo)) {
+                          &parsed.draws, &parsed.losses)) {
       // Last one wins: a retried run appends rather than replaces.
       *tally = parsed;
       found = true;

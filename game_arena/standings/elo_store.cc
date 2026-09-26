@@ -83,11 +83,6 @@ proto::Rating EloStore::Get(const std::string &game,
   return it->second;
 }
 
-proto::RatingStore EloStore::Snapshot() const {
-  std::lock_guard lock(mutex_);
-  return store_;
-}
-
 void EloStore::Save(const std::string &blob, uint64_t version) {
   std::lock_guard lock(save_mutex_);
   if (version <= saved_version_) {

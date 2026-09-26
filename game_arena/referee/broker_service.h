@@ -4,8 +4,6 @@
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/support/server_callback.h>
 
-#include <chrono>
-
 #include "game_arena/proto/tournament_broker.grpc.pb.h"
 #include "game_arena/referee/matchmaker.h"
 
@@ -18,19 +16,13 @@ namespace tournament_broker {
 // still a grpc::Service, so registration with ServerBuilder is unchanged.
 class BrokerService final : public proto::TournamentBroker::CallbackService {
  public:
-  // |hello_timeout| bounds how long a stream may stay open before sending its
-  // hello; <= 0 disables it.
-  explicit BrokerService(Matchmaker *matchmaker,
-                         std::chrono::milliseconds hello_timeout =
-                             std::chrono::milliseconds(30000))
-      : matchmaker_(matchmaker), hello_timeout_(hello_timeout) {}
+  explicit BrokerService(Matchmaker *matchmaker) : matchmaker_(matchmaker) {}
 
   grpc::ServerBidiReactor<proto::ClientMessage, proto::ServerMessage> *Play(
       grpc::CallbackServerContext *context) override;
 
  private:
   Matchmaker *matchmaker_;  // not owned
-  std::chrono::milliseconds hello_timeout_;
 };
 
 }  // namespace tournament_broker

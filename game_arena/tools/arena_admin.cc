@@ -94,8 +94,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::printf(
-      "%s %s. A running server reads it on the token's first use, or "
-      "on SIGHUP.\n",
+      "%s %s. A running server reads it on the token's first use.\n",
       overwrite ? "Replaced the token in" : "Appended to", registry.c_str());
   return 0;
 }

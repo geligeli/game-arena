@@ -3,15 +3,16 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(
     default_visibility = ["//visibility:public"],
 )
 
-# The broker process: gRPC services, the game/session domain, matchmaking,
-# scheduling, ELO and history stores, and the HTTP leaderboard. Client-side
-# strategy code lives in //game_arena/client.
+# The coordinator: submissions, scheduling, the fleet service and the HTTP
+# leaderboard. It links no game code; see :no_problem_code_test.
 
 # The BUILD file a structured submission is compiled with. Runs at submit time,
 # because the generated BUILD is part of the patch that gets stored.
@@ -142,6 +143,17 @@ cc_library(
 )
 
 # Expands "rate this candidate" into work orders and hands them to the fleet.
+proto_library(
+    name = "scheduler_config_proto",
+    srcs = ["scheduler_config.proto"],
+    deps = ["//game_arena/proto:arena_proto"],
+)
+
+cc_proto_library(
+    name = "scheduler_config_cc_proto",
+    deps = [":scheduler_config_proto"],
+)
+
 cc_library(
     name = "scheduler",
     srcs = ["scheduler.cc"],
@@ -151,6 +163,7 @@ cc_library(
         "//game_arena/standings:elo_store",
         ":fleet_worker",
         ":problem_config",
+        ":scheduler_config_cc_proto",
         "//game_arena/standings:standings",
         "//game_arena/proto:arena_cc_proto",
         "//game_arena/proto:clients_cc_proto",

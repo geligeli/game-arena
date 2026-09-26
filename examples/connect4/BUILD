@@ -1,7 +1,7 @@
 load("@game_arena//game_arena/rules:problem.bzl", "arena_problem")
 
-# The whole tournament, from one call: the referee and a local broker linked
-# from //game:registry, a config test, `bazel run //:tournament`, `//:kit` and
+# The whole tournament, from one call: the referee linked from
+# //game:registry, a config test, `bazel run //:tournament`, `//:kit` and
 # `//:sandbox_image`, and `bazel build //:connect4` for every binary a
 # tournament needs. See @game_arena//game_arena/rules:problem.bzl.
 arena_problem(

@@ -63,7 +63,6 @@ sandbox {
   run_as_user: "1000:1000"
   memory_limit_mb: 4096
   # A grader run has no business reaching the network.
-  network: NETWORK_NONE
 }
 
 # The participant everyone starts as: copied to <submit dir>/<your name>/ the
@@ -84,7 +83,6 @@ grade {
     name: "score"
     direction: MAXIMIZE
     primary: true
-    unit: "%"
   }
   metrics {
     name: "solved"

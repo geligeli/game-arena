@@ -189,10 +189,10 @@ bazel run //:kit -- --out=/srv/kits/alice \
     --mint=alice --server=arena.example.com:50051 --http=arena.example.com:8090
 ```
 
-One command does four things: mints a token and prints it **once**, appends
+One command does three things: mints a token and prints it **once**, appends
 the client to `~/.arena/connect4/clients.textproto` (as a hash -- a leaked
-registry is not a set of usable credentials), signals the running coordinator
-to reload it so the token works immediately, and writes the kit to `--out`
+registry is not a set of usable credentials; the running coordinator reads it
+on the token's first use), and writes the kit to `--out`
 with that address and that token baked in. `--server` is the arena *as the
 participant reaches it*.
 
@@ -233,11 +233,10 @@ already has the repo:
 ```sh
 bazel run @game_arena//game_arena/tools:arena_admin -- mint --client_id=carol \
     --display_name="Carol" --clients=$HOME/.arena/connect4/clients.textproto
-kill -HUP "$(cat ~/.arena/connect4/problem_server.pid)"      # reload the registry
 ```
 
-Revoking is the same edit in reverse: delete the client's block from that file
-and send the same `SIGHUP`.
+The coordinator reads it on the token's first use. Revoking is the same edit in
+reverse: delete the client's block from that file and restart the coordinator.
 
 ### More capacity
 

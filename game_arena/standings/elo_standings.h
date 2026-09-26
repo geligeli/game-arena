@@ -22,12 +22,8 @@ namespace tournament_arena {
 class EloStandings final : public Standings {
  public:
   // |problem_id| keys the rating store, the way the game name used to.
-  //
-  // |candidates| may be null. With one, Rank() lists the arena's READY
-  // submissions -- the arena's leaderboard is about submissions, and a
-  // half-built one has no business on it. Without one, it lists every player
-  // the rating store has seen, which is what the standalone broker's dev loop
-  // wants: ad-hoc clients and builtins included.
+  // Rank() lists |candidates|' READY submissions: a half-built one has no
+  // business on the board.
   EloStandings(tournament_broker::EloStore *elo_store,
                const CandidateView *candidates, std::string problem_id);
 
@@ -39,12 +35,6 @@ class EloStandings final : public Standings {
   bool has(const std::string &candidate_id) const override;
 
  private:
-  // Get() for a rating filed under a problem other than problem_id_. Only
-  // Rank() with an empty problem_id_ needs it: there the problem comes from
-  // each rating store key rather than from this object.
-  Standing GetIn(const std::string &problem_id,
-                 const std::string &candidate_id) const;
-
   tournament_broker::EloStore *elo_store_;  // not owned
   const CandidateView *candidates_;         // not owned
   const std::string problem_id_;

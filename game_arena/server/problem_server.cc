@@ -25,7 +25,6 @@ bazel run //game_arena/server:problem_server -- \
 #include <unistd.h>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <csignal>
@@ -79,14 +78,6 @@ ABSL_FLAG(int, shutdown_grace_s, 5,
 
 namespace {
 
-// Set by SIGHUP, drained by the main thread. Signal context can do almost
-// nothing safely, so it sets a flag and the reload happens on a real thread.
-std::atomic<bool> g_reload_requested{false};
-
-extern "C" void OnReloadSignal(int /*signum*/) {
-  g_reload_requested.store(true);
-}
-
 std::mutex g_shutdown_mutex;
 std::condition_variable g_shutdown_cv;
 bool g_shutdown_requested = false;
@@ -101,28 +92,10 @@ extern "C" void OnShutdownSignal(int /*signum*/) {
   g_shutdown_cv.notify_all();
 }
 
-// Blocks until SIGINT/SIGTERM, reloading the client registry whenever SIGHUP
-// arrives. The wait is timed rather than indefinite so a SIGHUP that lands
-// between the flag check and the wait is still picked up.
-void WaitForShutdownSignal(tournament_arena::ClientRegistry *clients) {
+// Blocks until SIGINT/SIGTERM.
+void WaitForShutdownSignal() {
   std::unique_lock lock(g_shutdown_mutex);
-  while (!g_shutdown_requested) {
-    g_shutdown_cv.wait_for(lock, std::chrono::seconds(1),
-                           [] { return g_shutdown_requested; });
-    if (!g_reload_requested.exchange(false)) {
-      continue;
-    }
-    if (clients == nullptr) {
-      LOG(WARNING) << "SIGHUP ignored: no --clients registry to reload";
-      continue;
-    }
-    std::string error;
-    if (!clients->Load(&error)) {
-      // The registry keeps whatever it had, so a typo does not lock everyone
-      // out; it just does not take effect.
-      LOG(ERROR) << "Reload failed, keeping the current clients: " << error;
-    }
-  }
+  g_shutdown_cv.wait(lock, [] { return g_shutdown_requested; });
 }
 
 // Turns the problem's evaluation spec into the scheduler's knobs. The scheduler
@@ -131,66 +104,62 @@ void WaitForShutdownSignal(tournament_arena::ClientRegistry *clients) {
 tournament_arena::SchedulerConfig SchedulerConfigFor(
     const tournament_arena::proto::ProblemConfig &problem) {
   tournament_arena::SchedulerConfig config;
-  config.build_timeout_s = static_cast<int>(problem.build().timeout_s());
-  config.build_targets.assign(problem.build().targets().begin(),
-                              problem.build().targets().end());
-  config.bazel_flags.assign(problem.build().bazel_flags().begin(),
-                            problem.build().bazel_flags().end());
+  config.set_build_timeout_s(static_cast<int>(problem.build().timeout_s()));
+  *config.mutable_build_targets() = problem.build().targets();
+  *config.mutable_bazel_flags() = problem.build().bazel_flags();
 
   // The sandbox, translated rather than embedded: see SandboxOrder.
   const auto &sandbox = problem.sandbox();
-  config.sandbox.set_image(sandbox.image());
-  config.sandbox.set_memory_limit_mb(sandbox.memory_limit_mb());
-  config.sandbox.set_cpus(sandbox.cpus());
-  config.sandbox.set_pids_limit(sandbox.pids_limit());
-  config.sandbox.set_run_as_user(sandbox.run_as_user());
-  config.sandbox.set_allow_build_network(sandbox.allow_build_network());
+  auto *order_sandbox = config.mutable_sandbox();
+  order_sandbox->set_image(sandbox.image());
+  order_sandbox->set_memory_limit_mb(sandbox.memory_limit_mb());
+  order_sandbox->set_cpus(sandbox.cpus());
+  order_sandbox->set_pids_limit(sandbox.pids_limit());
+  order_sandbox->set_run_as_user(sandbox.run_as_user());
+  order_sandbox->set_allow_build_network(sandbox.allow_build_network());
   if (problem.has_match()) {
     const auto &match = problem.match();
-    config.placement_opponents.assign(match.placement_opponents().begin(),
-                                      match.placement_opponents().end());
-    config.placement_games = static_cast<int>(match.games_per_order());
-    config.run_timeout_s = static_cast<int>(match.timeout_s());
-    config.referee_target = match.referee_target();
-    config.turn_timeout_ms = static_cast<int>(match.turn_timeout_ms());
-    config.game_time_budget_ms = static_cast<int>(match.game_time_budget_ms());
-    config.max_moves_per_game = static_cast<int>(match.max_moves_per_game());
-    config.registry_options = match.registry_options();
+    *config.mutable_placement_opponents() = match.placement_opponents();
+    config.set_placement_games(static_cast<int>(match.games_per_order()));
+    config.set_run_timeout_s(static_cast<int>(match.timeout_s()));
+    config.set_referee_target(match.referee_target());
+    config.set_turn_timeout_ms(match.turn_timeout_ms());
+    config.set_game_time_budget_ms(match.game_time_budget_ms());
+    config.set_max_moves_per_game(match.max_moves_per_game());
+    *config.mutable_registry_options() = match.registry_options();
     // Kept under the worker's own run timeout, so a stuck match comes back as a
     // partial tally rather than an order-level failure.
-    config.match_deadline_s = std::max(1, config.run_timeout_s - 30);
+    config.set_match_deadline_s(std::max(1, config.run_timeout_s() - 30));
     // The bot is the build target named per submission; a problem that builds
     // nothing per submission plays with the first target it builds.
-    for (const std::string &target : config.build_targets) {
+    for (const std::string &target : config.build_targets()) {
       if (target.find("{submission_id}") != std::string::npos) {
-        config.bot_target = target;
+        config.set_bot_target(target);
         break;
       }
     }
-    if (config.bot_target.empty() && !config.build_targets.empty()) {
-      config.bot_target = config.build_targets.front();
+    if (!config.has_bot_target() && config.build_targets_size() > 0) {
+      config.set_bot_target(config.build_targets(0));
     }
   } else {
     // A graded problem has no opponents: one order is the whole evaluation.
     const auto &grade = problem.grade();
-    config.placement_opponents.clear();
-    config.placement_games = static_cast<int>(grade.repeats());
-    config.run_timeout_s = static_cast<int>(grade.timeout_s());
+    config.set_placement_games(static_cast<int>(grade.repeats()));
+    config.set_run_timeout_s(static_cast<int>(grade.timeout_s()));
 
-    tournament_arena::proto::GradeOrder order;
+    auto *order = config.mutable_grade();
     for (const std::string &arg : grade.argv()) {
-      order.add_argv(arg);  // "{submission_id}" expanded per submission
+      order->add_argv(arg);  // "{submission_id}" expanded per submission
     }
-    order.set_repeats(static_cast<int>(grade.repeats()));
-    order.set_aggregate(
+    order->set_repeats(static_cast<int>(grade.repeats()));
+    order->set_aggregate(
         static_cast<tournament_arena::proto::GradeOrder::Aggregate>(
             static_cast<int>(grade.aggregate())));
     for (const auto &metric : grade.metrics()) {
-      order.add_metric_names(metric.name());
+      order->add_metric_names(metric.name());
     }
-    order.set_timeout_s(static_cast<int>(grade.timeout_s()));
-    order.set_require_machine_class(grade.require_machine_class());
-    config.grade = std::move(order);
+    order->set_timeout_s(static_cast<int>(grade.timeout_s()));
+    order->set_require_machine_class(grade.require_machine_class());
   }
   return config;
 }
@@ -256,8 +225,8 @@ int main(int argc, char **argv) {
         &elo_store, &candidates, problem->problem_id());
   }
 
-  // Who may submit, and how much. Reloadable on SIGHUP so adding a client does
-  // not mean a restart that drops every attached worker mid-order.
+  // Who may submit, and how much. Reread on an unknown token so adding a client
+  // does not mean a restart that drops every attached worker mid-order.
   std::unique_ptr<tournament_arena::ClientRegistry> clients;
   if (!absl::GetFlag(FLAGS_clients).empty()) {
     clients = std::make_unique<tournament_arena::ClientRegistry>(
@@ -349,7 +318,6 @@ int main(int argc, char **argv) {
 
   std::signal(SIGINT, OnShutdownSignal);
   std::signal(SIGTERM, OnShutdownSignal);
-  std::signal(SIGHUP, OnReloadSignal);
 
   LOG(INFO) << "Problem '" << problem->problem_id() << "' ("
             << (problem->has_match() ? "match" : "grade")
@@ -368,7 +336,7 @@ int main(int argc, char **argv) {
               << ": the default is that every participant reads every "
                  "submission";
   }
-  WaitForShutdownSignal(clients.get());
+  WaitForShutdownSignal();
   LOG(INFO) << "Shutting down";
 
   // The grace period is a backstop for stragglers -- an arena RPC mid-flight, a

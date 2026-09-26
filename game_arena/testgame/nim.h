@@ -39,8 +39,6 @@ class NimSession final : public tournament_broker::GameSession {
                              std::string *error) override;
   std::optional<tournament_broker::GameOutcome> Outcome() const override;
 
-  int remaining() const { return remaining_; }
-
  private:
   int remaining_ = kStartingStones;
   int player_ = 0;

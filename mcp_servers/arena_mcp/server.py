@@ -117,9 +117,7 @@ def _rpc_error(error: grpc.RpcError) -> str:
     if code == grpc.StatusCode.UNAVAILABLE:
         return (
             f"ERROR: no arena at {ARENA_TARGET}. Start it with:\n"
-            "  bazel run //game_arena/server:problem_server -- "
-            "--problem_config=game_arena/problems/risk2.textproto "
-            "--data_dir=tournament_data"
+            "  bazel run //:tournament"
         )
     return f"ERROR: {error.details()}"
 
@@ -248,7 +246,7 @@ def arena_submit(
     notes: str = "",
     parent_id: str = "",
     cancel_running: bool = False,
-    game: str = "risk2",
+    game: str = "",
     params: dict[str, str] | None = None,
     extra_deps: list[str] | None = None,
     author: str = "",
@@ -378,11 +376,11 @@ def arena_job(job_id: str) -> str:
 
 
 @mcp.tool()
-def arena_leaderboard(game: str = "risk2", limit: int = 20) -> str:
+def arena_leaderboard(limit: int = 20) -> str:
     """Current standings: who is winning, and by how much."""
     try:
         response = _stub().Leaderboard(
-            arena_pb2.LeaderboardRequest(game=game, limit=limit),
+            arena_pb2.LeaderboardRequest(limit=limit),
             timeout=RPC_TIMEOUT_S,
         )
     except grpc.RpcError as error:

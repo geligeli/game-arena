@@ -38,7 +38,6 @@ struct OrderOutcome {
   int wins = 0;
   int draws = 0;
   int losses = 0;
-  double elo = 0.0;
   // What a graded order measured, already aggregated across runs and filtered
   // to the metrics the problem ranks on. Empty for a match order.
   std::map<std::string, double> metrics;

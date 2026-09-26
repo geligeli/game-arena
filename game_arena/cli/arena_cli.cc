@@ -674,7 +674,6 @@ int CmdCandidates(const Client &client, const std::string &server) {
 
 int CmdLeaderboard(const Client &client, const std::string &server) {
   proto::LeaderboardRequest request;
-  request.set_game(absl::GetFlag(FLAGS_game));
   request.set_limit(absl::GetFlag(FLAGS_limit));
   grpc::ClientContext context;
   ConfigureContext(client, /*write=*/false, &context);

@@ -33,53 +33,11 @@
 #include "game_arena/proto/clients.pb.h"
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/fleet_worker.h"
+#include "game_arena/server/scheduler_config.pb.h"
 #include "game_arena/standings/elo_store.h"
 #include "game_arena/standings/standings.h"
 
 namespace tournament_arena {
-
-struct SchedulerConfig {
-  // The referee binary a worker starts per match, from
-  // ProblemConfig.match.referee_target. Empty for a graded problem, which has
-  // nothing to referee.
-  std::string referee_target;
-  // Wall-clock limit the referee gives one match, after which it reports what
-  // was played. Kept under run_timeout_s so a stuck match yields a partial
-  // tally rather than an order-level failure.
-  int match_deadline_s = 1500;
-  // From ProblemConfig.build.targets, still carrying "{submission_id}"; the
-  // scheduler expands it per submission.
-  std::vector<std::string> build_targets;
-  // The target whose binary plays a match, likewise templated. Empty for a
-  // graded problem, which runs a command rather than a bot.
-  std::string bot_target;
-  // A graded problem's command and how to fold its runs, templated the same
-  // way. Absent for a match problem.
-  std::optional<proto::GradeOrder> grade;
-  // ProblemConfig.match.registry_options, stamped on every order and forwarded
-  // to the referee untouched. The coordinator never reads these: what they
-  // mean is known only to the registry linked into the referee.
-  google::protobuf::Map<std::string, std::string> registry_options;
-  // The rest of the sandbox -- its image is where the tree is -- and the
-  // build's extra flags. All on every order because a worker has none of its
-  // own to disagree with: two submissions are only comparable if they were
-  // built the same way.
-  proto::SandboxOrder sandbox;
-  std::vector<std::string> bazel_flags;
-  // How the referee bounds a game. Forwarded rather than left to the
-  // referee's own flag defaults, which is what used to happen.
-  int turn_timeout_ms = 0;
-  int game_time_budget_ms = 0;
-  int max_moves_per_game = 0;
-  // Opponents a freshly submitted candidate is placed against.
-  std::vector<std::string> placement_opponents = {"builtin:random",
-                                                  "builtin:mcts"};
-  int placement_games = 4;
-  // How many rated rivals a placement also plays, spread across the board.
-  int ladder_size = 3;
-  int build_timeout_s = 1800;
-  int run_timeout_s = 1800;
-};
 
 class Scheduler {
  public:

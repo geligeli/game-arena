@@ -40,7 +40,6 @@ sandbox {
   # already owns: `sandbox_image` writes to whatever this names.
   image: "nim-sandbox:1"
   memory_limit_mb: 2048
-  network: NETWORK_INTERNAL_BRIDGE
 }
 
 match {

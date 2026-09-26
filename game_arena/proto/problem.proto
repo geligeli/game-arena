@@ -112,8 +112,6 @@ message CandidateHarness {
 // SubmissionPolicy and SourcePolicy, at the coordinator, from the problem's
 // own copy of this config.
 message KitSpec {
-  reserved 1, 2;
-
   // The participant everyone starts as: a directory under
   // submission.files_submit_dir, in kit_files, that a participant's own
   // directory is copied from the first time.
@@ -194,22 +192,6 @@ message SandboxSpec {
   double cpus = 3;
   uint32 pids_limit = 4;
 
-  // Reserved: a single network setting cannot express what actually happens,
-  // which is per phase -- a build and a graded run get no interface at all,
-  // and a match gets an egress-free bridge so the bots can reach their
-  // referee and nothing else. That is not a problem's choice to make, so
-  // there is nothing here to set. See sandbox/worker/order_job.cc.
-  reserved 5;
-  reserved "network";
-
-  // Was require_container: whether this problem refused to run on the local
-  // (non-container) backend. There is no such backend to refuse any more --
-  // sandbox.image is required, a worker builds and runs every order in a
-  // container, and an order it cannot isolate it hands back. The setting a
-  // problem could get wrong is gone rather than defaulted.
-  reserved 6;
-  reserved "require_container";
-
   // Let the build container reach the network.
   //
   // Off by default, and worth keeping off: a build that can fetch can also
@@ -222,14 +204,6 @@ message SandboxSpec {
   // Run as this user inside the container, e.g. "1000:1000". Empty runs as
   // whatever the image's default is, which for most images is root.
   string run_as_user = 8;
-
-  // Was host_overlay / host_overlay_set: whether the worker assembled an
-  // overlay on the host or the sandbox mounted one with CAP_SYS_ADMIN. There
-  // is no overlay any more -- the tree is copied into a volume through the
-  // daemon -- so every container runs with no capabilities, and a worker
-  // needs nothing but a docker socket.
-  reserved 9, 10;
-  reserved "host_overlay", "host_overlay_set";
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +219,6 @@ message MetricSpec {
   Direction direction = 2;
   // The metric the leaderboard ranks by. Exactly one metric must set it.
   bool primary = 3;
-  string unit = 4;  // display only, e.g. "ms"
 }
 
 // Run the built solution and read numbers off it.
@@ -325,9 +298,6 @@ message MatchSpec {
   // into the referee, and the arena cannot enumerate them without knowing what
   // the problem is. A registry ignores keys it does not recognise.
   map<string, string> registry_options = 10;
-
-  reserved 9;
-  reserved "mcts_iterations";  // was: uint32, superseded by registry_options
 }
 
 // ---------------------------------------------------------------------------

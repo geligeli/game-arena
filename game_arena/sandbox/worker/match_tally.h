@@ -5,7 +5,7 @@
 //
 // Split out of build_log.h, which was holding two unrelated things: how to
 // compact a bazel log, and what a win is worth. Only the first is generic
-// build tooling -- games, draws and an ELO number are the arena's vocabulary,
+// build tooling -- games, wins and draws are the arena's vocabulary,
 // and a sandbox that merely runs things must not have to know them.
 //
 // The contract is printed by the referee (see referee/referee_main.cc) and is
@@ -21,10 +21,9 @@ struct RunTally {
   int wins = 0;
   int draws = 0;
   int losses = 0;
-  double elo = 0.0;
 };
 
-// Parses the "RESULT games=N wins=W draws=D losses=L elo=E" line out of
+// Parses the "RESULT games=N wins=W draws=D losses=L" line out of
 // |output|. Returns false when no such line is present, which is how a match
 // that never got as far as a verdict is told from one that ended 0-0.
 bool ParseResultLine(const std::string &output, RunTally *tally);

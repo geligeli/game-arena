@@ -1,0 +1,49 @@
+syntax = "proto2";
+
+package tournament_arena;
+
+import "game_arena/proto/arena.proto";
+
+// The scheduler's knobs, from the problem config (see SchedulerConfigFor in
+// problem_server.cc). Never leaves the coordinator, so it is not in proto/.
+message SchedulerConfig {
+  // The referee binary a worker starts per match, from
+  // ProblemConfig.match.referee_target. Empty for a graded problem, which has
+  // nothing to referee.
+  optional string referee_target = 1;
+  // Wall-clock limit the referee gives one match, after which it reports what
+  // was played. Kept under run_timeout_s so a stuck match yields a partial
+  // tally rather than an order-level failure.
+  optional int32 match_deadline_s = 2 [default = 1500];
+  // From ProblemConfig.build.targets, still carrying "{submission_id}"; the
+  // scheduler expands it per submission.
+  repeated string build_targets = 3;
+  // The target whose binary plays a match, likewise templated. Empty for a
+  // graded problem, which runs a command rather than a bot.
+  optional string bot_target = 4;
+  // A graded problem's command and how to fold its runs, templated the same
+  // way. Absent for a match problem.
+  optional proto.GradeOrder grade = 5;
+  // ProblemConfig.match.registry_options, stamped on every order and forwarded
+  // to the referee untouched. The coordinator never reads these: what they
+  // mean is known only to the registry linked into the referee.
+  map<string, string> registry_options = 6;
+  // The rest of the sandbox -- its image is where the tree is -- and the
+  // build's extra flags. All on every order because a worker has none of its
+  // own to disagree with: two submissions are only comparable if they were
+  // built the same way.
+  optional proto.SandboxOrder sandbox = 7;
+  repeated string bazel_flags = 8;
+  // How the referee bounds a game. Forwarded rather than left to the
+  // referee's own flag defaults, which is what used to happen.
+  optional uint32 turn_timeout_ms = 9;
+  optional uint32 game_time_budget_ms = 10;
+  optional uint32 max_moves_per_game = 11;
+  // Opponents a freshly submitted candidate is placed against.
+  repeated string placement_opponents = 12;
+  optional int32 placement_games = 13 [default = 4];
+  // How many rated rivals a placement also plays, spread across the board.
+  optional int32 ladder_size = 14 [default = 3];
+  optional int32 build_timeout_s = 15 [default = 1800];
+  optional int32 run_timeout_s = 16 [default = 1800];
+}

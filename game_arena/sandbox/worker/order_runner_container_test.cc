@@ -90,7 +90,7 @@ class OrderRunnerContainerTest : public ::testing::Test {
            // The referee is started detached and its verdict is read back with
            // `docker logs`, so stash it where the logs branch can find it.
            "      *-referee)\n"
-           "        echo \"RESULT games=2 wins=1 draws=1 losses=0 elo=1500.0\" "
+           "        echo \"RESULT games=2 wins=1 draws=1 losses=0\" "
            "> \"" +
            (root_ / "referee_output").string() +
            "\"\n"
@@ -260,7 +260,6 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   EXPECT_EQ(outcome.wins, 1);
   EXPECT_EQ(outcome.draws, 1);
   EXPECT_EQ(outcome.losses, 0);
-  EXPECT_DOUBLE_EQ(outcome.elo, 1500.0);
 
   // The submission is staged as the one thing the container applies: its patch.
   const auto staged = root_ / "work" / "slot0" / "patches" / "c-ok.diff";
