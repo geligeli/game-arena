@@ -377,7 +377,9 @@ submissions -- which makes reads token-gated too -- and `NONE` serves nobody's.
 It is enforced in `ArenaService` on `GetSource` *and* on the `patch` bytes of
 every manifest `GetCandidate`, `ListCandidates` and `Leaderboard` return,
 because a stored patch is source. A kit's `arena.textproto` and `ARENA.md`
-describe the rule; only the coordinator applies it.
+describe the rule; only the coordinator applies it. Its dashboard has no
+tokens to check, so under anything but `ALL` it shows no source, no build
+output and no errors at all.
 
 Tokens are **admin-provisioned** — there is no registration RPC, which is what
 makes a quota mean anything. Mint one:
@@ -430,5 +432,8 @@ derives rather than remembers.
 ## HTTP
 
 `GET /api/candidates` lists submissions with their status and rating, alongside
-the existing `/api/leaderboard` and `/api/games`. Read-only: every write goes
-through the Arena service, so there is exactly one path to secure later.
+the existing `/api/leaderboard` and `/api/games`. Beside the leaderboard, the
+dashboard (`server/dashboard.h`) serves every job with its build output, every
+participant with their code and submissions, and every game as a replay.
+Read-only: every write goes through the Arena service, so there is exactly one
+path to secure later.

@@ -174,6 +174,33 @@ cc_test(
     ],
 )
 
+# The pages beside the leaderboard: jobs, participants, games and replays.
+cc_library(
+    name = "dashboard",
+    srcs = ["dashboard.cc"],
+    hdrs = ["dashboard.h"],
+    deps = [
+        ":candidate_store",
+        ":job_log",
+        ":unified_diff",
+        "//game_arena/standings:game_history",
+        "//game_arena/standings:http_leaderboard",
+        "//game_arena/standings:standings",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/time",
+        "@boost.json",
+    ],
+)
+
+cc_test(
+    name = "dashboard_test",
+    srcs = ["dashboard_test.cc"],
+    deps = [
+        ":dashboard",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # Expands "rate this candidate" into work orders and hands them to the fleet.
 proto_library(
     name = "scheduler_config_proto",
@@ -256,6 +283,7 @@ cc_binary(
         "//game_arena/common/process",
         ":arena_service",
         ":candidate_store",
+        ":dashboard",
         "//game_arena/standings:elo_standings",
         "//game_arena/standings:elo_store",
         ":fleet_service",

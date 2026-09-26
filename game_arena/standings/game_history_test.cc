@@ -124,6 +124,30 @@ TEST_F(GameHistoryTest, SeedsFromTheIndexOfAPreviousRun) {
   EXPECT_EQ(IndexLines().size(), 3u);
 }
 
+TEST_F(GameHistoryTest, AllGamesReadsPastTheInMemoryTail) {
+  GameHistory history(dir_);
+  const int count = static_cast<int>(GameHistory::kRecentCapacity) + 10;
+  for (int i = 0; i < count; ++i) {
+    ASSERT_FALSE(history.Store(MakeRecord("g" + std::to_string(i))).empty());
+  }
+
+  EXPECT_EQ(history.RecentGames(count).size(), GameHistory::kRecentCapacity);
+  const std::vector<std::string> all = history.AllGames();
+  ASSERT_EQ(all.size(), static_cast<std::size_t>(count));
+  EXPECT_THAT(all[0], ::testing::HasSubstr(R"("game_id":"g0")"));
+}
+
+TEST_F(GameHistoryTest, LoadsARecordByIdAndNothingOutsideItsDirectory) {
+  GameHistory history(dir_ / "games");
+  ASSERT_FALSE(history.Store(MakeRecord("o1_1-g1_0")).empty());
+  std::ofstream(dir_ / "x.pb") << "";
+
+  EXPECT_EQ(history.Load("o1_1-g1_0")->player_names(1), "bob");
+  EXPECT_FALSE(history.Load("../x").has_value());
+  EXPECT_FALSE(history.Load("").has_value());
+  EXPECT_FALSE(history.Load("missing").has_value());
+}
+
 TEST_F(GameHistoryTest, WritesTheRecordProtoBesideTheIndex) {
   GameHistory history(dir_);
   const std::filesystem::path path = history.Store(MakeRecord("g1"));

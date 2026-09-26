@@ -94,4 +94,29 @@ std::vector<std::string> GameHistory::RecentGames(int limit) const {
   return {recent_.end() - static_cast<std::ptrdiff_t>(count), recent_.end()};
 }
 
+std::vector<std::string> GameHistory::AllGames() const {
+  std::lock_guard lock(mutex_);
+  std::vector<std::string> lines;
+  std::ifstream in(dir_ / "index.jsonl");
+  for (std::string line; std::getline(in, line);) {
+    if (!line.empty()) {
+      lines.push_back(std::move(line));
+    }
+  }
+  return lines;
+}
+
+std::optional<proto::GameRecord> GameHistory::Load(
+    std::string_view game_id) const {
+  if (!IsSafeId(game_id)) {
+    return std::nullopt;
+  }
+  std::ifstream in(dir_ / (std::string(game_id) + ".pb"), std::ios::binary);
+  proto::GameRecord record;
+  if (!in || !record.ParseFromIstream(&in)) {
+    return std::nullopt;
+  }
+  return record;
+}
+
 }  // namespace tournament_broker

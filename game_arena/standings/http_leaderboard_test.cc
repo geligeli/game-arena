@@ -145,6 +145,26 @@ TEST_F(HttpLeaderboardTest, ServesHtmlLeaderboardWithEscapedNames) {
             response.body().size());
 }
 
+TEST_F(HttpLeaderboardTest, UnmatchedTargetsGoToTheExtraRoutes) {
+  HttpLeaderboard leaderboard(
+      0, history_.get(), &candidates_, &standings_, "",
+      [](std::string_view target)
+          -> std::optional<std::pair<std::string, std::string>> {
+        if (target != "/jobs?page=2") {
+          return std::nullopt;
+        }
+        return std::pair(std::string("text/plain"), std::string("page 2"));
+      });
+  ASSERT_TRUE(leaderboard.Start());
+  const int port = leaderboard.bound_port();
+
+  EXPECT_EQ(Get(port, "/jobs?page=2").body(), "page 2");
+  EXPECT_EQ(Get(port, "/nothing").result(), http::status::not_found);
+  // Its own routes come first, and link each participant to their page.
+  EXPECT_THAT(Get(port, "/").body(),
+              HasSubstr("<a href=\"/participants/cand-1\">"));
+}
+
 TEST_F(HttpLeaderboardTest, ServesJsonLeaderboardWithEscapedStrings) {
   HttpLeaderboard leaderboard(0, history_.get(), &candidates_, &standings_);
   ASSERT_TRUE(leaderboard.Start());

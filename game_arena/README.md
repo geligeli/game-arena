@@ -159,14 +159,22 @@ from the counts and keeps the games.
 The coordinator serves them, on `tournament`'s HTTP port (8090):
 
 - `/` — HTML leaderboard (auto-refresh).
+- `/jobs`, `/jobs/<job_id>` — every job, newest first; one job's submission,
+  and each order's build output, result and games.
+- `/participants/<id>` — a participant's current code and every submission.
+- `/games?page=N&player=<id>`, `/games/<game_id>` — every game, newest first;
+  one game replayed move by move.
 - `/api/leaderboard` — ratings as JSON.
 - `/api/games` — recent games as JSON.
 
 Ratings live in the state directory's `ratings.pb` (per problem + candidate,
 ELO with K=32 by default), updated from each match's tally. Every game a
 worker played is kept under the state directory's `games/`, one `GameRecord`
-proto each (initial state, every step with timestamps, result) named
-`<order_id>-<game_id>.pb`, indexed by `games/index.jsonl`.
+proto each (initial state, every step with timestamps and the game's
+`RenderState()` after it, result) named `<order_id>-<game_id>.pb`, indexed by
+`games/index.jsonl`. Every job is kept under `jobs/`, one `JobRecord` each:
+the submission as submitted and what each order came back with, the last
+64 KiB of its build output included.
 
 ## Adding a game
 

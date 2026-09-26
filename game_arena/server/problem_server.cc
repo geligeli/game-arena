@@ -44,6 +44,7 @@ bazel run //game_arena/server:problem_server -- \
 #include "game_arena/server/arena_service.h"
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/client_registry.h"
+#include "game_arena/server/dashboard.h"
 #include "game_arena/server/fleet_service.h"
 #include "game_arena/server/job_log.h"
 #include "game_arena/server/problem_config.h"
@@ -312,10 +313,19 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  // Jobs, participants and game replays beside the leaderboard. As
+  // unauthenticated as it, so source shows only where everyone may read it.
+  const tournament_arena::Dashboard dashboard(
+      &candidates, &job_log, &history, standings.get(),
+      problem->source().visibility() ==
+          tournament_arena::proto::SourcePolicy::ALL);
   tournament_broker::HttpLeaderboard leaderboard(
       absl::GetFlag(FLAGS_http_port), &history, &candidates, standings.get(),
       problem->display_name().empty() ? problem->problem_id()
-                                      : problem->display_name());
+                                      : problem->display_name(),
+      [&dashboard](std::string_view target) {
+        return dashboard.Route(target);
+      });
   if (!leaderboard.Start()) {
     return 1;
   }

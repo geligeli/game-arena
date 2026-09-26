@@ -20,6 +20,7 @@
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 
@@ -42,6 +43,8 @@ constexpr auto kClientTimeout = std::chrono::seconds(5);
 // Error codes come back in the completion tuple instead of as exceptions.
 constexpr auto kAsTuple = net::as_tuple(net::use_awaitable);
 
+}  // namespace
+
 // One pass, so the order of these pairs does not matter: StrReplaceAll never
 // rescans what it just substituted, which is what makes escaping '&' safe
 // alongside the entities that contain one.
@@ -53,17 +56,34 @@ std::string HtmlEscape(std::string_view s) {
                                  {"'", "&#39;"}});
 }
 
-}  // namespace
+std::string PageStart(std::string_view title, bool refresh) {
+  return absl::StrCat(
+      "<!DOCTYPE html><html><head><meta charset=\"utf-8\">",
+      refresh ? "<meta http-equiv=\"refresh\" content=\"5\">" : "", "<title>",
+      HtmlEscape(title),
+      "</title><style>body{font-family:sans-serif;margin:2em}"
+      "table{border-collapse:collapse}"
+      "td,th{border:1px solid #ccc;padding:4px 10px;text-align:right}"
+      "th{background:#eee}td.l{text-align:left}"
+      "td.d,th.d{color:#666;font-size:90%}"
+      "pre{background:#f6f6f6;padding:8px;overflow:auto}"
+      "nav a{margin-right:1em}</style></head><body>"
+      "<nav><a href=\"/\">Leaderboard</a><a href=\"/jobs\">Jobs</a>"
+      "<a href=\"/games\">Games</a></nav><h1>",
+      HtmlEscape(title), "</h1>");
+}
 
 HttpLeaderboard::HttpLeaderboard(
     int port, const GameHistory *history,
     const tournament_arena::CandidateView *candidates,
-    const tournament_arena::Standings *standings, std::string problem_name)
+    const tournament_arena::Standings *standings, std::string problem_name,
+    Routes more)
     : port_(port),
       history_(history),
       candidates_(candidates),
       standings_(standings),
-      problem_name_(std::move(problem_name)) {}
+      problem_name_(std::move(problem_name)),
+      more_(std::move(more)) {}
 
 HttpLeaderboard::~HttpLeaderboard() { Stop(); }
 
@@ -171,7 +191,7 @@ std::optional<std::pair<std::string, std::string>> HttpLeaderboard::Route(
   if (target == "/api/candidates" && candidates_ != nullptr) {
     return std::pair(std::string(kJson), RenderCandidatesJson());
   }
-  return std::nullopt;
+  return more_ ? more_(target) : std::nullopt;
 }
 
 std::string HttpLeaderboard::RenderLeaderboardHtml() const {
@@ -180,19 +200,8 @@ std::string HttpLeaderboard::RenderLeaderboardHtml() const {
   const std::string score = standings_->score_label();
 
   std::ostringstream html;
-  html << "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-          "<meta http-equiv=\"refresh\" content=\"5\">"
-          "<title>"
-       << HtmlEscape(title)
-       << "</title>"
-          "<style>body{font-family:sans-serif;margin:2em}"
-          "table{border-collapse:collapse}"
-          "td,th{border:1px solid #ccc;padding:4px 10px;text-align:right}"
-          "th{background:#eee}td.l{text-align:left}"
-          "td.d,th.d{color:#666;font-size:90%}</style></head><body>"
-          "<h1>"
-       << HtmlEscape(title)
-       << "</h1><table><tr><th>Rank</th><th>Submission</th>"
+  html << PageStart(title, /*refresh=*/true)
+       << "<table><tr><th>Rank</th><th>Submission</th>"
           "<th>Author</th><th>"
        << HtmlEscape(score) << "</th>";
   // A match problem has a W/D/L record; a graded one has the host that produced
@@ -213,8 +222,10 @@ std::string HttpLeaderboard::RenderLeaderboardHtml() const {
         candidate.has_value() ? candidate->display_name() : row.candidate_id;
     const std::string author =
         candidate.has_value() ? candidate->author() : std::string("-");
-    html << "<tr><td>" << rank++ << "</td><td class=\"l\">" << HtmlEscape(name)
-         << "</td><td class=\"l\">" << HtmlEscape(author) << "</td><td>"
+    html << "<tr><td>" << rank++
+         << "</td><td class=\"l\"><a href=\"/participants/"
+         << HtmlEscape(row.candidate_id) << "\">" << HtmlEscape(name)
+         << "</a></td><td class=\"l\">" << HtmlEscape(author) << "</td><td>"
          << absl::StrFormat("%.*f", graded ? 3 : 1, row.score) << "</td>";
     if (graded) {
       html << "<td>" << row.runs << "</td><td class=\"d l\">"

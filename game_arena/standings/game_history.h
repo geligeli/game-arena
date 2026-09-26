@@ -9,6 +9,7 @@
 #include <deque>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,6 +37,12 @@ class GameHistory {
 
   // Last |limit| index lines, oldest first.
   std::vector<std::string> RecentGames(int limit) const;
+  // Every index line, oldest first, read from disk: the in-memory tail holds
+  // only the last kRecentCapacity.
+  std::vector<std::string> AllGames() const;
+  // One game's record. Nullopt when there is none, or |game_id| cannot name a
+  // file.
+  std::optional<proto::GameRecord> Load(std::string_view game_id) const;
 
  private:
   const std::filesystem::path dir_;  // <data_dir>/games

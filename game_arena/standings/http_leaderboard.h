@@ -12,6 +12,9 @@
 //   GET /api/games        recent games (JSON array, from the history index)
 //   GET /api/candidates   submitted strategies and their status (JSON array)
 //
+// Anything else goes to the Routes it was given: the coordinator's dashboard
+// (server/dashboard.h), which needs the coordinator and so cannot live here.
+//
 // Boost.Beast over Boost.Asio owns the socket, the request parser and the
 // response framing; one coroutine on one thread accepts and serves connections
 // in turn, which is all a status page polled every five seconds needs.
@@ -23,6 +26,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -35,15 +39,27 @@
 
 namespace tournament_broker {
 
+// |s| with every character HTML treats specially escaped, quotes included.
+std::string HtmlEscape(std::string_view s);
+
+// What every page served here starts with: head, style, navigation and a
+// heading. |refresh| reloads the page every five seconds.
+std::string PageStart(std::string_view title, bool refresh = false);
+
 class HttpLeaderboard {
  public:
+  // A content type and body for a GET of the target, or nullopt for a 404.
+  using Routes =
+      std::function<std::optional<std::pair<std::string, std::string>>(
+          std::string_view target)>;
+
   // |candidates| and |standings| may be null, in which case /api/candidates and
   // /api/leaderboard 404: the standalone broker has neither and is still
-  // usable without them.
+  // usable without them. |more| serves every other target.
   HttpLeaderboard(int port, const GameHistory *history,
                   const tournament_arena::CandidateView *candidates = nullptr,
                   const tournament_arena::Standings *standings = nullptr,
-                  std::string problem_name = "");
+                  std::string problem_name = "", Routes more = nullptr);
   ~HttpLeaderboard();
 
   // Starts the accept thread. Returns false when the port cannot be bound.
@@ -73,6 +89,7 @@ class HttpLeaderboard {
   const tournament_arena::CandidateView *candidates_;  // not owned, may be null
   const tournament_arena::Standings *standings_;       // not owned, may be null
   const std::string problem_name_;
+  const Routes more_;
   // Single-threaded: every operation on the acceptor and on accepted sockets
   // runs on thread_. Stop() reaches it by posting the close, so nothing touches
   // the acceptor from two threads at once.
