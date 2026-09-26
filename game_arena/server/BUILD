@@ -122,6 +122,7 @@ cc_library(
         "//game_arena/proto:arena_cc_proto",
         "//game_arena/proto:problem_cc_proto",
         "@abseil-cpp//absl/log",
+        "@boost.json",
     ],
 )
 

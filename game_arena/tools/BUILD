@@ -47,5 +47,6 @@ cc_binary(
         "@abseil-cpp//absl/strings",
         "@protobuf//:protobuf",
         "@rules_cc//cc/runfiles",
+        "@boost.json",
     ],
 )

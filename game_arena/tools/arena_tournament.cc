@@ -47,6 +47,11 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 
 #include <algorithm>
 #include <array>
+#include <boost/json/array.hpp>
+#include <boost/json/object.hpp>
+#include <boost/json/parse.hpp>
+#include <boost/json/serialize.hpp>
+#include <boost/json/value.hpp>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -444,13 +449,14 @@ std::optional<std::string> LayoutManifestDigest(
   if (!index) {
     return std::nullopt;
   }
-  static const std::regex kDigest(
-      R"re("digest"\s*:\s*"(sha256:[0-9a-f]{64})")re");
-  std::smatch match;
-  if (!std::regex_search(*index, match, kDigest)) {
+  boost::system::error_code ec;
+  const boost::json::value parsed = boost::json::parse(*index, ec);
+  const boost::json::value *digest =
+      ec ? nullptr : parsed.find_pointer("/manifests/0/digest", ec);
+  if (digest == nullptr || !digest->is_string()) {
     return std::nullopt;
   }
-  return match[1].str();
+  return std::string(digest->get_string());
 }
 
 // Whether --push has somewhere to go. A reference names a registry when its
@@ -891,48 +897,30 @@ std::string KitReadme(const proto::ProblemConfig &config,
   return md.str();
 }
 
-std::string JsonEscape(std::string_view s) {
-  std::string out;
-  for (const char c : s) {
-    if (c == '"' || c == '\\') {
-      out.push_back('\\');
-    }
-    out.push_back(c);
-  }
-  return out;
-}
-
 // mcp.json for a kit at |kit|: the path an agent's MCP client starts the
 // server in, which is this host's for a directory and /kit inside an image.
 std::string KitMcpJson(const std::filesystem::path &kit,
                        const std::string &server, const std::string &token,
                        const std::string &client_id) {
-  std::string mcp = absl::StrCat(
-      "{\n"
-      "  \"mcpServers\": {\n"
-      "    \"arena\": {\n"
-      "      \"command\": \"bazel\",\n"
-      "      \"args\": [\"run\", \"//:mcp_server\"],\n"
-      "      \"cwd\": \"",
-      JsonEscape(kit.string()),
-      "\",\n"
-      "      \"env\": {\n"
-      "        \"ARENA_KIT\": \"",
-      JsonEscape(kit.string()), "\"");
+  boost::json::object env{{"ARENA_KIT", kit.string()}};
   if (!server.empty()) {
-    absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_TARGET\": \"",
-                    JsonEscape(server), "\"");
+    env["ARENA_MCP_TARGET"] = server;
   }
   if (!token.empty()) {
-    absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_TOKEN\": \"",
-                    JsonEscape(token), "\"");
+    env["ARENA_MCP_TOKEN"] = token;
   }
   if (!client_id.empty()) {
-    absl::StrAppend(&mcp, ",\n        \"ARENA_NAME\": \"",
-                    JsonEscape(client_id), "\"");
+    env["ARENA_NAME"] = client_id;
   }
-  absl::StrAppend(&mcp, "\n      }\n    }\n  }\n}\n");
-  return mcp;
+  const boost::json::object arena{
+      {"command", "bazel"},
+      {"args", boost::json::array{"run", "//:mcp_server"}},
+      {"cwd", kit.string()},
+      {"env", std::move(env)},
+  };
+  return boost::json::serialize(
+             boost::json::object{{"mcpServers", {{"arena", arena}}}}) +
+         "\n";
 }
 
 // The build settings a kit at |kit| keeps in its .bazelrc.local: absolute

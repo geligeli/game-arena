@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <boost/json/object.hpp>
+#include <boost/json/serialize.hpp>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -27,33 +29,6 @@ int64_t NowUnixMs() {
 // with the worker's privileges at build time.
 constexpr std::array<std::string_view, 5> kAllowedExtensions = {
     ".h", ".hpp", ".cc", ".cpp", ".inl"};
-
-std::string JsonEscape(const std::string &s) {
-  std::string out;
-  out.reserve(s.size());
-  for (const char c : s) {
-    switch (c) {
-      case '"':
-        out += "\\\"";
-        break;
-      case '\\':
-        out += "\\\\";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\r':
-        out += "\\r";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
-      default:
-        out += c;
-    }
-  }
-  return out;
-}
 
 bool HasAllowedExtension(const std::string &path) {
   const auto dot = path.rfind('.');
@@ -419,13 +394,15 @@ void CandidateStore::AppendIndexLocked(
     LOG(ERROR) << "Could not append to candidate index in " << dir_;
     return;
   }
-  index << "{\"candidate_id\":\"" << JsonEscape(candidate.candidate_id())
-        << "\",\"display_name\":\"" << JsonEscape(candidate.display_name())
-        << "\",\"author\":\"" << JsonEscape(candidate.author())
-        << "\",\"game\":\"" << JsonEscape(candidate.game())
-        << "\",\"parent_id\":\"" << JsonEscape(candidate.parent_id())
-        << "\",\"submitted_unix_ms\":" << candidate.submitted_unix_ms()
-        << "}\n";
+  index << boost::json::serialize(boost::json::object{
+               {"candidate_id", candidate.candidate_id()},
+               {"display_name", candidate.display_name()},
+               {"author", candidate.author()},
+               {"game", candidate.game()},
+               {"parent_id", candidate.parent_id()},
+               {"submitted_unix_ms", candidate.submitted_unix_ms()},
+           })
+        << "\n";
 }
 
 std::optional<proto::Candidate> CandidateStore::Create(
