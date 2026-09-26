@@ -35,53 +35,12 @@ std::string ReadFile(const std::filesystem::path& path) {
 
 }  // namespace
 
-TEST(ProcessTest, PipesInputToChildStdout) {
-  const auto stdout_path = MakeTempFilePath("stdout");
-  auto process = CreateInputStreamProcess(
-      "/usr/bin/python3",
-      {"-c",
-       "import sys; data = sys.stdin.read(); sys.stdout.write(data.upper())"},
-      {}, stdout_path);
-
-  process.stdin() << "risk\n";
-  EXPECT_EQ(process.Wait(), 0);
-
-  EXPECT_EQ(ReadFile(stdout_path), "RISK\n");
-  std::filesystem::remove(stdout_path);
-}
-
-TEST(ProcessTest, CapturesStderrAndExitCode) {
-  const auto stderr_path = MakeTempFilePath("stderr");
-  auto process = CreateInputStreamProcess(
-      "/usr/bin/python3",
-      {"-c", "import sys; sys.stderr.write('oops\\n'); sys.exit(3)"}, {},
-      "/dev/null", stderr_path);
-
-  EXPECT_EQ(process.Wait(), 3);
-  EXPECT_EQ(ReadFile(stderr_path), "oops\n");
-  std::filesystem::remove(stderr_path);
-}
-
-TEST(ProcessTest, SupportsMoveSemantics) {
-  const auto stdout_path = MakeTempFilePath("move");
-  InputStreamProcess source = CreateInputStreamProcess(
-      "/usr/bin/python3",
-      {"-c", "import sys; sys.stdout.write(sys.stdin.read())"}, {},
-      stdout_path);
-
-  InputStreamProcess target = std::move(source);
-  target.stdin() << "abc";
-  EXPECT_EQ(target.Wait(), 0);
-  EXPECT_EQ(ReadFile(stdout_path), "abc");
-  std::filesystem::remove(stdout_path);
-}
-
 // --- RunCommand ------------------------------------------------------------
 
 TEST(RunCommandTest, CapturesOutputAndExitCode) {
   const auto out = MakeTempFilePath("run_out");
   const auto err = MakeTempFilePath("run_err");
-  RunOptions options;
+  Options options;
   options.stdout_path = out;
   options.stderr_path = err;
 
@@ -98,7 +57,7 @@ TEST(RunCommandTest, CapturesOutputAndExitCode) {
 
 TEST(RunCommandTest, RunsInTheRequestedDirectory) {
   const auto out = MakeTempFilePath("run_cwd");
-  RunOptions options;
+  Options options;
   options.cwd = "/tmp";
   options.stdout_path = out;
 
@@ -109,33 +68,18 @@ TEST(RunCommandTest, RunsInTheRequestedDirectory) {
   std::filesystem::remove(out);
 }
 
-TEST(RunCommandTest, PassesAnExplicitEnvironment) {
-  const auto out = MakeTempFilePath("run_env");
-  RunOptions options;
-  options.env = {"MARKER=hello", "PATH=/bin:/usr/bin"};
-  options.stdout_path = out;
-
-  const RunResult result = RunCommand("sh", {"-c", "echo $MARKER"}, options);
-  ASSERT_TRUE(result.started);
-  EXPECT_EQ(ReadFile(out), "hello\n");
-  std::filesystem::remove(out);
-}
-
 TEST(RunCommandTest, ReportsAMissingExecutableWithoutThrowing) {
   const RunResult result =
-      RunCommand("definitely-not-a-real-binary-xyz", {}, RunOptions{});
+      RunCommand("definitely-not-a-real-binary-xyz", {}, Options{});
   EXPECT_FALSE(result.started);
   EXPECT_FALSE(result.timed_out);
 }
 
 // A build tool that hangs must not hang the worker with it.
 TEST(RunCommandTest, KillsAChildThatOverrunsItsTimeout) {
-  RunOptions options;
-  options.timeout = std::chrono::seconds(1);
-  options.kill_grace = std::chrono::seconds(1);
-
   const auto start = std::chrono::steady_clock::now();
-  const RunResult result = RunCommand("sleep", {"120"}, options);
+  const RunResult result =
+      RunCommand("sleep", {"120"}, {}, std::chrono::seconds(1));
   const auto elapsed = std::chrono::steady_clock::now() - start;
 
   EXPECT_TRUE(result.started);
@@ -149,14 +93,10 @@ TEST(RunCommandTest, KillsAChildThatOverrunsItsTimeout) {
 // survive their parent.
 TEST(RunCommandTest, TimeoutReachesTheWholeProcessGroup) {
   const auto marker = MakeTempFilePath("group_marker");
-  RunOptions options;
-  options.timeout = std::chrono::seconds(1);
-  options.kill_grace = std::chrono::seconds(1);
-
   // The grandchild would create the marker after 8s if it survived the kill.
   const RunResult result = RunCommand(
-      "sh", {"-c", "sh -c 'sleep 8; touch " + marker.string() + "' & wait"},
-      options);
+      "sh", {"-c", "sh -c 'sleep 8; touch " + marker.string() + "' & wait"}, {},
+      std::chrono::seconds(1));
   ASSERT_TRUE(result.started);
   EXPECT_TRUE(result.timed_out);
 
@@ -167,14 +107,11 @@ TEST(RunCommandTest, TimeoutReachesTheWholeProcessGroup) {
 }
 
 TEST(RunCommandTest, AddressSpaceLimitStopsARunawayAllocation) {
-  RunOptions options;
-  options.address_space_limit_bytes = 64u * 1024 * 1024;
-  options.timeout = std::chrono::seconds(30);
-
   // Well past the cap, so the allocation must fail rather than succeed slowly.
   const RunResult result = RunCommand(
       "python3", {"-c", "b = bytearray(512 * 1024 * 1024); print(len(b))"},
-      options);
+      {.address_space_limit_bytes = 64u * 1024 * 1024},
+      std::chrono::seconds(30));
   ASSERT_TRUE(result.started);
   EXPECT_FALSE(result.timed_out);
   EXPECT_NE(result.exit_code, 0) << "the cap did not bind";
@@ -201,25 +138,24 @@ TEST(RunCommandTest, ResolvesARelativeExecutableAgainstCwd) {
   }
   std::filesystem::permissions(dir / "bin" / "hello.sh",
                                std::filesystem::perms::owner_all);
-  RunOptions options;
+  Options options;
   options.cwd = dir;
   const RunResult result = RunCommand("bin/hello.sh", {}, options);
   EXPECT_TRUE(result.started);
   EXPECT_EQ(result.exit_code, 7);
   // Without a cwd the path is relative to the caller, where it does not exist.
-  EXPECT_FALSE(RunCommand("bin/hello.sh", {}, RunOptions{}).started);
+  EXPECT_FALSE(RunCommand("bin/hello.sh", {}, Options{}).started);
   std::filesystem::remove_all(dir);
 }
 
 TEST(ChildTest, PollReportsExitAndStopKillsAGroup) {
-  auto exited = Child::Start("/bin/sh", {"-c", "exit 3"}, ChildOptions{});
+  auto exited = Child::Start("/bin/sh", {"-c", "exit 3"}, Options{});
   ASSERT_TRUE(exited.has_value());
   EXPECT_EQ(exited->Wait(), 3);
   EXPECT_EQ(exited->Poll(), std::optional<int>(3));
   EXPECT_EQ(exited->Stop(std::chrono::seconds(1)), 3);
 
-  auto running =
-      Child::Start("/bin/sh", {"-c", "sleep 30; exit 0"}, ChildOptions{});
+  auto running = Child::Start("/bin/sh", {"-c", "sleep 30; exit 0"}, Options{});
   ASSERT_TRUE(running.has_value());
   EXPECT_FALSE(running->Poll().has_value());
   const auto started = std::chrono::steady_clock::now();
@@ -227,13 +163,13 @@ TEST(ChildTest, PollReportsExitAndStopKillsAGroup) {
   EXPECT_LT(std::chrono::steady_clock::now() - started,
             std::chrono::seconds(5));
 
-  EXPECT_FALSE(Child::Start("/no/such/binary", {}, ChildOptions{}).has_value());
+  EXPECT_FALSE(Child::Start("/no/such/binary", {}, Options{}).has_value());
 }
 
-TEST(ChildTest, ExtraEnvOverlaysTheCallersEnvironment) {
+TEST(ChildTest, EnvOverlaysTheCallersEnvironment) {
   const auto stdout_path = MakeTempFilePath("child_env");
-  ChildOptions options;
-  options.extra_env = {"PROCESS_TEST_MARK=set"};
+  Options options;
+  options.env = {"PROCESS_TEST_MARK=set"};
   options.stdout_path = stdout_path;
   auto child = Child::Start(
       "/bin/sh", {"-c", "echo \"$PROCESS_TEST_MARK ${PATH:+path}\""}, options);

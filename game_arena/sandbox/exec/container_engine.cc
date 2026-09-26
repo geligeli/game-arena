@@ -455,12 +455,12 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     if (observer != nullptr) {
       observer->OnStepStarted(job.id(), phase.name(), step.name());
     }
-    process::RunOptions opts;
-    opts.timeout = std::chrono::seconds(120);
-    opts.stdout_path = log_dir / (step.name() + "_start.out");
-    opts.stderr_path = log_dir / (step.name() + "_start.err");
+    const process::Options opts = {
+        .stdout_path = log_dir / (step.name() + "_start.out"),
+        .stderr_path = log_dir / (step.name() + "_start.err")};
     const process::RunResult started = process::RunCommand(
-        config_.docker, container_args(step, /*detached=*/true), opts);
+        config_.docker, container_args(step, /*detached=*/true), opts,
+        std::chrono::seconds(120));
     if (!started.started || started.exit_code != 0) {
       Fail(status, proto::Status::START_FAILED,
            "cannot start " + step.name() + ": " +

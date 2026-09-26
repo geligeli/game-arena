@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -18,8 +19,6 @@
 #include "game_arena/sandbox/common/step.h"
 #include "game_arena/sandbox/common/text.h"
 #include "game_arena/sandbox/exec/workspace.h"
-
-extern char **environ;
 
 namespace sandbox_exec {
 
@@ -50,21 +49,6 @@ void Fail(proto::Status *status, proto::Status::Code code,
   status->set_message(message);
   status->set_phase(phase);
   status->set_step(step);
-}
-
-// The caller's environment plus |extra|. RunOptions treats an empty env as
-// "inherit", so adding one variable means rebuilding the whole list.
-std::vector<std::string> InheritedEnvWith(
-    const std::map<std::string, std::string> &extra) {
-  std::vector<std::string> env;
-  for (char **entry = ::environ; entry != nullptr && *entry != nullptr;
-       ++entry) {
-    env.emplace_back(*entry);
-  }
-  for (const auto &[key, value] : extra) {
-    env.push_back(key + "=" + value);
-  }
-  return env;
 }
 
 // Polls for a step's port file. Polling rather than a pipe because a
@@ -136,6 +120,8 @@ proto::JobResult ProcessEngine::Run(const proto::Job &job, Observer *observer) {
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    // A phase that failed early stopped its background steps untracked.
+    running_.erase(job.id());
     if (cancelled_.erase(job.id()) > 0) {
       // Unconditionally, including over an OK status: a killed step merely
       // exits nonzero, which on its own is indistinguishable from a step that
@@ -164,7 +150,7 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
 
   // Resolved addresses of the background steps, for {{peer:<name>}}.
   std::map<std::string, std::string> peers;
-  std::vector<process::InputStreamProcess> background;
+  std::vector<process::Child> background;
 
   // Every placeholder this engine can resolve, rebuilt per step because
   // {{port_file}} is per step and the peer addresses are only known once the
@@ -205,15 +191,18 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     const std::filesystem::path port_file = log_dir / (step.name() + ".port");
     std::error_code ec;
     std::filesystem::remove(port_file, ec);
-    if (!std::filesystem::exists(argv.front())) {
+    std::optional<process::Child> child = process::Child::Start(
+        argv.front(), {argv.begin() + 1, argv.end()},
+        {.stdout_path = log_dir / (step.name() + ".out"),
+         .stderr_path = log_dir / (step.name() + ".err")});
+    if (!child) {
       Fail(status, proto::Status::START_FAILED,
            step.name() + " is missing at " + argv.front(), phase.name(),
            step.name());
       return false;
     }
-    background.push_back(process::CreateInputStreamProcess(
-        argv.front(), {argv.begin() + 1, argv.end()}, /*env=*/{},
-        log_dir / (step.name() + ".out"), log_dir / (step.name() + ".err")));
+    Track(job.id(), child->pid());
+    background.push_back(std::move(*child));
 
     if (step.endpoint().discover_via_port_file()) {
       // The port is only knowable once the step is listening. Waiting for the
@@ -249,11 +238,10 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   }
 
   const proto::Step resolved_foreground = resolve(foreground);
-  const std::vector<std::string> foreground_env =
-      foreground.env().empty()
-          ? std::vector<std::string>{}
-          : InheritedEnvWith({resolved_foreground.env().begin(),
-                              resolved_foreground.env().end()});
+  std::vector<std::string> foreground_env;
+  for (const auto &[key, value] : resolved_foreground.env()) {
+    foreground_env.push_back(key + "=" + value);
+  }
 
   pid_t tracked = 0;
   const sandbox_common::StepResult ran = sandbox_common::RunStep(
@@ -289,8 +277,9 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
 
   // The background steps are done being talked to; let them finish writing
   // their own verdicts.
-  for (process::InputStreamProcess &step : background) {
+  for (process::Child &step : background) {
     step.Wait();
+    Untrack(job.id(), step.pid());
   }
   for (const proto::Step &step : phase.background()) {
     proto::StepResult *background_result = result->add_steps();

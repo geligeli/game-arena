@@ -13,18 +13,17 @@ StepResult RunStep(const std::string &executable,
                    const std::function<void(pid_t)> &on_started,
                    const std::vector<std::string> &env,
                    const std::filesystem::path &stdin_path) {
-  process::RunOptions options;
-  options.on_started = on_started;
-  options.stdin_path = stdin_path;
-  options.cwd = cwd;
-  options.env = env;
-  options.stdout_path = log_dir / (tag + ".out");
-  options.stderr_path = log_dir / (tag + ".err");
-  options.timeout = timeout;
-  options.address_space_limit_bytes = address_space_limit_bytes;
+  const process::Options options = {
+      .cwd = cwd,
+      .env = env,
+      .stdin_path = stdin_path,
+      .stdout_path = log_dir / (tag + ".out"),
+      .stderr_path = log_dir / (tag + ".err"),
+      .address_space_limit_bytes = address_space_limit_bytes};
 
   StepResult result;
-  result.run = process::RunCommand(executable, args, options);
+  result.run =
+      process::RunCommand(executable, args, options, timeout, on_started);
   result.output = ReadFile(options.stdout_path) + ReadFile(options.stderr_path);
   return result;
 }

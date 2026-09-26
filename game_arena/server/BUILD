@@ -280,7 +280,6 @@ cc_binary(
     name = "problem_server",
     srcs = ["problem_server.cc"],
     deps = [
-        "//game_arena/common/process",
         ":arena_service",
         ":candidate_store",
         ":dashboard",

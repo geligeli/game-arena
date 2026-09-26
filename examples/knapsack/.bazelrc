@@ -25,6 +25,10 @@ build --host_cxxopt=-Wno-deprecated-attributes
 build --cxxopt=-Wno-deprecated-declarations
 build --host_cxxopt=-Wno-deprecated-declarations
 
+# Optimized everywhere a submission is built -- the sandbox, a kit, the
+# kit's primed cache -- so what a participant measures is what is played.
+build -c opt
+
 # Nothing host-specific above: this file is read inside the sandbox image and
 # in every participant's kit. A shared disk cache, a local game_arena override
 # and the like go in .bazelrc.local, which is uncommitted.

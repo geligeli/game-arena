@@ -156,17 +156,14 @@ auto main(int argc, char **argv) -> int {
     }
 
     const auto out_path = scratch / (path.stem().string() + ".out");
-    process::RunOptions options;
-    options.stdout_path = out_path;
-    options.stderr_path = scratch / (path.stem().string() + ".err");
-    options.timeout =
-        std::chrono::seconds(absl::GetFlag(FLAGS_per_case_timeout_s));
-    // Without a cap, a submission that allocates without bound takes the whole
-    // worker down with it rather than failing its own case.
-    options.address_space_limit_bytes = std::size_t{2} << 30;
-
-    const process::RunResult result =
-        process::RunCommand(solution, {path.string()}, options);
+    const process::RunResult result = process::RunCommand(
+        solution, {path.string()},
+        {.stdout_path = out_path,
+         .stderr_path = scratch / (path.stem().string() + ".err"),
+         // Without a cap, a submission that allocates without bound takes the
+         // whole worker down with it rather than failing its own case.
+         .address_space_limit_bytes = std::size_t{2} << 30},
+        std::chrono::seconds(absl::GetFlag(FLAGS_per_case_timeout_s)));
     if (!result.started || result.timed_out || result.exit_code != 0) {
       std::cerr << path.stem().string() << ": no answer ("
                 << (result.timed_out

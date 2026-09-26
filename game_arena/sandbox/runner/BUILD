@@ -36,7 +36,6 @@ cc_library(
     srcs = ["sandbox_runner.cc"],
     hdrs = ["sandbox_runner.h"],
     deps = [
-        "//game_arena/common/process",
         ":sandbox_service_cc_grpc",
         "//game_arena/sandbox/common:docker",
         "//game_arena/sandbox/common:files",

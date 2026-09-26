@@ -29,10 +29,7 @@ struct StepResult {
 // Runs |executable| with output captured to <log_dir>/<tag>.{out,err} and a
 // wall-clock timeout. |on_started| publishes the child's process group, so a
 // caller can abort a step it is not the one waiting on.
-// |env| replaces the caller's environment rather than adding to it, the way
-// RunOptions does; empty inherits. Last in the list, out of the order it
-// reads in, so that adding it did not renumber the arguments of every
-// existing call site.
+// |env| is "K=V" entries laid over the caller's environment.
 StepResult RunStep(const std::string &executable,
                    const std::vector<std::string> &args,
                    const std::filesystem::path &cwd,

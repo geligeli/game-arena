@@ -40,7 +40,6 @@ bazel run //game_arena/server:problem_server -- \
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
-#include "game_arena/common/process/process.h"
 #include "game_arena/server/arena_service.h"
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/client_registry.h"

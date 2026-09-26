@@ -216,9 +216,7 @@ bool WriteFile(const std::filesystem::path &path, std::string_view text) {
 int RunInherit(const std::string &executable,
                const std::vector<std::string> &arguments,
                const std::filesystem::path &cwd) {
-  process::ChildOptions options;
-  options.cwd = cwd;
-  auto child = process::Child::Start(executable, arguments, options);
+  auto child = process::Child::Start(executable, arguments, {.cwd = cwd});
   if (!child) {
     return -1;
   }
@@ -240,12 +238,10 @@ std::optional<std::string> Capture(const std::string &executable,
       std::filesystem::temp_directory_path() /
       absl::StrCat("arena_tournament_", ::getpid(), "_",
                    std::chrono::steady_clock::now().time_since_epoch().count());
-  process::RunOptions options;
-  options.cwd = cwd;
-  options.stdout_path = out;
-  options.timeout = std::chrono::seconds(60);
-  const process::RunResult result =
-      process::RunCommand(executable, arguments, options);
+  const process::RunResult result = process::RunCommand(
+      executable, arguments,
+      {.cwd = cwd, .stdout_path = out, .stderr_path = "/dev/null"},
+      std::chrono::seconds(60));
   std::optional<std::string> text = ReadFile(out);
   std::filesystem::remove(out);
   if (!result.started || result.exit_code != 0) {
@@ -637,8 +633,7 @@ int RunUp(const ArenaRunfiles &runfiles) {
   ::sigaction(SIGINT, &action, nullptr);
   ::sigaction(SIGTERM, &action, nullptr);
 
-  auto server = process::Child::Start(server_bin.string(), server_args,
-                                      process::ChildOptions{});
+  auto server = process::Child::Start(server_bin.string(), server_args, {});
   if (!server) {
     LOG(ERROR) << "cannot start " << server_bin;
     return 1;
@@ -943,15 +938,13 @@ std::string KitMcpJson(const std::filesystem::path &kit,
 // The build settings a kit at |kit| keeps in its .bazelrc.local: absolute
 // paths, because bazel does not expand %workspace% inside a flag's value.
 //
-// |portable| is what makes a cache primed on this host hit inside an image of
-// the kit. An action's key covers its environment, so PATH has to be bazel's
-// fixed one rather than whoever-ran-it's, and a kit that is primed for an
-// image carries the flag on the host too: the two builds have to be the same
-// build. |vendored| points bazel at the dependencies `bazel vendor` copied
-// into the kit, so that builds need no network and resolve exactly what the
-// sandbox will.
+// An action's key covers its environment, so PATH is always bazel's fixed one
+// rather than whoever-ran-it's: otherwise sourcing arena.env twice, or a
+// primed cache used from an image, misses every action. |vendored| points
+// bazel at the dependencies `bazel vendor` copied into the kit, so that builds
+// need no network and resolve exactly what the sandbox will.
 std::string KitBuildSettings(const std::filesystem::path &kit, bool cached,
-                             bool portable, bool vendored) {
+                             bool vendored) {
   std::string rc;
   if (cached) {
     // Bounded: this lives inside someone's working directory, and a cache
@@ -961,9 +954,7 @@ std::string KitBuildSettings(const std::filesystem::path &kit, bool cached,
                     "\ncommon --experimental_disk_cache_gc_max_size=",
                     absl::GetFlag(FLAGS_cache_limit), "\n");
   }
-  if (portable) {
-    absl::StrAppend(&rc, "build --incompatible_strict_action_env\n");
-  }
+  absl::StrAppend(&rc, "build --incompatible_strict_action_env\n");
   if (vendored) {
     absl::StrAppend(&rc, "common --vendor_dir=",
                     (kit / ".arena" / "vendor").string(), "\n");
@@ -1212,7 +1203,7 @@ int LayerKitImage(const ImageTools &tools, std::filesystem::path kit,
             absl::StrCat(
                 "# Written by arena_tournament kit, for the kit at "
                 "/kit in this image.\n",
-                KitBuildSettings("/kit", cached, /*portable=*/true, vendored)));
+                KitBuildSettings("/kit", cached, vendored)));
 
   std::printf("\nAdding to %s, as %s...\n", tools.base.filename().c_str(),
               image.c_str());
@@ -1508,7 +1499,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
                     "kit.\n"
                   : "# Written by arena_tournament kit. Yours: bazel reads it "
                     "after .bazelrc.\n",
-      KitBuildSettings(home, prime, /*portable=*/layered, vendored));
+      KitBuildSettings(home, prime, vendored));
   if (!arena_override.empty()) {
     absl::StrAppend(&local, "common --override_module=game_arena=",
                     Resolve(arena_override).string(), "\n");
@@ -1711,10 +1702,8 @@ int RunPlay(const ArenaRunfiles &runfiles) {
   // at a stranger's arena while ours failed to bind behind our back.
   const std::filesystem::path pid_file = data_dir / "problem_server.pid";
   std::filesystem::remove(pid_file, ec);
-  process::ChildOptions up_options;
-  up_options.stdout_path = log;
-  up_options.stderr_path = log;
-  auto up = process::Child::Start(self.string(), up_args, up_options);
+  auto up = process::Child::Start(self.string(), up_args,
+                                  {.stdout_path = log, .stderr_path = log});
   if (!up) {
     LOG(ERROR) << "cannot start " << self;
     return 1;
@@ -1746,13 +1735,12 @@ int RunPlay(const ArenaRunfiles &runfiles) {
     up->Stop(std::chrono::seconds(10));
     return 1;
   }
-  process::ChildOptions worker_options;
-  worker_options.stdout_path = data_dir / "logs" / "worker.log";
-  worker_options.stderr_path = worker_options.stdout_path;
-  worker_options.extra_env = {"ARENA_WORK_DIR=" + (data_dir / "work").string()};
+  const std::filesystem::path worker_log = data_dir / "logs" / "worker.log";
   auto worker = process::Child::Start(
       worker_bin.string(), {absl::StrCat("--server=localhost:", grpc_port)},
-      worker_options);
+      {.env = {"ARENA_WORK_DIR=" + (data_dir / "work").string()},
+       .stdout_path = worker_log,
+       .stderr_path = worker_log});
   if (!worker) {
     LOG(ERROR) << "cannot start " << worker_bin;
     up->Stop(std::chrono::seconds(10));
@@ -1804,9 +1792,9 @@ int RunPlay(const ArenaRunfiles &runfiles) {
   const std::string shell = absl::GetFlag(FLAGS_shell).empty()
                                 ? EnvOr("SHELL", "bash")
                                 : absl::GetFlag(FLAGS_shell);
-  process::ChildOptions shell_options;
+  process::Options shell_options;
   shell_options.cwd = kit_dir;
-  shell_options.extra_env = {
+  shell_options.env = {
       absl::StrCat("ARENA_SERVER=localhost:", grpc_port),
       "ARENA_TOKEN=" + token,
       "ARENA_NAME=" + client_id,

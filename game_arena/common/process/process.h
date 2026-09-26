@@ -3,115 +3,41 @@
 #include <sys/types.h>
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <functional>
-#include <memory>
 #include <optional>
-#include <ostream>
 #include <string>
 #include <vector>
 
 namespace process {
 
-struct InputStreamProcess {
-  InputStreamProcess();
-  InputStreamProcess(InputStreamProcess&& other) noexcept;
-  InputStreamProcess& operator=(InputStreamProcess&& other) noexcept;
-  ~InputStreamProcess();
-
-  InputStreamProcess(const InputStreamProcess&) = delete;
-  InputStreamProcess& operator=(const InputStreamProcess&) = delete;
-
-  std::ostream& stdin();
-  int Wait();
-
- private:
-  struct Impl;
-  explicit InputStreamProcess(std::unique_ptr<Impl> impl);
-
-  std::unique_ptr<Impl> impl_;
-
-  friend InputStreamProcess CreateInputStreamProcess(
-      const std::string& executable, const std::vector<std::string>& arguments,
-      const std::vector<std::string>& env,
-      std::filesystem::path const& stdout_path,
-      std::filesystem::path const& stderr_path);
-};
-
-InputStreamProcess CreateInputStreamProcess(
-    const std::string& executable, const std::vector<std::string>& arguments,
-    const std::vector<std::string>& env,
-    std::filesystem::path const& stdout_path = "/dev/null",
-    std::filesystem::path const& stderr_path = "/dev/null");
-
-// ---------------------------------------------------------------------------
-// Run to completion
-// ---------------------------------------------------------------------------
-
-struct RunOptions {
-  std::filesystem::path cwd;          // empty: inherit the caller's
-  std::vector<std::string> env;       // empty: inherit the caller's
-  std::filesystem::path stdout_path;  // empty: /dev/null
-  std::filesystem::path stderr_path;  // empty: /dev/null
-  std::filesystem::path stdin_path;   // empty: inherit the caller's
-  // Wall-clock limit. Zero waits indefinitely. On expiry the child's whole
-  // process group is signalled, not just the child: build tools spawn trees,
-  // and killing only the parent leaves the workers running.
-  std::chrono::seconds timeout{0};
-  // Grace between SIGTERM and SIGKILL when a timeout fires.
-  std::chrono::seconds kill_grace{5};
+// How a child starts. Empty paths inherit the caller's. Every field has an
+// initializer so a designated one may leave any of them out.
+struct Options {
+  std::filesystem::path cwd = {};
+  // "K=V" entries laid over the caller's environment.
+  std::vector<std::string> env = {};
+  std::filesystem::path stdin_path = {};
+  std::filesystem::path stdout_path = {};
+  std::filesystem::path stderr_path = {};
   // RLIMIT_AS for the child, in bytes. Zero leaves it unlimited. A cap makes
   // an over-allocating child fail its own allocation rather than push the host
   // into swap or the OOM killer.
   std::size_t address_space_limit_bytes = 0;
-
-  // Called in the parent with the child's pgid, once, right after the child is
-  // in its own process group. Lets a caller abort a run it is not the one
-  // waiting on -- `killpg(pgid, SIGKILL)` reaches the whole tree, which is what
-  // a build tool needs. Runs on the calling thread before the wait begins, so
-  // it must not block.
-  std::function<void(pid_t)> on_started;
 };
 
-struct RunResult {
-  int exit_code = -1;  // 128 + signal when killed by one
-  bool timed_out = false;
-  bool started = false;  // false when the executable could not be launched
-};
-
-// Runs |executable| to completion with its own process group. |executable| is
-// resolved through PATH when it contains no '/'; a relative path with one is
-// taken relative to |options.cwd| when that is set.
-RunResult RunCommand(const std::string& executable,
-                     const std::vector<std::string>& arguments,
-                     const RunOptions& options);
-
-// ---------------------------------------------------------------------------
-// Long-running children
-// ---------------------------------------------------------------------------
-
-struct ChildOptions {
-  std::filesystem::path cwd;  // empty: inherit the caller's
-  // "K=V" entries added to the caller's environment, overriding any the caller
-  // already has. Unlike RunOptions::env this never replaces the environment
-  // wholesale: a supervised server should see the same PATH and HOME as the
-  // supervisor, plus what it is told.
-  std::vector<std::string> extra_env;
-  std::filesystem::path stdout_path;  // empty: inherit the caller's
-  std::filesystem::path stderr_path;  // empty: inherit the caller's
-};
-
-// A child that is meant to keep running -- a server this process supervises.
-// Its own process group, like RunCommand, so stopping it stops what it
-// spawned. Destroying a running Child kills it: a supervisor that exits
-// leaves nothing behind.
+// A child in its own process group, so stopping it stops what it spawned:
+// build tools fan out into workers that outlive their parent otherwise.
+// Destroying a running Child stops it.
 class Child {
  public:
   // Nullopt when |executable| cannot be launched. Resolved through PATH when
-  // it contains no '/'.
+  // it contains no '/'; a relative path with one is taken relative to
+  // |options.cwd| when that is set.
   static std::optional<Child> Start(const std::string& executable,
                                     const std::vector<std::string>& arguments,
-                                    const ChildOptions& options);
+                                    const Options& options);
 
   Child(Child&& other) noexcept;
   Child& operator=(Child&& other) noexcept;
@@ -122,18 +48,14 @@ class Child {
   pid_t pid() const { return pid_; }
 
   // The exit code once the child has exited (128 + signal when killed by
-  // one), nullopt while it runs. Reaps the child; later calls return the same
-  // code.
+  // one), nullopt while it runs.
   std::optional<int> Poll();
-
-  // Sends |signum| to the child's whole process group.
-  void Signal(int signum) const;
 
   // Blocks until the child exits and returns its exit code.
   int Wait();
 
   // SIGTERM the group, wait up to |grace|, then SIGKILL it. Returns the exit
-  // code. A no-op returning the recorded code if it already exited.
+  // code, or the recorded one if it already exited.
   int Stop(std::chrono::seconds grace);
 
  private:
@@ -142,6 +64,20 @@ class Child {
   pid_t pid_ = -1;
   std::optional<int> exit_code_;
 };
+
+struct RunResult {
+  int exit_code = -1;  // 128 + signal when killed by one
+  bool timed_out = false;
+  bool started = false;  // false when the executable could not be launched
+};
+
+// Runs |executable| to completion. A nonzero |timeout| stops it on expiry.
+// |on_started| gets the child's pgid before the wait begins, so a caller can
+// abort a run it is not the one waiting on; it must not block.
+RunResult RunCommand(const std::string& executable,
+                     const std::vector<std::string>& arguments,
+                     const Options& options, std::chrono::seconds timeout = {},
+                     const std::function<void(pid_t)>& on_started = {});
 
 // Finds |name| on PATH, or returns it unchanged when it already contains '/'.
 // Empty when nothing executable matches.
