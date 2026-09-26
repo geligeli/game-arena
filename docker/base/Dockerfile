@@ -24,9 +24,10 @@
 # whatever their distro ships.
 #
 # Build args:
-#   BAZEL_VERSION   the bazel release to install. A kit's cache is primed on
-#                   the host that writes it, so this should be the release
-#                   that host runs.
+#   BAZEL_VERSION   the bazel release to install: the one .bazelversion
+#                   pins. A kit is vendored and primed on the host that
+#                   writes it, and a vendored repo is current only for the
+#                   bazel that vendored it.
 
 FROM ubuntu:24.04
 
