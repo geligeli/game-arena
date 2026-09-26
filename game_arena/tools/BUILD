@@ -13,6 +13,7 @@ cc_binary(
         "//game_arena/server:client_registry",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
+        "@abseil-cpp//absl/flags:usage",
         "@abseil-cpp//absl/log:globals",
         "@abseil-cpp//absl/log:initialize",
     ],

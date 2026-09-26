@@ -51,6 +51,13 @@ std::string ClientBlockText(const proto::Client &client);
 // Appends |client| to the registry file at |path|, creating the file if it
 // does not exist. The existing file is parsed first: a registry that does not
 // load, or already has this client_id, is left untouched and reported.
+// Replaces the token of |client_id|, already in the registry at |path|, with
+// the one |token_sha256| hashes; everything else about the client stays. The
+// file is rewritten from what it parses to, so its comments do not survive.
+bool ReplaceClientToken(const std::filesystem::path &path,
+                        const std::string &client_id,
+                        const std::string &token_sha256, std::string *error);
+
 bool AppendClientToRegistry(const std::filesystem::path &path,
                             const proto::Client &client, std::string *error);
 

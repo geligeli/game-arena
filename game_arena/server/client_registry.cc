@@ -123,6 +123,50 @@ bool AppendClientToRegistry(const std::filesystem::path &path,
   return static_cast<bool>(out);
 }
 
+bool ReplaceClientToken(const std::filesystem::path &path,
+                        const std::string &client_id,
+                        const std::string &token_sha256, std::string *error) {
+  std::ifstream in(path, std::ios::binary);
+  const std::string existing((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+  proto::ClientRegistry parsed;
+  if (!in ||
+      !google::protobuf::TextFormat::ParseFromString(existing, &parsed)) {
+    *error = absl::StrCat("cannot read client registry ", path.string());
+    return false;
+  }
+  bool found = false;
+  for (proto::Client &present : *parsed.mutable_clients()) {
+    if (present.client_id() == client_id) {
+      present.set_token_sha256(token_sha256);
+      found = true;
+    }
+  }
+  if (!found) {
+    *error = absl::StrCat("client '", client_id, "' is not in ", path.string());
+    return false;
+  }
+  std::string text;
+  google::protobuf::TextFormat::PrintToString(parsed, &text);
+  // Written aside and renamed, so a server reading it never sees half a file.
+  const std::filesystem::path tmp = path.string() + ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    out << text;
+    if (!out) {
+      *error = absl::StrCat("cannot write ", tmp.string());
+      return false;
+    }
+  }
+  std::error_code ec;
+  std::filesystem::rename(tmp, path, ec);
+  if (ec) {
+    *error = absl::StrCat("cannot replace ", path.string(), ": ", ec.message());
+    return false;
+  }
+  return true;
+}
+
 ClientRegistry::ClientRegistry(std::filesystem::path path,
                                proto::ClientQuota defaults)
     : path_(std::move(path)), defaults_(std::move(defaults)) {}

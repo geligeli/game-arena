@@ -19,3 +19,7 @@ mcp_servers/arena_mcp/_pb/
 
 # Machine-local bazel settings (see .bazelrc).
 .bazelrc.local
+
+# Symbol index written by tools/cpp_format.sh index.
+index.pb
+index.pb.sqlite

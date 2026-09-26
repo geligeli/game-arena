@@ -201,5 +201,33 @@ TEST(ClientMintTest, MintedClientsRoundTripThroughTheRegistryFile) {
   std::filesystem::remove(path);
 }
 
+TEST(ClientMintTest, ReplacingATokenKeepsTheRestOfTheClient) {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "client_registry_replace_test";
+  std::filesystem::remove(path);
+  proto::ClientQuota quota;
+  quota.set_max_queued_jobs(3);
+  const std::string old_token = MintToken();
+  std::string error;
+  ASSERT_TRUE(AppendClientToRegistry(
+      path, MakeClient("alice", "Alice", old_token, quota), &error))
+      << error;
+
+  const std::string new_token = MintToken();
+  ASSERT_TRUE(ReplaceClientToken(path, "alice", HashToken(new_token), &error))
+      << error;
+  EXPECT_FALSE(
+      ReplaceClientToken(path, "nobody", HashToken(new_token), &error));
+
+  ClientRegistry registry(path, proto::ClientQuota());
+  ASSERT_TRUE(registry.Load(&error)) << error;
+  EXPECT_FALSE(registry.Resolve(old_token).has_value());
+  const auto alice = registry.Resolve(new_token);
+  ASSERT_TRUE(alice.has_value());
+  EXPECT_EQ(alice->display_name, "Alice");
+  EXPECT_EQ(alice->quota.max_queued_jobs(), 3u);
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 }  // namespace tournament_arena
