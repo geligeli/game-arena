@@ -1,11 +1,13 @@
 // Command-line client for the arena's Arena service.
 /*
 arena_cli rules
-arena_cli submit --name="My Bot" --wait          # what the kit says a solution
-is arena_cli submit --name="My Bot" --file=strategy.h --wait arena_cli submit
---name="My Bot" --patch=my.diff arena_cli job <job_id> [--wait] arena_cli
-candidates [--order=newest] arena_cli leaderboard [--limit=20] arena_cli source
-<name> [path]                   # pulls their directory in beside yours
+arena_cli submit --wait                          # your directory, bots/<you>/
+arena_cli submit --file=strategy.h --wait
+arena_cli submit --patch=my.diff
+arena_cli job <job_id> [--wait]
+arena_cli candidates [--order=newest]
+arena_cli leaderboard [--limit=20]
+arena_cli source <name> [path]   # pulls their directory in beside yours
 arena_cli spar <name> [--games=10]   # and plays yours against it, here
 */
 //
@@ -65,7 +67,8 @@ ABSL_FLAG(std::string, token, "",
 ABSL_FLAG(int, timeout_s, 120, "Per-RPC timeout in seconds");
 
 ABSL_FLAG(std::string, name, "",
-          "submit: display name for the candidate. Default: who you are");
+          "submit: display name for the candidate. Default: who your token "
+          "says you are");
 ABSL_FLAG(std::vector<std::string>, file, {},
           "submit: a source file to submit (repeatable). Read from disk, "
           "flattened to its basename; the server generates the BUILD");
@@ -405,13 +408,13 @@ int CmdRules(const Client &client, const std::string &server) {
   }
   if (!problem.files_submit_dir().empty()) {
     std::printf(
-        "  files:  submit --name=... --file=strategy.h\n"
-        "          (placed under %s/<your-id>/, BUILD generated)\n"
-        "  patch:  submit --name=... --patch=my.diff\n",
+        "  files:  submit --file=strategy.h\n"
+        "          (placed under %s/<you>/, BUILD generated)\n"
+        "  patch:  submit --patch=my.diff\n",
         problem.files_submit_dir().c_str());
   } else {
     std::printf(
-        "  patch only: submit --name=... --patch=my.diff\n"
+        "  patch only: submit --patch=my.diff\n"
         "  (this problem's solutions change existing code)\n");
   }
   std::printf("  then poll: job <job_id> [--wait]\n\n");
@@ -492,10 +495,6 @@ int CmdSubmit(const Client &client, const std::string &server) {
   const std::string name =
       absl::GetFlag(FLAGS_name).empty() ? client.me : absl::GetFlag(FLAGS_name);
 
-  if (name.empty()) {
-    std::fprintf(stderr, "submit: --name is required\n");
-    return kExitUsage;
-  }
   // No files and no patch: your directory is your solution. This is the
   // ordinary way to submit from a kit -- `submit` and nothing else.
   if (files.empty() && patch_path.empty() && !client.me.empty()) {
@@ -973,10 +972,9 @@ void PrintUsage() {
       "usage: arena_cli [--server=host:port] [--token=...] <command> ...\n"
       "\n"
       "  rules                          this server's problem and limits\n"
-      "  submit --name=... [--file=f ... | --patch=d] [--wait]\n"
-      "                                 submit a candidate, queue its build.\n"
-      "                                 With no --file, what the kit's\n"
-      "                                 arena.textproto says a solution is\n"
+      "  submit [--file=f ... | --patch=d] [--wait]\n"
+      "                                 submit, queue its build. With no\n"
+      "                                 --file, your directory\n"
       "  job <job_id> [--wait]          build/match status\n"
       "  candidates [--order=best|newest] [--author=a] [--limit=n]\n"
       "                                 everyone, including pending/broken\n"

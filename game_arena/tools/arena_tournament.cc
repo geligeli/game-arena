@@ -100,7 +100,8 @@ ABSL_FLAG(std::string, clients, "",
 // kit
 ABSL_FLAG(std::string, out, "",
           "kit: directory to write the kit into (created). Default: "
-          "<data_dir>/kits/<client_id>");
+          "<data_dir>/kits/<client_id>; for --image, <data_dir>/images/kit, "
+          "which keeps what was vendored and primed between images");
 ABSL_FLAG(std::string, server, "localhost:50051",
           "kit: the arena address baked into the kit");
 ABSL_FLAG(std::string, http, "localhost:8090",
@@ -346,10 +347,13 @@ class ArenaRunfiles {
 // check
 // ---------------------------------------------------------------------------
 
-bool CheckConfig(const proto::ProblemConfig &config, std::string *error) {
-  // The tree is only here to check under `bazel run` from the problem's
-  // checkout: a test has the config as a lone data file.
-  const std::string tree = EnvOr("BUILD_WORKSPACE_DIRECTORY", "");
+bool CheckConfig(const proto::ProblemConfig &config,
+                 const std::filesystem::path &config_path, std::string *error) {
+  // The problem's tree is where its config is, and only there to check under
+  // `bazel run`: a test has the config as a lone data file.
+  const std::string tree = EnvOr("BUILD_WORKSPACE_DIRECTORY", "").empty()
+                               ? ""
+                               : config_path.parent_path().string();
   const auto in_tree = [&tree](const std::string &path) {
     return std::filesystem::exists(std::filesystem::path(tree) / path);
   };
@@ -392,7 +396,7 @@ int RunCheck() {
     return 1;
   }
   std::string error;
-  if (!CheckConfig(*config, &error)) {
+  if (!CheckConfig(*config, config_path, &error)) {
     LOG(ERROR) << config_path.string() << ": " << error;
     return 1;
   }
@@ -586,7 +590,7 @@ int RunUp(const ArenaRunfiles &runfiles) {
     return 1;
   }
   std::string error;
-  if (!CheckConfig(*config, &error)) {
+  if (!CheckConfig(*config, config_path, &error)) {
     LOG(ERROR) << config_path.string() << ": " << error;
     return 1;
   }
@@ -1448,19 +1452,31 @@ int RunKit(const ArenaRunfiles &runfiles) {
   }
 
   const std::string client_id = absl::GetFlag(FLAGS_mint);
+  // An image's kit is staged, not handed to anyone, so it is the same
+  // directory every time: what the last image vendored and primed is in
+  // .arena, and the next one starts from it. Everything else there is
+  // rewritten, so a file the kit no longer has cannot break the priming build.
+  const bool staged = layered && absl::GetFlag(FLAGS_out).empty();
   const std::filesystem::path out =
-      absl::GetFlag(FLAGS_out).empty()
+      staged ? StateDir(config->problem_id()) / "images" / "kit"
+      : absl::GetFlag(FLAGS_out).empty()
           ? StateDir(config->problem_id()) / "kits" /
                 (client_id.empty() ? "participant" : client_id)
           : Resolve(absl::GetFlag(FLAGS_out));
-  if (std::filesystem::exists(out) && !std::filesystem::is_empty(out) &&
-      !absl::GetFlag(FLAGS_force)) {
+  std::error_code ec;
+  if (staged) {
+    for (const auto &entry : std::filesystem::directory_iterator(out, ec)) {
+      if (entry.path().filename() != ".arena") {
+        std::filesystem::remove_all(entry.path(), ec);
+      }
+    }
+  } else if (std::filesystem::exists(out) && !std::filesystem::is_empty(out) &&
+             !absl::GetFlag(FLAGS_force)) {
     LOG(ERROR) << out
                << " exists and is not empty; pass --force to write "
                   "into it anyway";
     return 1;
   }
-  std::error_code ec;
   std::filesystem::create_directories(out, ec);
   if (ec) {
     LOG(ERROR) << "cannot create " << out << ": " << ec.message();
@@ -1921,7 +1937,7 @@ int RunPlay(const ArenaRunfiles &runfiles) {
       "  arena_cli is on your PATH, with ARENA_SERVER and ARENA_TOKEN set;\n"
       "  see ARENA.md. For example:\n"
       "    arena_cli rules\n"
-      "    arena_cli submit --name=try --wait\n"
+      "    arena_cli submit --wait\n"
       "    arena_cli leaderboard\n"
       "  tournament log: %s\n"
       "Leaving this shell stops the tournament.\n\n",

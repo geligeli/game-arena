@@ -35,9 +35,9 @@ bazel_dep(name = "rules_oci", version = "2.3.0")
 oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
     name = "arena_base",
-    digest = "sha256:e65008b7817ed904b2ca07c744703283edd92166d0d004e6590d839b22321b2d",
+    digest = "sha256:52a3d7317cc865f1071e857506f03e42238d2bcb4db098f3c13f359440b1648f",
     image = "registry.takumi.city/game-arena-base",
-    # tag = "noble-bazel8.8.0"
+    # tag = "noble-bazel8.8.0-nano"
 )
 use_repo(oci, "arena_base")
 
@@ -119,7 +119,7 @@ use_repo(pip, "arena_mcp_pip_deps")
 # @cpp_format_bin, so nothing in the build graph misses it.
 bazel_dep(name = "cpp_formatting", version = "0.1.0", dev_dependency = True)
 
-CPP_FORMAT_VERSION = "20260920-45a9031"
+CPP_FORMAT_VERSION = "20260920-abe6cee"
 
 archive_override(
     module_name = "cpp_formatting",

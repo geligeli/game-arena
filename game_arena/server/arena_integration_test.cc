@@ -481,6 +481,20 @@ TEST_F(AuthenticatedArenaTest, RefusesWritesWithoutAUsableToken) {
 }
 
 // The leaderboard is public and readable source is the point of the arena.
+TEST_F(AuthenticatedArenaTest, ATokenMintedSinceStartupIsReadOnFirstUse) {
+  // Minted into the file with no SIGHUP: an unknown token rereads it.
+  std::string error;
+  ASSERT_TRUE(AppendClientToRegistry(
+      dir_ / "clients.textproto",
+      MakeClient("agent-new", "agent-new", "new-token", proto::ClientQuota()),
+      &error))
+      << error;
+  EXPECT_TRUE(SubmitAs("new-token", "Late").ok());
+  EXPECT_EQ(store_->Get("agent-new")->author(), "agent-new");
+  EXPECT_EQ(SubmitAs("never-minted", "Nope").error_code(),
+            grpc::StatusCode::UNAUTHENTICATED);
+}
+
 TEST_F(AuthenticatedArenaTest, ReadsStayOpen) {
   ASSERT_TRUE(SubmitAs(kToken, "Readable").ok());
 

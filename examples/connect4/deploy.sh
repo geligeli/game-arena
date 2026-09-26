@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Primed: dependencies vendored and the cache warm, through prime.bazelrc.
 bazel run //:kit_image_issue -- --image=registry.takumi.city/connect4-kit:1 --push \
-    --prime_bazelrc=prime.bazelrc --out="$(mktemp -d)"
+    --prime_bazelrc=prime.bazelrc
 
 # The coordinator, as a process. It builds and runs nothing.
 LOG="$(mktemp)"

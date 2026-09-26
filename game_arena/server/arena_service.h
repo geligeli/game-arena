@@ -39,8 +39,7 @@ class ArenaService final : public proto::Arena::Service {
   ArenaService(CandidateStore *candidates, Scheduler *scheduler,
                Standings *standings, bool graded, std::string game,
                proto::ProblemInfo problem_info = {},
-               const ClientRegistry *clients = nullptr,
-               int default_list_limit = 50);
+               ClientRegistry *clients = nullptr, int default_list_limit = 50);
 
   grpc::Status Submit(grpc::ServerContext *context,
                       const proto::SubmitRequest *request,
@@ -106,7 +105,7 @@ class ArenaService final : public proto::Arena::Service {
   const std::string game_;
   // Served verbatim by GetProblem; built once at startup from the config.
   const proto::ProblemInfo problem_info_;
-  const ClientRegistry *clients_;  // not owned, may be null
+  ClientRegistry *clients_;  // not owned, may be null
   const int default_list_limit_;
 };
 

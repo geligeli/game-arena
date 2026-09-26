@@ -13,8 +13,7 @@ namespace tournament_arena {
 ArenaService::ArenaService(CandidateStore *candidates, Scheduler *scheduler,
                            Standings *standings, bool graded, std::string game,
                            proto::ProblemInfo problem_info,
-                           const ClientRegistry *clients,
-                           int default_list_limit)
+                           ClientRegistry *clients, int default_list_limit)
     : candidates_(candidates),
       scheduler_(scheduler),
       standings_(standings),
@@ -38,8 +37,15 @@ bool ArenaService::Authenticate(grpc::ServerContext *context,
                "x-arena-token metadata header. Ask the operator for one"};
     return false;
   }
-  const auto resolved =
-      clients_->Resolve(std::string_view(it->second.data(), it->second.size()));
+  const std::string_view token(it->second.data(), it->second.size());
+  auto resolved = clients_->Resolve(token);
+  // A token minted since the registry was read is in the file already.
+  if (!resolved.has_value()) {
+    std::string error;
+    if (clients_->Load(&error)) {
+      resolved = clients_->Resolve(token);
+    }
+  }
   if (!resolved.has_value()) {
     // Deliberately the same message for "unknown" and "disabled": which one it
     // is tells a caller whether they have guessed a real token.
@@ -142,6 +148,10 @@ grpc::Status ArenaService::Submit(grpc::ServerContext *context,
   proto::SubmitRequest attributed = *request;
   if (!identity.client_id.empty()) {
     attributed.set_author(identity.client_id);
+    // Unnamed, a submission is called what its token says its author is.
+    if (attributed.display_name().empty()) {
+      attributed.set_display_name(identity.client_id);
+    }
   }
   // One server runs one problem, so the game is the problem's, not the
   // submitter's: an empty one would otherwise reach the referee as --game="".

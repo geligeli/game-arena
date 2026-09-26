@@ -8,8 +8,8 @@
 # container to run in, and nothing else an arena image is made of does.
 #
 #   docker build --provenance=false --sbom=false \
-#       -t registry.takumi.city/game-arena-base:noble-bazel8.8.0 docker/base
-#   docker push registry.takumi.city/game-arena-base:noble-bazel8.8.0
+#       -t registry.takumi.city/game-arena-base:noble-bazel8.8.0-nano docker/base
+#   docker push registry.takumi.city/game-arena-base:noble-bazel8.8.0-nano
 #
 # Then pin what the push printed in MODULE.bazel (oci.pull, name "arena_base").
 # The tag is for people; the digest is what builds use, so a rebuild of this
@@ -17,7 +17,8 @@
 # attaches an attestation and pushes a manifest *list* -- the image plus an
 # "unknown/unknown" entry -- and the digest to pin would be the list's.
 #
-# Deliberately small -- no editors, no agent CLIs, and no compiler: the C++
+# Deliberately small -- one editor for a participant in a kit, no agent CLIs,
+# and no compiler: the C++
 # toolchain is a bazel module the arena depends on (hermetic-llvm, see
 # MODULE.bazel), fetched and vendored like any other dependency, so a kit, the
 # sandbox and a developer's checkout compile with the same pinned clang
@@ -36,11 +37,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # git: a participant's own, and bazel's for a git_override.
 # patch: bazel applies single_version_override patches with it.
 # python3: rules_python's bootstrap, and problems' own scripts.
+# nano: something to edit a strategy with, in a kit's shell.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
       git \
+      nano \
       patch \
       python3 \
       unzip \
