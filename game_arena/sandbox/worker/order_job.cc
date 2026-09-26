@@ -123,6 +123,34 @@ std::string OwnerSuffix(const proto::WorkOrder &order) {
   return user.empty() ? "" : "-u" + sandbox_common::SanitizeContainerName(user);
 }
 
+// The slot's output base, the build's to write. Everything after the build
+// gets it read-only: it only runs what the build left there, and the volume
+// outlives the order, so a bot that could write it could change what the
+// next order on this slot is built from.
+std::optional<sx::Mount> OutputBaseMount(const proto::WorkOrder &order,
+                                         const OrderJobConfig &config, int slot,
+                                         bool container) {
+  if (!container) {
+    return std::nullopt;
+  }
+  const std::string slot_name = "slot" + std::to_string(slot);
+  return PersistentMount(config.bind_output_base_dir.empty()
+                             ? std::filesystem::path()
+                             : config.bind_output_base_dir / slot_name,
+                         config.volume_prefix + "-" + slot_name +
+                             "-output_base" + OwnerSuffix(order),
+                         sandbox_common::kOutputBaseMount);
+}
+
+void MountOutputBase(const std::optional<sx::Mount> &output_base, bool readonly,
+                     sx::Step *step) {
+  if (output_base.has_value()) {
+    sx::Mount *mount = step->add_mounts();
+    *mount = *output_base;
+    mount->set_readonly(readonly);
+  }
+}
+
 std::vector<const proto::Side *> SidesOf(const proto::WorkOrder &order) {
   std::vector<const proto::Side *> sides = {&order.candidate()};
   if (order.has_opponent()) {
@@ -160,17 +188,6 @@ std::optional<sx::Workspace> WorkspaceFor(const proto::WorkOrder &order,
     // one the patch was checked against.
     ws.set_patch(sx::Workspace::PATCH_IN_ENTRYPOINT);
     ws.set_sandbox_work_dir(sandbox_common::kWorkspace);
-
-    // Every step gets the persistent output base; only the build gets the
-    // staged files and the shared cache (see AddBuildPhase).
-    const std::string slot_name = "slot" + std::to_string(slot);
-    *ws.add_mounts() =
-        PersistentMount(config.bind_output_base_dir.empty()
-                            ? std::filesystem::path()
-                            : config.bind_output_base_dir / slot_name,
-                        config.volume_prefix + "-" + slot_name +
-                            "-output_base" + OwnerSuffix(order),
-                        sandbox_common::kOutputBaseMount);
     return ws;
   }
 
@@ -184,7 +201,9 @@ std::optional<sx::Workspace> WorkspaceFor(const proto::WorkOrder &order,
 }
 
 void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
-                   const BuildPaths &paths, bool container, sx::Job *job) {
+                   const BuildPaths &paths,
+                   const std::optional<sx::Mount> &output_base, bool container,
+                   sx::Job *job) {
   sx::Phase *phase = job->add_phases();
   phase->set_name("build");
   // A build reaches nothing by default: a build that can fetch can also
@@ -205,6 +224,7 @@ void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
   sx::Step *build = phase->mutable_foreground();
   build->set_name("build");
   build->set_applies_patches(true);
+  MountOutputBase(output_base, /*readonly=*/false, build);
   if (container) {
     // The shared cache reaches the build and nothing after it: the thing it
     // built has no business seeing it. (The staged patches reach the build
@@ -260,7 +280,7 @@ void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
 }
 
 void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
-                   bool container,
+                   const std::optional<sx::Mount> &output_base, bool container,
                    const sandbox_exec::Capabilities &capabilities,
                    sx::Job *job) {
   const int run_timeout_s =
@@ -281,6 +301,10 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
   sx::Step *referee = phase->add_background();
   referee->set_name("referee");
   referee->set_keep_after_exit(true);
+  MountOutputBase(output_base, /*readonly=*/true, referee);
+  // The match's result: in a scratch of its own, where neither bot can reach.
+  referee->set_private_scratch(true);
+  referee->add_collect_files(kMatchReport);
   *referee->add_argv() =
       Quoted(paths.bazel_bin + BinaryPathForTarget(order.referee_target()));
 
@@ -307,9 +331,9 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
   *referee->add_argv() =
       Quoted("--player_a=" + order.candidate().candidate_id());
   *referee->add_argv() = Quoted("--player_b=" + order.opponent_spec());
-  if (!container) {
-    *referee->add_argv() = Quoted("--scratch_dir={{scratch}}");
-  }
+  *referee->add_argv() = Quoted("--scratch_dir={{scratch}}");
+  *referee->add_argv() =
+      Quoted("--report={{scratch}}/" + std::string(kMatchReport));
   *referee->add_argv() =
       Quoted("--deadline_s=" + std::to_string(match_deadline_s));
   // Omitted when the problem said nothing, so the referee keeps its own
@@ -339,6 +363,7 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
   const auto add_bot = [&](sx::Step *step, const proto::Side &side,
                            const std::string &opponent) {
     step->set_keep_after_exit(true);
+    MountOutputBase(output_base, /*readonly=*/true, step);
     *step->add_argv() =
         Quoted(paths.bazel_bin + BinaryPathForTarget(side.bot_target()));
     for (const std::string &arg :
@@ -365,7 +390,8 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
   add_bot(bot, order.candidate(), order.opponent_spec());
 }
 
-void AddGradePhases(const proto::WorkOrder &order, bool container,
+void AddGradePhases(const proto::WorkOrder &order,
+                    const std::optional<sx::Mount> &output_base, bool container,
                     sx::Job *job) {
   const proto::GradeOrder &grade = order.grade();
   const int repeats = std::max(1, grade.repeats());
@@ -386,6 +412,7 @@ void AddGradePhases(const proto::WorkOrder &order, bool container,
     sx::Step *step = phase->mutable_foreground();
     step->set_name("grade");
     step->set_timeout_s(timeout_s);
+    MountOutputBase(output_base, /*readonly=*/true, step);
     *step->mutable_isolation() =
         SolutionIsolation(order.sandbox(), container, *isolation);
     // Exported rather than fixed, so the command needs no knowledge of the
@@ -430,12 +457,14 @@ bool JobForOrder(int slot, const proto::WorkOrder &order,
   *job->mutable_workspace() = *workspace;
 
   const BuildPaths paths = PathsFor(config, slot, container);
-  AddBuildPhase(order, config, paths, container, job);
+  const std::optional<sx::Mount> output_base =
+      OutputBaseMount(order, config, slot, container);
+  AddBuildPhase(order, config, paths, output_base, container, job);
 
   if (order.has_grade()) {
-    AddGradePhases(order, container, job);
+    AddGradePhases(order, output_base, container, job);
   } else {
-    AddMatchPhase(order, paths, container, capabilities, job);
+    AddMatchPhase(order, paths, output_base, container, capabilities, job);
   }
   return true;
 }

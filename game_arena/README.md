@@ -18,7 +18,8 @@ bazel run //game_arena/testgame:match_referee -- \
     --rendezvous_timeout_ms=60000 --max_moves_per_game=50000
 ```
 
-It prints one `RESULT games= wins= draws= losses=` line, counted from
+It writes a `MatchReport` -- every game's `GameRecord` -- to `--report`,
+prints one `RESULT games= wins= draws= losses=` line counted from
 `--player_a`'s side, and exits.
 
 `--turn_timeout_ms` bounds a single move. It does not bound a game: a strategy
@@ -149,12 +150,9 @@ bring their own BUILD. `game_arena/problems/nim.textproto` is that form; the
 [game-mcts](https://github.com/geligeli/game-mcts) repo's
 `game_mcts/arena/candidate_api` is a worked example of the structured one.
 
-Whatever the harness is, the referee it plays prints one line the sandbox
-worker parses, and the coordinator rates from the counts:
-
-```
-RESULT games=5 wins=3 draws=0 losses=2
-```
+Whatever the harness is, the referee leaves a `MatchReport` that the sandbox
+worker collects and counts (`referee/match_tally.h`); the coordinator rates
+from the counts and keeps the games.
 
 ## Leaderboard and history
 
@@ -162,14 +160,13 @@ The coordinator serves them, on `tournament`'s HTTP port (8090):
 
 - `/` — HTML leaderboard (auto-refresh).
 - `/api/leaderboard` — ratings as JSON.
-- `/api/games` — recent games as JSON; empty for now, see below.
+- `/api/games` — recent games as JSON.
 
 Ratings live in the state directory's `ratings.pb` (per problem + candidate,
-ELO with K=32 by default), updated from each match's tally. The referee writes
-every game to `<scratch_dir>/games/<game_id>.pb` as a `GameRecord` proto
-(initial state, every step with timestamps, result), indexed by
-`<scratch_dir>/games/index.jsonl` -- and a worker's scratch directory goes with
-its sandbox, so no game reaches the coordinator yet.
+ELO with K=32 by default), updated from each match's tally. Every game a
+worker played is kept under the state directory's `games/`, one `GameRecord`
+proto each (initial state, every step with timestamps, result) named
+`<order_id>-<game_id>.pb`, indexed by `games/index.jsonl`.
 
 ## Adding a game
 

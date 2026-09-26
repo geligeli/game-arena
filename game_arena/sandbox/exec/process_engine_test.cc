@@ -128,6 +128,25 @@ TEST_F(ProcessEngineTest, AStepsEnvironmentReachesIt) {
   EXPECT_EQ(collected.at("report.json"), "{\"metrics\": {\"wall_ms\": 12}}");
 }
 
+TEST_F(ProcessEngineTest, APrivateScratchIsASubdirectoryOfItsOwn) {
+  proto::Job job = BaseJob("j5");
+  proto::Phase *phase = job.add_phases();
+  phase->set_name("grade");
+  proto::Step *step = phase->mutable_foreground();
+  step->set_name("judge");
+  step->set_timeout_s(30);
+  step->set_private_scratch(true);
+  step->add_collect_files("verdict");
+  *step->add_argv() = Word(Script("judge", "printf won > \"$1\"/verdict"));
+  *step->add_argv() = Word("{{scratch}}");
+
+  const proto::JobResult result = engine_.Run(job, nullptr);
+  ASSERT_EQ(result.status().code(), proto::Status::OK)
+      << result.status().message();
+  EXPECT_EQ(result.phases(0).steps(0).collected().at("verdict"), "won");
+  EXPECT_TRUE(std::filesystem::exists(root_ / "scratch" / "judge" / "verdict"));
+}
+
 TEST_F(ProcessEngineTest, ABackgroundStepsPortIsDiscoveredAndSubstituted) {
   proto::Job job = BaseJob("j4");
   proto::Phase *phase = job.add_phases();

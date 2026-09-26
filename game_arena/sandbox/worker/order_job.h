@@ -25,6 +25,9 @@
 
 namespace tournament_arena {
 
+// Where the referee leaves its MatchReport, under its private {{scratch}}.
+inline constexpr char kMatchReport[] = "match.pb";
+
 // What only this host knows.
 //
 // Everything about *what* to build and *what the sandbox may do* arrives on

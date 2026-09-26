@@ -164,8 +164,10 @@ cc_library(
         ":fleet_worker",
         ":problem_config",
         ":scheduler_config_cc_proto",
+        "//game_arena/standings:game_history",
         "//game_arena/standings:standings",
         "//game_arena/proto:arena_cc_proto",
+        "//game_arena/proto:tournament_broker_cc_proto",
         "//game_arena/proto:clients_cc_proto",
         "@abseil-cpp//absl/log",
     ],
@@ -176,6 +178,7 @@ cc_test(
     srcs = ["scheduler_test.cc"],
     deps = [
         "//game_arena/standings:elo_standings",
+        "//game_arena/standings:game_history",
         ":scheduler",
         "@googletest//:gtest_main",
     ],

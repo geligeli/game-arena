@@ -262,6 +262,34 @@ TEST_F(SchedulerTest, ProgressForARetiredOrderIsIgnored) {
   EXPECT_EQ(job->state(), proto::Job::DONE);
 }
 
+TEST_F(SchedulerTest, ARunningOrdersGamesAreKeptAndARetiredOnesAreNot) {
+  tournament_broker::GameHistory history(dir_ / "games");
+  Scheduler scheduler(config_, store_.get(), standings_.get(), &history);
+  auto worker = std::make_shared<FakeWorker>("w1", 2);
+  scheduler.AddWorker(worker);
+  scheduler.EnqueuePlacement(AddCandidate("Alpha", proto::Candidate::PENDING),
+                             Reserve());
+  ASSERT_EQ(worker->orders.size(), 1u);
+  const std::string order_id = worker->orders[0].order_id();
+
+  proto::OrderGame game;
+  game.set_order_id(order_id);
+  tournament_broker::proto::GameRecord record;
+  record.set_game_id("g1_0");
+  record.SerializeToString(game.mutable_record());
+  scheduler.OnGame(game);
+  // Renamed by the order: every referee numbers its games from zero.
+  EXPECT_TRUE(
+      std::filesystem::exists(dir_ / "games" / (order_id + "-g1_0.pb")));
+
+  scheduler.OnResult("w1", Result(order_id));
+  record.set_game_id("g1_1");
+  record.SerializeToString(game.mutable_record());
+  scheduler.OnGame(game);
+  EXPECT_FALSE(
+      std::filesystem::exists(dir_ / "games" / (order_id + "-g1_1.pb")));
+}
+
 TEST_F(SchedulerTest, CandidateMatchDispatchesBothSidesNamingEachOther) {
   const auto alpha = AddCandidate("Alpha");
   const auto beta = AddCandidate("Beta");

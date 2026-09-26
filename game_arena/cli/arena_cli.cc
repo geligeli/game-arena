@@ -54,6 +54,8 @@ arena_cli spar builtin:greedy        # or against a builtin
 #include "absl/log/initialize.h"
 #include "game_arena/proto/arena.grpc.pb.h"
 #include "game_arena/proto/kit.pb.h"
+#include "game_arena/proto/tournament_broker.pb.h"
+#include "game_arena/referee/match_tally.h"
 
 ABSL_FLAG(std::string, server, "",
           "Arena address. Default: $ARENA_SERVER, else the kit's "
@@ -930,6 +932,7 @@ int CmdSpar(const Client &client, const std::string &server,
                                       "--player_a=" + me,
                                       "--player_b=" + opponent,
                                       "--scratch_dir=" + scratch,
+                                      "--report=" + scratch + "/match.pb",
                                       "--deadline_s=900"};
   referee.insert(referee.end(), client.kit.referee_flags().begin(),
                  client.kit.referee_flags().end());
@@ -961,17 +964,16 @@ int CmdSpar(const Client &client, const std::string &server,
     Wait(theirs);
   }
 
-  // The referee's one line of output, counted from player_a's side: yours.
-  std::ifstream log(scratch + "/referee.log");
-  int played = 0, wins = 0, draws = 0, losses = 0;
-  for (std::string line; std::getline(log, line);) {
-    std::sscanf(line.c_str(), "RESULT games=%d wins=%d draws=%d losses=%d",
-                &played, &wins, &draws, &losses);
-  }
+  // Counted from player_a's side: yours.
+  tournament_broker::proto::MatchReport report;
+  std::ifstream in(scratch + "/match.pb", std::ios::binary);
+  report.ParseFromIstream(&in);
+  const tournament_broker::MatchTally tally =
+      tournament_broker::TallyOf(report, me);
   std::printf("\n%s %d   draws %d   %s %d   (%d of %s games; logs in %s)\n",
-              me.c_str(), wins, draws, rival.c_str(), losses, played,
-              games.c_str(), scratch.c_str());
-  return played > 0 ? 0 : kExitError;
+              me.c_str(), tally.wins, tally.draws, rival.c_str(), tally.losses,
+              tally.games, games.c_str(), scratch.c_str());
+  return tally.games > 0 ? 0 : kExitError;
 }
 
 void PrintUsage() {

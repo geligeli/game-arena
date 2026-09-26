@@ -125,6 +125,24 @@ cc_library(
     ],
 )
 
+# A match's result from one side, counted from its game records. Shared by the
+# referee, the worker that reads its report and spar.
+cc_library(
+    name = "match_tally",
+    srcs = ["match_tally.cc"],
+    hdrs = ["match_tally.h"],
+    deps = ["//game_arena/proto:tournament_broker_cc_proto"],
+)
+
+cc_test(
+    name = "match_tally_test",
+    srcs = ["match_tally_test.cc"],
+    deps = [
+        ":match_tally",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # One match, then exit. Started by a sandbox worker per order; see referee_main.cc.
 #
 # A library rather than a cc_binary because main() is game-agnostic but the
@@ -138,6 +156,7 @@ cc_library(
         "//game_arena/common/kv_options",
         ":broker_service",
         ":game_registry",
+        ":match_tally",
         ":matchmaker",
         "//game_arena/proto:tournament_broker_cc_proto",
         "//game_arena/standings:game_history",

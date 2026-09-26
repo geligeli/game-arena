@@ -195,8 +195,11 @@ builtins the same way.
    `git apply`s the patch (both sides, for a candidate-vs-candidate match),
    and builds the problem's targets.
 4. The worker starts a `match_referee` and the bot(s) beside it, on a private
-   network. The referee plays the games and prints one `RESULT` line.
-5. The tally flows back over the fleet stream; the coordinator updates ELO.
+   network. The referee plays the games and leaves a `MatchReport` -- every
+   game's record -- in a scratch volume only it mounts.
+5. The records flow back over the fleet stream, one message per game, then
+   the tally counted from them; the coordinator keeps the games and updates
+   ELO.
 
 A candidate-vs-candidate match is **two** orders, dispatched together, each
 telling its bot `--opponent=player:<the other>`. That is what the broker's
@@ -241,6 +244,13 @@ the sandbox is what made it possible:
   privileged mode left to fall back to.
 - **A read-only root filesystem**, a non-root `--user` (the loader chowns the
   copied tree to it), and cgroup caps on memory, CPU and pids.
+- **Only the build writes the output base.** It outlives the order, so every
+  step after the build -- the referee, the bots, a graded run -- mounts it
+  read-only: a bot could otherwise change what the next order in its slot is
+  built from.
+- **The result is out of the sides' reach.** Each step is its own container,
+  but they share the job's tree and scratch volumes; the referee writes its
+  report to a scratch volume of its own, which neither bot mounts.
 
 Kits are the other side of that line: a participant's development environment
 is their own machine, with whatever access they give it. Only what they

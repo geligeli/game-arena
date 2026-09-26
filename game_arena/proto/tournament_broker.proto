@@ -102,6 +102,12 @@ message GameRecord {
   int64 finished_unix_ms = 10;
 }
 
+// What a referee leaves at --report: every game it finished. The tally is
+// counted from these, so a match has one account of itself, not two.
+message MatchReport {
+  repeated GameRecord games = 1;
+}
+
 // Persistent ELO store, written to <data_dir>/ratings.pb. Ratings are tracked
 // per (game, player name) pair.
 message RatingStore {

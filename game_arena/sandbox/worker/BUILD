@@ -47,24 +47,6 @@ cc_library(
     ],
 )
 
-# The RESULT line a refereed match prints. Arena vocabulary -- games, draws,
-# an ELO number -- kept out of build_log, which is generic build tooling.
-cc_library(
-    name = "match_tally",
-    srcs = ["match_tally.cc"],
-    hdrs = ["match_tally.h"],
-    deps = ["@re2"],
-)
-
-cc_test(
-    name = "match_tally_test",
-    srcs = ["match_tally_test.cc"],
-    deps = [
-        ":match_tally",
-        "@googletest//:gtest_main",
-    ],
-)
-
 # The arena's own layer: what an order means, written once for both engines.
 cc_library(
     name = "order_job",
@@ -97,9 +79,11 @@ cc_library(
     deps = [
         ":build_log",
         ":grade_policy",
-        ":match_tally",
+        ":order_job",
         "//game_arena/common/metric_report",
         "//game_arena/proto:arena_cc_proto",
+        "//game_arena/proto:tournament_broker_cc_proto",
+        "//game_arena/referee:match_tally",
         "//game_arena/sandbox/common:text",
         "//game_arena/sandbox/exec:sandbox_job_cc_proto",
     ],
@@ -109,6 +93,7 @@ cc_test(
     name = "order_outcome_test",
     srcs = ["order_outcome_test.cc"],
     deps = [
+        ":order_job",
         ":order_outcome",
         "@googletest//:gtest_main",
     ],

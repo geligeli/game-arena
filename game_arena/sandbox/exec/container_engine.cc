@@ -51,6 +51,40 @@ std::string LoaderName(const proto::Job &job) {
   return SandboxName(job.id(), "load");
 }
 
+// The steps with a scratch volume of their own, and where the loader mounts
+// each to hand it to the sandbox's user.
+std::vector<const proto::Step *> PrivateScratchSteps(const proto::Job &job) {
+  std::vector<const proto::Step *> steps;
+  for (const proto::Phase &phase : job.phases()) {
+    for (const proto::Step &step : phase.background()) {
+      if (step.private_scratch()) {
+        steps.push_back(&step);
+      }
+    }
+    if (phase.foreground().private_scratch()) {
+      steps.push_back(&phase.foreground());
+    }
+  }
+  return steps;
+}
+std::string ScratchVolume(const proto::Job &job, const proto::Step &step) {
+  return step.private_scratch()
+             ? SandboxName(job.id(), step.name() + "-scratch")
+             : ScratchVolume(job);
+}
+std::string LoaderScratchMount(const proto::Step &step) {
+  return "/private_scratch/" + step.name();
+}
+
+std::vector<std::string> JobVolumes(const proto::Job &job) {
+  std::vector<std::string> volumes = {WorkspaceVolume(job), PatchesVolume(job),
+                                      ScratchVolume(job)};
+  for (const proto::Step *step : PrivateScratchSteps(job)) {
+    volumes.push_back(ScratchVolume(job, *step));
+  }
+  return volumes;
+}
+
 std::string MountArg(const proto::Mount &mount) {
   return mount.kind() == proto::Mount::VOLUME
              ? sandbox_common::VolumeMount(mount.source(), mount.target(),
@@ -61,12 +95,13 @@ std::string MountArg(const proto::Mount &mount) {
 
 // The `--mount` arguments every step of |job| gets, in order: the tree, the
 // scratch dir, then whatever the job asked for.
-std::vector<std::string> WorkspaceMounts(const proto::Job &job) {
+std::vector<std::string> WorkspaceMounts(const proto::Job &job,
+                                         const proto::Step &step) {
   std::vector<std::string> mounts = {
       sandbox_common::VolumeMount(WorkspaceVolume(job),
                                   sandbox_common::kWorkspace, false),
-      sandbox_common::VolumeMount(ScratchVolume(job), sandbox_common::kScratch,
-                                  false)};
+      sandbox_common::VolumeMount(ScratchVolume(job, step),
+                                  sandbox_common::kScratch, false)};
   for (const proto::Mount &mount : job.workspace().mounts()) {
     mounts.push_back(MountArg(mount));
   }
@@ -173,8 +208,7 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
   // clear them so a redelivered job starts from the tree, not from whatever
   // the last attempt left in it.
   RemoveVolumes(job);
-  for (const std::string &volume :
-       {WorkspaceVolume(job), PatchesVolume(job), ScratchVolume(job)}) {
+  for (const std::string &volume : JobVolumes(job)) {
     const sandbox_common::StepResult made = sandbox_common::CreateVolume(
         config_.docker, volume, log_dir, "volume_" + volume);
     if (!made.run.started) {
@@ -204,14 +238,19 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
   std::string script = "chown -R " + user + " " + sandbox_common::kWorkspace +
                        " " + sandbox_common::kPatchMount + " " +
                        sandbox_common::kScratch + "\n";
+  for (const proto::Step *step : PrivateScratchSteps(job)) {
+    script += "chown " + user + " " + LoaderScratchMount(*step) + "\n";
+  }
   for (const proto::Mount &mount : ws.mounts()) {
     if (mount.kind() == proto::Mount::VOLUME) {
       script += "chown " + user + " " + mount.target() + "\n";
     }
   }
+  // A read-only mount is not the sandbox's to write, and is usually another
+  // step's writable one again.
   for (const proto::Phase &phase : job.phases()) {
     for (const proto::Mount &mount : phase.foreground().mounts()) {
-      if (mount.kind() == proto::Mount::VOLUME) {
+      if (mount.kind() == proto::Mount::VOLUME && !mount.readonly()) {
         script += "chown " + user + " " + mount.target() + "\n";
       }
     }
@@ -228,6 +267,10 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
                      PatchesVolume(job), sandbox_common::kPatchMount, false),
                  sandbox_common::VolumeMount(ScratchVolume(job),
                                              sandbox_common::kScratch, false)};
+  for (const proto::Step *step : PrivateScratchSteps(job)) {
+    spec.mounts.push_back(sandbox_common::VolumeMount(
+        ScratchVolume(job, *step), LoaderScratchMount(*step), false));
+  }
   for (const proto::Mount &mount : ws.mounts()) {
     if (mount.kind() == proto::Mount::VOLUME) {
       spec.mounts.push_back(MountArg(mount));
@@ -235,7 +278,7 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
   }
   for (const proto::Phase &phase : job.phases()) {
     for (const proto::Mount &mount : phase.foreground().mounts()) {
-      if (mount.kind() == proto::Mount::VOLUME) {
+      if (mount.kind() == proto::Mount::VOLUME && !mount.readonly()) {
         spec.mounts.push_back(MountArg(mount));
       }
     }
@@ -298,8 +341,7 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
 }
 
 void ContainerEngine::RemoveVolumes(const proto::Job &job) {
-  for (const std::string &volume :
-       {WorkspaceVolume(job), PatchesVolume(job), ScratchVolume(job)}) {
+  for (const std::string &volume : JobVolumes(job)) {
     sandbox_common::RemoveVolume(config_.docker, volume);
   }
 }
@@ -396,7 +438,7 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     spec.detached = detached;
     spec.network = NetworkArg(isolation, network);
     spec.extra_args = IsolationArgs(isolation);
-    spec.mounts = WorkspaceMounts(job);
+    spec.mounts = WorkspaceMounts(job, step);
     if (AppliesStagedFiles(job, step)) {
       spec.mounts.push_back(sandbox_common::VolumeMount(
           PatchesVolume(job), sandbox_common::kPatchMount, true));

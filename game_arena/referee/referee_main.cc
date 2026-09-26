@@ -9,7 +9,7 @@ bazel run //game_arena/testgame:match_referee -- \
 // This is the broker, scoped to one match and given a reason to exit. The
 // arena's coordinator used to host it; now a sandbox worker starts one of these
 // per order on a private network, points the two bot containers at it, and
-// reads the last line of its stdout. That is what lets the coordinator link no
+// collects the report it leaves. That is what lets the coordinator link no
 // game code at all -- the rules live here, and here runs on a worker.
 //
 // The bots are unchanged: they dial in with the same Hello the broker always
@@ -17,11 +17,11 @@ bazel run //game_arena/testgame:match_referee -- \
 // --player_b=builtin:<spec> as its opponent; against another submission, both
 // connect and rendezvous on "player:<the other>".
 //
-// Output contract, last line, parsed by sandbox/worker/match_tally.h:
+// Output contract: a tournament_broker.proto.MatchReport at --report, every
+// game it finished, which referee/match_tally.h counts from --player_a's side.
+// The last line of stdout says the same for a person:
 //
 //   RESULT games=10 wins=6 draws=1 losses=3
-//
-// counted from --player_a's side. The coordinator rates from these counts.
 
 #include <grpcpp/grpcpp.h>
 
@@ -45,6 +45,7 @@ bazel run //game_arena/testgame:match_referee -- \
 #include "game_arena/proto/tournament_broker.pb.h"
 #include "game_arena/referee/broker_service.h"
 #include "game_arena/referee/game_registry.h"
+#include "game_arena/referee/match_tally.h"
 #include "game_arena/referee/matchmaker.h"
 #include "game_arena/standings/game_history.h"
 
@@ -56,6 +57,8 @@ ABSL_FLAG(std::string, player_a, "",
 ABSL_FLAG(std::string, player_b, "",
           "The opponent, for the log only: a builtin plays because the bot "
           "named it, and a rival plays because both bots rendezvous");
+ABSL_FLAG(std::string, report, "",
+          "Write the MatchReport here before exiting. Empty: none");
 ABSL_FLAG(std::string, scratch_dir, "",
           "Where the game records are written. Empty: a temp directory");
 ABSL_FLAG(int, turn_timeout_ms, 10000,
@@ -83,7 +86,7 @@ ABSL_FLAG(std::string, port_file, "",
 
 namespace {
 
-// Counts finished games from --player_a's side.
+// Keeps finished games and counts them from --player_a's side.
 //
 // Written from game strands and read by main, so every field is guarded. The
 // matchmaker plays games concurrently when both sides reconnect fast enough,
@@ -94,30 +97,16 @@ class Tally {
       : player_a_(std::move(player_a)), target_(target) {}
 
   void Observe(const tournament_broker::proto::GameRecord &record) {
-    int seat = -1;
-    for (int i = 0; i < record.player_names_size(); ++i) {
-      if (record.player_names(i) == player_a_) {
-        seat = i;
-        break;
-      }
-    }
     {
       std::lock_guard lock(mutex_);
       // A game player_a was not in cannot be scored from its side. Nothing
       // should produce one, so say so rather than silently miscounting.
-      if (seat < 0) {
+      if (!tournament_broker::AddGame(record, player_a_, &counts_)) {
         LOG(WARNING) << "Ignoring game " << record.game_id() << ": "
                      << player_a_ << " is not a seat in it";
         return;
       }
-      ++games_;
-      if (record.result() == tournament_broker::proto::GameRecord::DRAW) {
-        ++draws_;
-      } else if (record.winning_player() == seat) {
-        ++wins_;
-      } else {
-        ++losses_;
-      }
+      *report_.add_games() = record;
     }
     cv_.notify_all();
   }
@@ -127,18 +116,20 @@ class Tally {
   bool Await(std::chrono::steady_clock::time_point deadline) {
     std::unique_lock lock(mutex_);
     if (deadline == std::chrono::steady_clock::time_point::max()) {
-      cv_.wait(lock, [&] { return games_ >= target_; });
+      cv_.wait(lock, [&] { return counts_.games >= target_; });
       return true;
     }
-    return cv_.wait_until(lock, deadline, [&] { return games_ >= target_; });
+    return cv_.wait_until(lock, deadline,
+                          [&] { return counts_.games >= target_; });
   }
 
-  struct Counts {
-    int games, wins, draws, losses;
-  };
-  Counts counts() const {
+  tournament_broker::MatchTally counts() const {
     std::lock_guard lock(mutex_);
-    return {games_, wins_, draws_, losses_};
+    return counts_;
+  }
+  tournament_broker::proto::MatchReport report() const {
+    std::lock_guard lock(mutex_);
+    return report_;
   }
 
  private:
@@ -146,7 +137,8 @@ class Tally {
   const int target_;
   mutable std::mutex mutex_;
   std::condition_variable cv_;
-  int games_ = 0, wins_ = 0, draws_ = 0, losses_ = 0;
+  tournament_broker::MatchTally counts_;
+  tournament_broker::proto::MatchReport report_;
 };
 
 }  // namespace
@@ -255,14 +247,22 @@ int main(int argc, char **argv) {
   matchmaker.Drain();
   server->Shutdown(std::chrono::system_clock::now() + std::chrono::seconds(5));
 
-  const Tally::Counts counts = tally.counts();
+  const tournament_broker::MatchTally counts = tally.counts();
   if (!complete) {
     LOG(ERROR) << "Deadline reached after " << counts.games << " of "
                << target_games << " games";
   }
-  // Last line, and the whole point of the process. Printed even on a partial
-  // match: the games that were played are real results, and the worker can
-  // tell the match was short because games < the number it asked for.
+  // The whole point of the process. Written even for a partial match: the
+  // games that were played are real results, and the worker can tell the
+  // match was short because it holds fewer than it asked for.
+  const std::string report = absl::GetFlag(FLAGS_report);
+  if (!report.empty()) {
+    std::ofstream out(report, std::ios::binary);
+    if (!tally.report().SerializeToOstream(&out)) {
+      LOG(ERROR) << "Cannot write --report " << report;
+      return 1;
+    }
+  }
   std::printf("RESULT games=%d wins=%d draws=%d losses=%d\n", counts.games,
               counts.wins, counts.draws, counts.losses);
   std::fflush(stdout);

@@ -491,11 +491,22 @@ message OrderResult {
   string machine_class = 13;
 }
 
+// One game an order played, sent on its own before the order's result: a
+// match's records together can outgrow a gRPC message.
+message OrderGame {
+  string order_id = 1;
+  // A serialized tournament_broker.proto.GameRecord. Bytes rather than an
+  // import, which the flat python stubs made from this file cannot follow.
+  bytes record = 2;
+}
+
 message WorkerMessage {
   oneof msg {
     WorkerHello hello = 1;
     OrderProgress progress = 2;
     OrderResult result = 3;
+    // 4 was Heartbeat.
+    OrderGame game = 5;
   }
 }
 

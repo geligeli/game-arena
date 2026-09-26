@@ -5,9 +5,9 @@
 //
 // The mirror of order_job.h, and the other half of what the two backends each
 // had their own copy of: which step's log is the build log, whose fault a
-// build failure was, that the referee's stdout carries the tally and the
-// bot's does not, and that a graded run's numbers are aggregated before they
-// mean anything.
+// build failure was, that the referee's report carries the games and nothing
+// a side printed does, and that a graded run's numbers are aggregated before
+// they mean anything.
 //
 // One distinction runs through all of it: a step that ran and failed is the
 // order's result, while a job the engine could not run at all is an error. A
@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "game_arena/proto/arena.pb.h"
+#include "game_arena/proto/tournament_broker.pb.h"
 #include "game_arena/sandbox/exec/sandbox_job.pb.h"
 
 namespace tournament_arena {
@@ -41,6 +42,8 @@ struct OrderOutcome {
   // What a graded order measured, already aggregated across runs and filtered
   // to the metrics the problem ranks on. Empty for a match order.
   std::map<std::string, double> metrics;
+  // Every game a match order played, as its referee recorded it.
+  std::vector<tournament_broker::proto::GameRecord> games;
   // Non-empty when the order could not be completed at all -- checkout
   // failed, the bot crashed, a step timed out. Distinct from a clean build
   // that simply lost every game.

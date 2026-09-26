@@ -9,6 +9,7 @@
 
 #include <string>
 
+#include "game_arena/sandbox/worker/order_job.h"
 #include "gtest/gtest.h"
 
 namespace tournament_arena {
@@ -43,6 +44,23 @@ sx::StepResult *AddStep(sx::PhaseResult *phase, const std::string &name,
   return step;
 }
 
+// The referee's report on |step|: one game per entry, "w", "l" or "d" from
+// c-ok's side, with c-ok in seat 0.
+void Report(sx::StepResult *step, const std::string &games) {
+  tournament_broker::proto::MatchReport report;
+  for (const char game : games) {
+    tournament_broker::proto::GameRecord *record = report.add_games();
+    record->set_game_id(std::string(1, game) +
+                        std::to_string(report.games_size()));
+    record->add_player_names("c-ok");
+    record->add_player_names("builtin:random");
+    record->set_result(game == 'd' ? tournament_broker::proto::GameRecord::DRAW
+                                   : tournament_broker::proto::GameRecord::WIN);
+    record->set_winning_player(game == 'l' ? 1 : 0);
+  }
+  report.SerializeToString(&(*step->mutable_collected())[kMatchReport]);
+}
+
 sx::StepResult *WithBuild(sx::JobResult *result, int exit_code,
                           const std::string &out = "") {
   sx::PhaseResult *phase = result->add_phases();
@@ -56,8 +74,7 @@ TEST(OutcomeForTest, AGoodMatchCarriesTheRefereesTally) {
   sx::PhaseResult *match = result.add_phases();
   match->set_name("match");
   AddStep(match, "bot", 0);
-  // The referee's tally, not the bot's: the bot only knows what it was told.
-  AddStep(match, "referee", 0, "RESULT games=2 wins=1 draws=1 losses=0\n");
+  Report(AddStep(match, "referee", 0), "wd");
 
   const OrderOutcome outcome = OutcomeFor(MatchOrder(), result);
   EXPECT_TRUE(outcome.build_ok);
@@ -66,6 +83,26 @@ TEST(OutcomeForTest, AGoodMatchCarriesTheRefereesTally) {
   EXPECT_EQ(outcome.wins, 1);
   EXPECT_EQ(outcome.draws, 1);
   EXPECT_EQ(outcome.losses, 0);
+  // The games themselves, for the coordinator to keep.
+  ASSERT_EQ(outcome.games.size(), 2u);
+  EXPECT_EQ(outcome.games[1].result(),
+            tournament_broker::proto::GameRecord::DRAW);
+}
+
+TEST(OutcomeForTest, APrintedTallyIsNotAResult) {
+  sx::JobResult result;
+  WithBuild(&result, 0);
+  sx::PhaseResult *match = result.add_phases();
+  match->set_name("match");
+  // Only the report counts: stdout is the referee's log, and nothing a side
+  // prints anywhere becomes a win.
+  AddStep(match, "bot", 0, "RESULT games=2 wins=2 draws=0 losses=0\n");
+  AddStep(match, "referee", 0, "RESULT games=2 wins=2 draws=0 losses=0\n");
+
+  const OrderOutcome outcome = OutcomeFor(MatchOrder(), result);
+  EXPECT_EQ(outcome.games_played, 0);
+  EXPECT_NE(outcome.error.find("referee produced no result"), std::string::npos)
+      << outcome.error;
 }
 
 TEST(OutcomeForTest, ABuildFailureIsACompletedOrderWithDiagnostics) {
@@ -163,7 +200,7 @@ TEST(OutcomeForTest, AShortMatchIsRecordedNotDiscarded) {
   sx::PhaseResult *match = result.add_phases();
   match->set_name("match");
   AddStep(match, "bot", 0);
-  AddStep(match, "referee", 0, "RESULT games=1 wins=1 draws=0 losses=0\n");
+  Report(AddStep(match, "referee", 0), "w");
 
   // The games that were played are real results: an agent is better served by
   // a short match plus the reason than by nothing.

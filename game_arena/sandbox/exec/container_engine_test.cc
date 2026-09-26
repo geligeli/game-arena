@@ -299,6 +299,87 @@ TEST_F(ContainerEngineTest, CollectedFilesAreCopiedOutOfTheKeptContainer) {
   EXPECT_NE(log.find("docker rm -f saw-0-collect-1-grade"), std::string::npos);
 }
 
+TEST_F(ContainerEngineTest, APrivateScratchIsThatStepsAlone) {
+  proto::Job job;
+  job.set_id("saw-0-priv-1");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_workspace() = SlotWorkspace();
+  *job.mutable_isolation() = HardenedIsolation();
+  job.mutable_isolation()->set_run_as_user("1000:1000");
+  proto::Phase *phase = job.add_phases();
+  phase->set_name("match");
+  proto::Step *judge = phase->add_background();
+  judge->set_name("judge");
+  judge->set_private_scratch(true);
+  judge->add_collect_files("verdict");
+  *judge->add_argv() = Word("./judge", false);
+  proto::Step *player = phase->mutable_foreground();
+  player->set_name("player");
+  *player->add_argv() = Word("./player", false);
+
+  ASSERT_EQ(engine_->Run(job, nullptr).status().code(), proto::Status::OK);
+
+  // Its own volume at the scratch mount point, where the other steps have the
+  // job's shared one: nothing they write can end up in what it leaves.
+  EXPECT_NE(RunArgvFor("saw-0-priv-1-judge")
+                .find("source=saw-0-priv-1-judge-scratch,target=/sandbox "),
+            std::string::npos);
+  EXPECT_NE(RunArgvFor("saw-0-priv-1-player")
+                .find("source=saw-0-priv-1-scratch,target=/sandbox "),
+            std::string::npos);
+  EXPECT_EQ(RunArgvFor("saw-0-priv-1-player").find("judge-scratch"),
+            std::string::npos);
+  // Made with the job, handed to the sandbox's user, collected from through
+  // its own container, and removed with the job.
+  const std::string log = Log();
+  EXPECT_NE(log.find("docker volume create saw-0-priv-1-judge-scratch"),
+            std::string::npos);
+  EXPECT_NE(log.find("chown 1000:1000 /private_scratch/judge\n"),
+            std::string::npos)
+      << log;
+  EXPECT_NE(log.find("docker cp saw-0-priv-1-judge:/sandbox/verdict"),
+            std::string::npos);
+  EXPECT_NE(log.find("docker volume rm -f saw-0-priv-1-judge-scratch"),
+            std::string::npos);
+}
+
+TEST_F(ContainerEngineTest, TheLoaderLeavesReadOnlyMountsAlone) {
+  proto::Job job;
+  job.set_id("saw-0-ro-1");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_workspace() = SlotWorkspace();
+  job.mutable_workspace()->clear_mounts();
+  *job.mutable_isolation() = HardenedIsolation();
+  proto::Mount cache = DiskCacheVolume();
+  proto::Phase *build = job.add_phases();
+  build->set_name("build");
+  build->mutable_foreground()->set_name("build");
+  *build->mutable_foreground()->add_mounts() = cache;
+  *build->mutable_foreground()->add_argv() = Word("./build", false);
+  proto::Phase *run = job.add_phases();
+  run->set_name("run");
+  cache.set_readonly(true);
+  run->mutable_foreground()->set_name("run");
+  *run->mutable_foreground()->add_mounts() = cache;
+  *run->mutable_foreground()->add_argv() = Word("./run", false);
+
+  ASSERT_EQ(engine_->Run(job, nullptr).status().code(), proto::Status::OK);
+
+  // The same volume, writable in one step and read-only in the next, reaches
+  // the loader once: docker refuses a second mount at one target.
+  const std::string log = Log();
+  const std::size_t loader = log.find("docker create --name saw-0-ro-1-load");
+  ASSERT_NE(loader, std::string::npos);
+  const std::string line =
+      log.substr(loader, log.find(" -c ", loader) - loader);
+  const std::size_t first = line.find("target=/disk_cache");
+  ASSERT_NE(first, std::string::npos) << line;
+  EXPECT_EQ(line.find("target=/disk_cache", first + 1), std::string::npos)
+      << line;
+  EXPECT_NE(RunArgvFor("saw-0-ro-1-run").find("target=/disk_cache,readonly"),
+            std::string::npos);
+}
+
 TEST_F(ContainerEngineTest, AMatchPhaseJoinsItsStepsOnAPrivateBridge) {
   proto::Job job;
   job.set_id("saw-0-ok-1");

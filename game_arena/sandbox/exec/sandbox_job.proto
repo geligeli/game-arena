@@ -192,6 +192,10 @@ message Step {
   // Only meaningful for PATCH_IN_ENTRYPOINT and PATCH_COPY_IN_ENTRYPOINT --
   // PATCH_HOST has already happened before any step starts.
   bool applies_patches = 11;
+
+  // A {{scratch}} of this step's own rather than the job's shared one, so what
+  // it leaves there for collect_files cannot be written by the other steps.
+  bool private_scratch = 13;
 }
 
 message Phase {

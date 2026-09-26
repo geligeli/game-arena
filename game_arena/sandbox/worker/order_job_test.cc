@@ -4,6 +4,7 @@
 #include "game_arena/sandbox/worker/order_job.h"
 
 #include <string>
+#include <vector>
 
 #include "game_arena/sandbox/exec/process_engine.h"
 #include "gtest/gtest.h"
@@ -97,12 +98,51 @@ TEST(JobForOrderTest, OnlyTheBuildSeesThePatchesAndTheCache) {
   // The thing the build produced has no business reading the shared cache
   // directory or writing the shared build cache.
   const sx::Step &build = job.phases(0).foreground();
-  ASSERT_EQ(build.mounts_size(), 1);
-  EXPECT_EQ(build.mounts(0).target(), "/disk_cache");
-  EXPECT_EQ(job.phases(1).foreground().mounts_size(), 0);
-  // The output base is every step's, so it is on the workspace.
-  ASSERT_EQ(job.workspace().mounts_size(), 1);
-  EXPECT_EQ(job.workspace().mounts(0).target(), "/output_base");
+  ASSERT_EQ(build.mounts_size(), 2);
+  EXPECT_EQ(build.mounts(0).target(), "/output_base");
+  EXPECT_FALSE(build.mounts(0).readonly());
+  EXPECT_EQ(build.mounts(1).target(), "/disk_cache");
+  EXPECT_EQ(job.workspace().mounts_size(), 0);
+}
+
+TEST(JobForOrderTest, OnlyTheBuildWritesTheOutputBase) {
+  proto::WorkOrder order = MatchOrder();
+  proto::Side *opponent = order.mutable_opponent();
+  opponent->set_candidate_id("c-rival");
+  opponent->set_patch("another patch");
+  opponent->set_bot_target("//solutions/c-rival:bot");
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(
+      JobForOrder(0, order, Config(), ContainerCapabilities(), &job, &error));
+
+  // It outlives the order: a bot that could write it could change what the
+  // next order in this slot is built from.
+  const sx::Phase &match = job.phases(1);
+  std::vector<const sx::Step *> steps = {&match.foreground()};
+  for (const sx::Step &step : match.background()) {
+    steps.push_back(&step);
+  }
+  ASSERT_EQ(steps.size(), 3u);
+  for (const sx::Step *step : steps) {
+    ASSERT_EQ(step->mounts_size(), 1) << step->name();
+    EXPECT_EQ(step->mounts(0).target(), "/output_base") << step->name();
+    EXPECT_TRUE(step->mounts(0).readonly()) << step->name();
+  }
+}
+
+TEST(JobForOrderTest, TheRefereeReportsFromAScratchOfItsOwn) {
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(JobForOrder(0, MatchOrder(), Config(), ContainerCapabilities(),
+                          &job, &error));
+  const sx::Step &referee = job.phases(1).background(0);
+  EXPECT_TRUE(referee.private_scratch());
+  ASSERT_EQ(referee.collect_files_size(), 1);
+  EXPECT_EQ(referee.collect_files(0), kMatchReport);
+  EXPECT_NE(ArgvOf(referee).find("--report={{scratch}}/match.pb"),
+            std::string::npos);
+  EXPECT_FALSE(job.phases(1).foreground().private_scratch());
 }
 
 TEST(JobForOrderTest, OneBuildBuildsEverySideAndTheReferee) {
@@ -210,13 +250,12 @@ TEST(JobForOrderTest, PersistentStateLivesInVolumesUnlessTheHostBindsIt) {
                           &job, &error));
   // Named per slot and per worker, so two slots never share an output base
   // and two workers on one daemon can be told apart.
-  ASSERT_EQ(job.workspace().mounts_size(), 1);
-  EXPECT_EQ(job.workspace().mounts(0).kind(), sx::Mount::VOLUME);
-  EXPECT_EQ(job.workspace().mounts(0).source(), "arena-slot1-output_base");
   const sx::Step &build = job.phases(0).foreground();
-  ASSERT_EQ(build.mounts_size(), 1);
+  ASSERT_EQ(build.mounts_size(), 2);
   EXPECT_EQ(build.mounts(0).kind(), sx::Mount::VOLUME);
-  EXPECT_EQ(build.mounts(0).source(), "arena-disk_cache");
+  EXPECT_EQ(build.mounts(0).source(), "arena-slot1-output_base");
+  EXPECT_EQ(build.mounts(1).kind(), sx::Mount::VOLUME);
+  EXPECT_EQ(build.mounts(1).source(), "arena-disk_cache");
 
   // And per sandbox user: what root left in a cache, another user cannot
   // replace.
@@ -225,9 +264,9 @@ TEST(JobForOrderTest, PersistentStateLivesInVolumesUnlessTheHostBindsIt) {
   sx::Job owned;
   ASSERT_TRUE(JobForOrder(1, as_user, Config(), ContainerCapabilities(), &owned,
                           &error));
-  EXPECT_EQ(owned.workspace().mounts(0).source(),
-            "arena-slot1-output_base-u1000-1000");
   EXPECT_EQ(owned.phases(0).foreground().mounts(0).source(),
+            "arena-slot1-output_base-u1000-1000");
+  EXPECT_EQ(owned.phases(0).foreground().mounts(1).source(),
             "arena-disk_cache-u1000-1000");
 
   // The opt-in: host directories, as the daemon resolves them.
@@ -238,12 +277,11 @@ TEST(JobForOrderTest, PersistentStateLivesInVolumesUnlessTheHostBindsIt) {
   sx::Job bound_job;
   ASSERT_TRUE(JobForOrder(1, MatchOrder(), bound, ContainerCapabilities(),
                           &bound_job, &error));
-  EXPECT_EQ(bound_job.workspace().mounts(0).kind(), sx::Mount::BIND);
-  EXPECT_EQ(bound_job.workspace().mounts(0).source(),
-            "/fast/output_bases/slot1");
-  EXPECT_EQ(bound_job.phases(0).foreground().mounts(0).kind(), sx::Mount::BIND);
-  EXPECT_EQ(bound_job.phases(0).foreground().mounts(0).source(),
-            "/fast/disk_cache");
+  const sx::Step &bound_build = bound_job.phases(0).foreground();
+  EXPECT_EQ(bound_build.mounts(0).kind(), sx::Mount::BIND);
+  EXPECT_EQ(bound_build.mounts(0).source(), "/fast/output_bases/slot1");
+  EXPECT_EQ(bound_build.mounts(1).kind(), sx::Mount::BIND);
+  EXPECT_EQ(bound_build.mounts(1).source(), "/fast/disk_cache");
 }
 
 TEST(JobForOrderTest, TheBuildCarriesNoMemoryOrPidCap) {

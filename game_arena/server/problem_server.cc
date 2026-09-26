@@ -194,9 +194,8 @@ int main(int argc, char **argv) {
   tournament_broker::EloStore elo_store(data_dir / "ratings.pb",
                                         absl::GetFlag(FLAGS_k_factor));
   elo_store.Load();
-  // Kept for the leaderboard's /api/games. Matches are refereed in the sandbox
-  // now and only their tallies come back, so nothing here writes to it until a
-  // worker ships records; see ARENA.md.
+  // Every game the fleet played, as each order's referee recorded it; served
+  // by the leaderboard's /api/games.
   tournament_broker::GameHistory history(data_dir / "games");
 
   tournament_arena::SubmissionRules rules;
@@ -242,7 +241,7 @@ int main(int argc, char **argv) {
   }
 
   tournament_arena::Scheduler scheduler(SchedulerConfigFor(*problem),
-                                        &candidates, standings.get());
+                                        &candidates, standings.get(), &history);
   // What an agent needs to know about the problem, curated from the config:
   // the operator's image names and timeouts are not a submitter's business.
   tournament_arena::proto::ProblemInfo info;

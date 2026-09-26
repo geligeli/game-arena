@@ -14,6 +14,7 @@
 #include <string>
 #include <system_error>
 
+#include "game_arena/proto/tournament_broker.pb.h"
 #include "game_arena/sandbox/exec/container_engine.h"
 #include "game_arena/sandbox/worker/order_runner.h"
 
@@ -34,6 +35,18 @@ class OrderRunnerContainerTest : public ::testing::Test {
     std::filesystem::permissions(fake_docker_,
                                  std::filesystem::perms::owner_all,
                                  std::filesystem::perm_options::add);
+
+    // What every referee leaves in its scratch: a win and a draw for c-ok.
+    tournament_broker::proto::MatchReport report;
+    for (const auto result : {tournament_broker::proto::GameRecord::WIN,
+                              tournament_broker::proto::GameRecord::DRAW}) {
+      tournament_broker::proto::GameRecord *game = report.add_games();
+      game->add_player_names("c-ok");
+      game->add_player_names("builtin:random");
+      game->set_result(result);
+    }
+    std::ofstream out(root_ / "match.pb", std::ios::binary);
+    report.SerializeToOstream(&out);
 
     sandbox_exec::ContainerEngineConfig engine_config;
     engine_config.docker = fake_docker_.string();
@@ -87,13 +100,9 @@ class OrderRunnerContainerTest : public ::testing::Test {
            "      *blockrun-1-bot*)\n"
            "        bash -c 'sleep 15; true' \"fake-sleeper-$name\"\n"
            "        exit 137;;\n"
-           // The referee is started detached and its verdict is read back with
-           // `docker logs`, so stash it where the logs branch can find it.
+           // The referee is started detached; its report is copied out of its
+           // scratch afterwards (the cp branch).
            "      *-referee)\n"
-           "        echo \"RESULT games=2 wins=1 draws=1 losses=0\" "
-           "> \"" +
-           (root_ / "referee_output").string() +
-           "\"\n"
            "        exit 0;;\n"
            // The bot plays and exits; the tally comes from the referee.
            "      *-bot|*-opponent)\n"
@@ -104,14 +113,14 @@ class OrderRunnerContainerTest : public ::testing::Test {
            "actions\"\n"
            "        exit 0;;\n"
            "    esac;;\n"
-           "  rm|create|cp|start|volume|network)\n"
+           "  cp)\n"
+           "    case \"$1\" in\n"
+           "      *-referee:/sandbox/match.pb) cp \"" +
+           (root_ / "match.pb").string() +
+           "\" \"$2\";;\n"
+           "    esac\n"
            "    exit 0;;\n"
-           "  wait)\n"
-           "    exit 0;;\n"
-           "  logs)\n"
-           "    cat \"" +
-           (root_ / "referee_output").string() +
-           "\" 2>/dev/null\n"
+           "  rm|create|start|volume|network|wait|logs)\n"
            "    exit 0;;\n"
            "  kill)\n"
            "    pkill -f \"fake-sleeper-$1\"\n"
@@ -347,9 +356,16 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
                     "'--opponent=builtin:random' '--games=2' "
                     "'--params=iterations=100'");
 
-  // The verdict is read from the referee, not the bot.
+  // The verdict is the referee's report, from a scratch volume only it
+  // mounts: made for it, handed to the sandbox's user, and gone with the job.
   ExpectLogContains(log, "docker wait saw-0-ok-1-referee");
-  ExpectLogContains(log, "docker logs saw-0-ok-1-referee");
+  ExpectLogContains(log, "docker cp saw-0-ok-1-referee:/sandbox/match.pb ");
+  ExpectLogContains(log, "'--report=/sandbox/match.pb'");
+  ExpectLogContains(log, "docker volume create saw-0-ok-1-referee-scratch");
+  ExpectLogContains(log,
+                    "--mount type=volume,source=saw-0-ok-1-referee-scratch,"
+                    "target=/private_scratch/referee");
+  ExpectLogContains(log, "docker volume rm -f saw-0-ok-1-referee-scratch");
 
   // The playing containers do not carry the patch or disk-cache mounts.
   const auto run_invocation = log.find("--name saw-0-ok-1-bot");
@@ -515,16 +531,16 @@ TEST_F(OrderRunnerContainerTest, WholeDockerRunArgvIsPinned) {
             "--network none "
             "--mount type=volume,source=saw-0-argv-1-ws,target=/workspace "
             "--mount type=volume,source=saw-0-argv-1-scratch,target=/sandbox "
-            "--mount type=volume,source=arena-slot0-output_base,"
-            "target=/output_base "
             "--mount type=volume,source=saw-0-argv-1-patches,"
             "target=/patches,readonly "
+            "--mount type=volume,source=arena-slot0-output_base,"
+            "target=/output_base "
             "--mount type=volume,source=arena-disk_cache,target=/disk_cache "
             "--entrypoint /bin/sh fake-image:1");
 
   // The bot: same hardening, joined to the order's private bridge instead of
   // no network, kept after it exits so its output can still be read, and with
-  // nothing of the build's staging mounted.
+  // nothing of the build's staging mounted, and the output base read-only.
   EXPECT_EQ(RunArgvFor(log, "saw-0-argv-1-bot"),
             "docker run --name saw-0-argv-1-bot "
             "--cap-drop ALL --security-opt no-new-privileges --read-only "
@@ -533,7 +549,20 @@ TEST_F(OrderRunnerContainerTest, WholeDockerRunArgvIsPinned) {
             "--mount type=volume,source=saw-0-argv-1-ws,target=/workspace "
             "--mount type=volume,source=saw-0-argv-1-scratch,target=/sandbox "
             "--mount type=volume,source=arena-slot0-output_base,"
-            "target=/output_base "
+            "target=/output_base,readonly "
+            "--entrypoint /bin/sh fake-image:1");
+
+  // The referee: the bot's, except that its scratch is its own.
+  EXPECT_EQ(RunArgvFor(log, "saw-0-argv-1-referee"),
+            "docker run --name saw-0-argv-1-referee -d "
+            "--cap-drop ALL --security-opt no-new-privileges --read-only "
+            "--tmpfs /tmp:exec --memory 4096m --pids-limit 512 "
+            "--network saw-0-argv-1-net "
+            "--mount type=volume,source=saw-0-argv-1-ws,target=/workspace "
+            "--mount type=volume,source=saw-0-argv-1-referee-scratch,"
+            "target=/sandbox "
+            "--mount type=volume,source=arena-slot0-output_base,"
+            "target=/output_base,readonly "
             "--entrypoint /bin/sh fake-image:1");
 }
 

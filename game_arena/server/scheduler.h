@@ -35,6 +35,7 @@
 #include "game_arena/server/fleet_worker.h"
 #include "game_arena/server/scheduler_config.pb.h"
 #include "game_arena/standings/elo_store.h"
+#include "game_arena/standings/game_history.h"
 #include "game_arena/standings/standings.h"
 
 namespace tournament_arena {
@@ -43,9 +44,10 @@ class Scheduler {
  public:
   // |standings| is where a finished order's result lands. The coordinator is
   // the only thing that writes standings: a referee's own ratings die with its
-  // container.
+  // container. |history|, when set, keeps the games a running order played.
   Scheduler(SchedulerConfig config, CandidateStore *candidates,
-            Standings *standings);
+            Standings *standings,
+            tournament_broker::GameHistory *history = nullptr);
 
   // A held quota slot.
   //
@@ -109,6 +111,9 @@ class Scheduler {
   // Requeues whatever the worker had in flight, once.
   void RemoveWorker(const std::string &worker_id);
   void OnResult(const std::string &worker_id, const proto::OrderResult &result);
+  // Keeps one game a running order played. A retired order's are dropped, as
+  // its result would be.
+  void OnGame(const proto::OrderGame &game);
 
   // --- introspection (tests, /api) -------------------------------------
 
@@ -156,8 +161,9 @@ class Scheduler {
   int FreeSlotsLocked() const;
 
   const SchedulerConfig config_;
-  CandidateStore *candidates_;  // not owned
-  Standings *standings_;        // not owned
+  CandidateStore *candidates_;               // not owned
+  Standings *standings_;                     // not owned
+  tournament_broker::GameHistory *history_;  // not owned
 
   mutable std::mutex mutex_;
   std::map<std::string, Job> jobs_;

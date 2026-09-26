@@ -186,6 +186,14 @@ class WorkerSession {
                               SendProgress(order_id, phase);
                             });
 
+      // Before the result, so the coordinator has them when it concludes.
+      for (const auto &record : outcome.games) {
+        proto::WorkerMessage game;
+        game.mutable_game()->set_order_id(order.order_id());
+        record.SerializeToString(game.mutable_game()->mutable_record());
+        Write(game);
+      }
+
       proto::WorkerMessage message;
       auto *result = message.mutable_result();
       result->set_order_id(order.order_id());

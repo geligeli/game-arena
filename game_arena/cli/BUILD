@@ -19,6 +19,8 @@ cc_binary(
     deps = [
         "//game_arena/proto:arena_cc_grpc",
         "//game_arena/proto:kit_cc_proto",
+        "//game_arena/proto:tournament_broker_cc_proto",
+        "//game_arena/referee:match_tally",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
         "@abseil-cpp//absl/log:globals",

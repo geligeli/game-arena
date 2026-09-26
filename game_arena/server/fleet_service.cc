@@ -96,6 +96,8 @@ grpc::Status FleetService::Attach(
   while (stream->Read(&msg)) {
     if (msg.has_result()) {
       scheduler_->OnResult(hello.worker_id(), msg.result());
+    } else if (msg.has_game()) {
+      scheduler_->OnGame(msg.game());
     } else if (msg.has_progress()) {
       LOG(INFO) << "Worker '" << hello.worker_id() << "' order "
                 << msg.progress().order_id() << ": "

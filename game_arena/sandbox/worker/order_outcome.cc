@@ -6,10 +6,11 @@
 #include <vector>
 
 #include "game_arena/common/metric_report/metric_report.h"
+#include "game_arena/referee/match_tally.h"
 #include "game_arena/sandbox/common/text.h"
 #include "game_arena/sandbox/worker/build_log.h"
 #include "game_arena/sandbox/worker/grade_policy.h"
-#include "game_arena/sandbox/worker/match_tally.h"
+#include "game_arena/sandbox/worker/order_job.h"
 
 namespace tournament_arena {
 
@@ -63,10 +64,13 @@ void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
   const std::string referee_errors =
       referee != nullptr ? referee->stderr() : "";
 
-  // The referee's tally, not the bot's. The bot only knows what it was told;
-  // the referee applied every move and is the one that decided the games.
-  RunTally tally;
-  if (!ParseResultLine(referee_output, &tally)) {
+  // From the referee's report, not from anything a side printed: the referee
+  // applied every move, and its private scratch is out of either side's reach.
+  // An empty report is no report: the engine collects nothing for an empty
+  // file, and a match with no games has nothing to say either.
+  tournament_broker::proto::MatchReport report;
+  if (referee == nullptr || referee->collected().count(kMatchReport) == 0 ||
+      !report.ParseFromString(referee->collected().at(kMatchReport))) {
     outcome->error = "referee produced no result" +
                      std::string(bot != nullptr && bot->timed_out()
                                      ? " (the bot timed out first)"
@@ -74,6 +78,8 @@ void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
                      ": " + TailOf(referee_errors + referee_output, 1500);
     return;
   }
+  const tournament_broker::MatchTally tally =
+      tournament_broker::TallyOf(report, order.candidate().candidate_id());
   if (tally.games < order.num_games()) {
     // Recorded, not fatal: the games that were played are real results, and
     // an agent is better served by a short match plus the reason than by
@@ -86,6 +92,7 @@ void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
   outcome->wins = tally.wins;
   outcome->draws = tally.draws;
   outcome->losses = tally.losses;
+  outcome->games.assign(report.games().begin(), report.games().end());
 }
 
 void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,

@@ -151,8 +151,16 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
                              Observer *observer, proto::PhaseResult *result,
                              proto::Status *status) {
   const std::filesystem::path log_dir(job.log_dir());
-  const std::filesystem::path scratch(job.workspace().scratch_dir());
   const std::filesystem::path tree(job.workspace().tree_dir());
+  const auto scratch = [&](const proto::Step &step) {
+    const std::filesystem::path shared(job.workspace().scratch_dir());
+    if (!step.private_scratch()) {
+      return shared;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(shared / step.name(), ec);
+    return shared / step.name();
+  };
 
   // Resolved addresses of the background steps, for {{peer:<name>}}.
   std::map<std::string, std::string> peers;
@@ -163,7 +171,7 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   // background steps have published them.
   const auto resolve = [&](const proto::Step &step) -> proto::Step {
     std::map<std::string, std::string> replacements = {
-        {kScratchPlaceholder, scratch.string()},
+        {kScratchPlaceholder, scratch(step).string()},
         {kPortFilePlaceholder, (log_dir / (step.name() + ".port")).string()}};
     for (const auto &[name, address] : peers) {
       replacements["{{peer:" + name + "}}"] = address;
@@ -306,7 +314,7 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
         continue;
       }
       for (const std::string &file : step->collect_files()) {
-        const std::string content = ReadFile(scratch / file);
+        const std::string content = ReadFile(scratch(*step) / file);
         if (!content.empty()) {
           (*step_result.mutable_collected())[file] = content;
         }

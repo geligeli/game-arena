@@ -56,10 +56,12 @@ auto Scheduler::Reservation::operator=(Reservation &&other) noexcept
 }
 
 Scheduler::Scheduler(SchedulerConfig config, CandidateStore *candidates,
-                     Standings *standings)
+                     Standings *standings,
+                     tournament_broker::GameHistory *history)
     : config_(std::move(config)),
       candidates_(candidates),
-      standings_(standings) {}
+      standings_(standings),
+      history_(history) {}
 
 void Scheduler::ReleaseReservationLocked(const std::string &client_id) {
   const auto it = reserved_.find(client_id);
@@ -468,6 +470,22 @@ void Scheduler::OnProgress(const proto::OrderProgress &progress) {
     return;
   }
   job_it->second.status.set_phase(progress.phase());
+}
+
+void Scheduler::OnGame(const proto::OrderGame &game) {
+  {
+    std::lock_guard lock(mutex_);
+    if (!order_owner_.contains(game.order_id())) {
+      return;
+    }
+  }
+  tournament_broker::proto::GameRecord record;
+  if (history_ == nullptr || !record.ParseFromString(game.record())) {
+    return;
+  }
+  // A referee numbers its games per process, so two of them can pick one id.
+  record.set_game_id(game.order_id() + "-" + record.game_id());
+  history_->Store(record);
 }
 
 void Scheduler::OnResult(const std::string &worker_id,
