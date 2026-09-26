@@ -8,8 +8,9 @@ output like any other:
 
 What is in it is what `bazel run //:kit` writes, less what cannot be a build's
 business: no token, since an action's inputs end up in a remote cache, and
-nothing primed, since that is bazel run on the kit. Both are added afterwards,
-outside the build (the macro's kit_image_issue target).
+nothing primed, since that is bazel run on the kit. Priming is added
+afterwards, outside the build (the macro's kit_image_issue target); a token
+never is.
 """
 
 def _kit_tree_impl(ctx):

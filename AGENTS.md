@@ -120,11 +120,11 @@ they need to work on the problem.**
 - A kit image is a build output: `bazel build //:kit_image` is the kit's tree
   (`rules/kit_tree.bzl`, this tool run in an action) stacked on
   `//game_arena/image:kit_base` by rules_oci. No container runs while it is
-  made, and nothing goes into it that is not a build's to hold. The two
-  things that are not -- priming, which is bazel run on a kit, and a token,
-  which is a secret and would sit in a remote cache -- are **external
-  actions**: `//:kit_image_issue` adds each as a layer on the built image, at
-  run time. Do not move either into an action. Priming runs with
+  made, and nothing goes into it that is not a build's to hold. Priming,
+  which is bazel run on a kit, is an **external action**:
+  `//:kit_image_issue` adds it as a layer on the built image, at run time. Do
+  not move it into an action. No image holds a token; `docker run -e
+  ARENA_TOKEN=...` hands one over. Priming runs with
   `--nohome_rc --nosystem_rc` and a strict action env, because a cache hits
   only for the build that filled it.
 - **A participant is a directory**, `<files_submit_dir>/<name>/`, the same in
@@ -155,11 +155,10 @@ one split, and it is the thing to keep:
   pulled by digest: `//:kit_image`, `//:sandbox_image`,
   and the arena's own `kit_base` and `sandbox_base`. Nothing runs inside an image while it is made.
 - **What a build cannot hold is added outside one**, as more layers, by
-  `arena_tournament` with the regctl rules_oci built the image with: a token
-  and the result of running bazel -- a kit's vendored dependencies and primed
-  cache -- both by `kit_image_issue`, and nothing else. Do not turn either
-  into an action: a secret ends up in a remote cache, and bazel does not run
-  bazel.
+  `arena_tournament` with the regctl rules_oci built the image with: the
+  result of running bazel -- a kit's vendored dependencies and primed cache --
+  by `kit_image_issue`, and nothing else. Do not turn it into an action: bazel
+  does not run bazel. A token goes into no image at all.
 - **The sandbox image vendors nothing.** It is the base, the arena's sources
   (`//:sandbox_surface`, which its bazelrc overrides `game_arena` to) and the
   problem's tree. The first build in a slot fetches what the problem resolves

@@ -47,9 +47,8 @@ oci_image(
 # pulled by digest -- see MODULE.bazel) with what is true of any kit set on
 # it. Nothing of a problem and nothing of a participant: arena_problem()'s
 # kit_image stacks a problem's kit on this, as a build output, and its
-# kit_image_issue adds a primed cache and a participant's token to that
-# outside the build -- a minted token must never be the input of an action,
-# where a remote cache would keep it.
+# kit_image_issue adds a primed cache to that outside the build. No token is
+# ever in a kit image.
 #
 # uid 1000 ("ubuntu" in the base) owns /kit; a base that replaces this one
 # (arena_problem's kit_base) has to keep that user.

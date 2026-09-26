@@ -82,7 +82,7 @@ registry), `:config_test`, and three runnable targets:
 | `bazel run //:tournament` | the coordinator, on this checkout. It builds and runs nothing: a worker is a process of its own, which `deploy.sh` and `play` start |
 | `bazel run //:kit -- --out=DIR --mint=alice --server=HOST:PORT` | a participant's workspace: `kit_files`, the arena's kit surface as `./arena`, `arena_cli` as a program, `//:mcp_server`, a README from the config, and a token |
 | `bazel build //:kit_image` | the same as an image, as a build output: toolchain and kit, no token, nothing built. `:kit_image_load` / `:kit_image_push` deliver it; `docker run -it -e ARENA_TOKEN=... TAG` uses it |
-| `bazel run //:kit_image_issue -- --image=TAG [--mint=bob] [--push]` | what a build cannot add, added outside one: dependencies vendored and the cache primed, and a participant's token. `--prime_cache=false` for the token alone, in seconds |
+| `bazel run //:kit_image_issue -- --image=TAG [--push]` | what a build cannot add, added outside one: dependencies vendored and the cache primed. No token or address: `docker run -e ARENA_SERVER=... -e ARENA_TOKEN=...` |
 | `bazel build //:sandbox_image` | the sandbox image `sandbox.image` names: this tree on the arena's base. `:sandbox_image_load` / `:sandbox_image_push` deliver it under that name |
 
 `bazel build //:connect4` builds every binary a tournament needs. What a
@@ -202,33 +202,26 @@ Hand it over as a directory:
 tar czf kit-alice.tgz -C /srv/kits alice   # it contains their token: one participant only
 ```
 
-or, better, as their own image -- which is the whole environment, toolchain
-included, with everything already built:
+or, better, as an image -- the whole environment, toolchain included, with
+everything already built. One image serves everyone; who they are and where
+the arena is go in when it runs:
 
 ```sh
-bazel run //:kit_image_issue -- \
-    --mint=bob --server=arena.example.com:50051 --http=arena.example.com:8090 \
-    --image=registry.example.com/kit-bob:1 --push
+bazel run //:kit_image_issue -- --image=registry.example.com/kit:1 --push
 ```
 
 ```sh
-docker run -it registry.example.com/kit-bob:1                        # a shell in /kit, ready to submit
-docker run -i  registry.example.com/kit-bob:1 bazel run //:mcp_server  # the same, as MCP, for an agent
-docker run -it -e ARENA_SERVER=other:50051 registry.example.com/kit-bob:1
+T=... # arena_admin mint, below
+E="-e ARENA_SERVER=arena.example.com:50051 -e ARENA_NAME=bob -e ARENA_TOKEN=$T"
+docker run -it $E registry.example.com/kit:1                        # a shell in /kit, ready to submit
+docker run -i  $E registry.example.com/kit:1 bazel run //:mcp_server  # the same, as MCP, for an agent
 ```
 
-That adds the vendored dependencies, the primed cache and bob's token to the
-kit image bazel built, with regctl; `--prime_cache=false` adds the token alone
-and takes seconds. Run it on the arena host, or pass `--clients=` the registry
-of the tournament the token is for. One primed image for everyone and a token
-each (`arena_admin mint`, then `docker run -e ARENA_TOKEN=...`) avoids the
-question.
+That adds the vendored dependencies and the primed cache to the kit image
+bazel built, with regctl.
 
-A kit image with a token in it is one participant's credential: build one per
-client id, and push it somewhere only they can pull.
-
-Someone who needs a token but not a kit -- a CI job, or a participant who
-already has the repo:
+A token without a kit -- for an image, a CI job, or a participant who already
+has the repo:
 
 ```sh
 bazel run @game_arena//game_arena/tools:arena_admin -- mint --client_id=carol \

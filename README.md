@@ -114,7 +114,7 @@ bazel run //:play                                    # all of it, and a shell in
 bazel run //:tournament                              # the coordinator; deploy.sh adds a worker
 bazel run //:kit -- --out=/srv/kits/alice --mint=alice --server=$(hostname):50051
 bazel build //:kit_image                             # the kit as an image: a build output
-bazel run //:kit_image_issue -- --mint=bob --image=REG/kit-bob --push   # + a primed cache, + bob's token
+bazel run //:kit_image_issue -- --image=REG/kit --push   # + a primed cache; tokens go in with docker run -e
 bazel build //:sandbox_image                         # the sandbox image: the problem's tree, on the arena's base
 bazel build //:connect4                              # every binary a tournament needs
 ```
@@ -132,10 +132,10 @@ base pulled by digest. It is a build output -- cached, reproducible, made
 without docker -- and it is anyone's: `docker run -it -e ARENA_TOKEN=... TAG`
 is a shell in the kit, `docker run -i TAG bazel run //:mcp_server` the MCP
 server on stdio. `:kit_image_load` and `:kit_image_push` put it in a daemon or
-a registry. The two things a build cannot put in an image are added outside
-one, by `:kit_image_issue`, as layers on the built image: the kit's
-dependencies vendored and its cache primed (that is bazel, run on the kit),
-and a participant's token (a secret, which a remote cache would keep). The
+a registry. What a build cannot put in an image -- the kit's dependencies
+vendored and its cache primed, which is bazel run on the kit -- is added
+outside one, by `:kit_image_issue`, as a layer on the built image. The token
+and the arena's address go in at `docker run -e`. The
 base is the one Dockerfile that is built by hand, `docker/base/Dockerfile`; a
 problem that needs more in its kits layers its own `oci_image` on
 `//game_arena/image:kit_base` and names it as `arena_problem(kit_base =

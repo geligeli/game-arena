@@ -35,14 +35,12 @@ That call defines, in the calling package:
                    docker daemon, tagged `<name>-kit:latest`
   :kit_image_push  `bazel run //:kit_image_push` -- that image, to
                    `kit_repository` (`-- --repository=REG/NAME` to override)
-  :kit_image_issue `bazel run //:kit_image_issue -- --image=TAG [--push]
-                   [--mint=ID | --token=T] [--prime_cache=false]` -- what a
-                   build cannot add to that image, added outside one: the
-                   kit's dependencies vendored and its cache primed (bazel,
-                   run on the kit), and a participant's token (a secret, which
-                   a remote cache would keep). Each is a layer on the built
-                   image and either can be left out; with only the token it
-                   takes seconds
+  :kit_image_issue `bazel run //:kit_image_issue -- --image=TAG [--push]` --
+                   what a build cannot add to that image, added outside one:
+                   the kit's dependencies vendored and its cache primed
+                   (bazel, run on the kit), as a layer on the built image. The
+                   token and the address go in at `docker run -e
+                   ARENA_TOKEN=... -e ARENA_SERVER=...`
   :play            `bazel run //:play` -- the tournament in
                    the background, a kit minted for you, and a shell in it with
                    ARENA_SERVER and ARENA_TOKEN set. Leaving the shell stops

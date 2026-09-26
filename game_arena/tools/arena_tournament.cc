@@ -5,8 +5,7 @@ bazel run //:tournament
 bazel run //:play                            # all of it, and a shell in your
 kit bazel run //:kit -- --out=/srv/kits/alice --server=arena:50051 --mint=alice
 bazel build //:kit_image
-bazel run //:kit_image_issue -- --mint=bob --server=arena:50051 \
-    --image=registry/kit-bob --push
+bazel run //:kit_image_issue -- --image=registry/kit --push
 bazel build //:sandbox_image
 bazel test //:config_test
 
@@ -28,7 +27,9 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 //           run in an action, stacked on a base by rules_oci); with --image,
 //           run as the macro's kit_image_issue, this adds to that image what
 //           a build cannot -- the dependencies vendored and the cache
-//           primed, and the token -- with no docker involved.
+//           primed -- with no docker involved. The token and the address
+//           go in when it runs: `docker run -e ARENA_TOKEN=... -e
+//           ARENA_SERVER=...`.
 //   check   the config parses and is consistent with the tree. What
 //           :config_test runs.
 //   play    up, in the background with its logs in a file, a kit minted for
@@ -103,14 +104,16 @@ ABSL_FLAG(std::string, out, "",
           "<data_dir>/kits/<client_id>; for --image, <data_dir>/images/kit, "
           "which keeps what was vendored and primed between images");
 ABSL_FLAG(std::string, server, "localhost:50051",
-          "kit: the arena address baked into the kit");
+          "kit: the arena address baked into the kit. An image takes "
+          "$ARENA_SERVER instead");
 ABSL_FLAG(std::string, http, "localhost:8090",
           "kit: the leaderboard address baked into the kit");
 ABSL_FLAG(std::string, mint, "",
           "kit: mint a token for this client_id, append the client to "
-          "--clients, and bake the token into the kit");
+          "--clients, and bake the token into the kit. Not with --image");
 ABSL_FLAG(std::string, token, "",
-          "kit: bake this existing token in instead of minting one");
+          "kit: bake this existing token in instead of minting one. Not "
+          "with --image");
 ABSL_FLAG(std::string, registry, "",
           "kit: label of the problem's GameRegistry() library, for the "
           "referee in the kit. Supplied by the arena_problem macro; default "
@@ -136,9 +139,8 @@ ABSL_FLAG(std::string, kit_path, "",
 ABSL_FLAG(std::string, image, "",
           "kit: derive an image with this tag from the kit image bazel built "
           "(--kit_base): the kit's dependencies vendored and its build cache "
-          "primed, and the token when one is minted or given. No docker "
-          "involved; run it as //:kit_image_issue, the target that carries "
-          "the built image. --push pushes it");
+          "primed. No docker involved; run it as //:kit_image_issue, the "
+          "target that carries the built image. --push pushes it");
 ABSL_FLAG(std::string, kit_base, "",
           "kit --image: the OCI layout that is added to -- the kit image "
           "`bazel build //:kit_image` makes. Supplied by the arena_problem "
@@ -492,14 +494,11 @@ bool HaveGnuTar() {
   return true;
 }
 
-// Stacks |tars| on the built image, in order, applies |settings| (regctl's
-// `image mod` flags: --env, --label), and delivers the result as |image|:
+// Stacks |tar| on the built image and delivers the result as |image|:
 // pushed under --push, else loaded into the local daemon when there is one,
 // else left in |archive|. |stage| is scratch for the layout being assembled.
 bool DeliverImage(const ImageTools &tools, const std::filesystem::path &stage,
-                  const std::vector<std::filesystem::path> &tars,
-                  const std::vector<std::string> &settings,
-                  const std::string &image,
+                  const std::filesystem::path &tar, const std::string &image,
                   const std::filesystem::path &archive) {
   const auto digest = LayoutManifestDigest(tools.base);
   if (!digest) {
@@ -509,29 +508,14 @@ bool DeliverImage(const ImageTools &tools, const std::filesystem::path &stage,
   const std::string regctl = tools.regctl.string();
   const std::string layered =
       absl::StrCat("ocidir://", (stage / "layout").string(), ":image");
-  std::string from =
-      absl::StrCat("ocidir://", tools.base.string(), "@", *digest);
-  // One `image mod` per layer -- --layer-add takes one -- with the settings
-  // riding on the last. Compressing a large layer is most of the time taken.
-  const std::size_t steps = std::max<std::size_t>(tars.size(), 1);
-  for (std::size_t i = 0; i < steps; ++i) {
-    std::vector<std::string> mod = {"image", "mod", from};
-    if (from == layered) {
-      mod.push_back("--replace");
-    } else {
-      mod.insert(mod.end(), {"--create", layered});
-    }
-    if (i < tars.size()) {
-      mod.insert(mod.end(), {"--layer-add", "tar=" + tars[i].string()});
-    }
-    if (i + 1 == steps) {
-      mod.insert(mod.end(), settings.begin(), settings.end());
-    }
-    if (RunInherit(regctl, mod, stage) != 0) {
-      LOG(ERROR) << "regctl could not add to " << tools.base;
-      return false;
-    }
-    from = layered;
+  // Compressing a large layer is most of the time taken.
+  if (RunInherit(regctl,
+                 {"image", "mod",
+                  absl::StrCat("ocidir://", tools.base.string(), "@", *digest),
+                  "--create", layered, "--layer-add", "tar=" + tar.string()},
+                 stage) != 0) {
+    LOG(ERROR) << "regctl could not add to " << tools.base;
+    return false;
   }
 
   if (absl::GetFlag(FLAGS_push)) {
@@ -938,8 +922,12 @@ std::string KitMcpJson(const std::filesystem::path &kit,
       JsonEscape(kit.string()),
       "\",\n"
       "      \"env\": {\n"
-      "        \"ARENA_MCP_TARGET\": \"",
-      JsonEscape(server), "\"");
+      "        \"ARENA_KIT\": \"",
+      JsonEscape(kit.string()), "\"");
+  if (!server.empty()) {
+    absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_TARGET\": \"",
+                    JsonEscape(server), "\"");
+  }
   if (!token.empty()) {
     absl::StrAppend(&mcp, ",\n        \"ARENA_MCP_TOKEN\": \"",
                     JsonEscape(token), "\"");
@@ -948,8 +936,6 @@ std::string KitMcpJson(const std::filesystem::path &kit,
     absl::StrAppend(&mcp, ",\n        \"ARENA_NAME\": \"",
                     JsonEscape(client_id), "\"");
   }
-  absl::StrAppend(&mcp, ",\n        \"ARENA_KIT\": \"",
-                  JsonEscape(kit.string()), "\"");
   absl::StrAppend(&mcp, "\n      }\n    }\n  }\n}\n");
   return mcp;
 }
@@ -1190,33 +1176,20 @@ std::string KitConfigText(const proto::ProblemConfig &config,
 
 // The image of a kit is a build output: `bazel build //:kit_image` stacks the
 // kit's tree on the arena's base, and that is the whole image -- anyone's,
-// with no token in it and nothing built. What is added to it afterwards is
-// not a build's business (see "images" above):
-//
-//   priming   the kit's dependencies vendored and its cache filled. That is
-//             bazel run on a kit, which an action cannot do.
-//   a token   a secret, which must never be an action's input.
-//
-// Each is a layer on the built image and either can be left out.
-
-// The files of a kit that say whose it is and how it builds: what differs
-// between the image bazel built and the one handed to a participant.
-constexpr std::array<std::string_view, 5> kKitParticipantFiles = {
-    "arena.env", "arena.textproto", "ARENA.md", "mcp.json", ".bazelrc.local"};
+// with no token in it and nothing built. What is added to it afterwards,
+// priming -- the kit's dependencies vendored and its cache filled -- is bazel
+// run on a kit, which an action cannot do. No token is ever added: it is
+// handed to a container with `docker run -e ARENA_TOKEN=...`.
 
 // Derives |image| from the built kit image: |kit|'s vendored dependencies and
-// primed cache as one layer when there are any, then the participant's files
-// as another, and the address and token in the environment -- so the tools
-// work without sourcing arena.env, and `docker run -e ARENA_SERVER=...` moves
-// the kit to another coordinator.
+// primed cache, and the .bazelrc.local that points bazel at them, as one
+// layer. Where the arena is comes from `docker run -e ARENA_SERVER=...`.
 //
 // |kit| is the same kit the image holds, written again on this host so there
 // is something to run bazel on: same tool, same files, so the cache it fills
 // is the cache the image's build will ask for.
 int LayerKitImage(const ImageTools &tools, std::filesystem::path kit,
-                  const std::string &image, const std::string &server,
-                  const std::string &http, const std::string &token,
-                  const std::string &client_id, bool cached, bool vendored) {
+                  const std::string &image, bool cached, bool vendored) {
   if (kit.filename().empty()) {
     kit = kit.parent_path();
   }
@@ -1224,132 +1197,69 @@ int LayerKitImage(const ImageTools &tools, std::filesystem::path kit,
     return 1;
   }
   // Beside the kit rather than inside it: it is as large as the cache again,
-  // and it holds the token, so it does not outlive this function.
+  // so it does not outlive this function.
   const std::filesystem::path stage =
       kit.parent_path() / (kit.filename().string() + ".image");
   std::error_code ec;
   std::filesystem::remove_all(stage, ec);
-  const std::filesystem::path participant = stage / "participant" / "kit";
-  std::filesystem::create_directories(participant, ec);
+  std::filesystem::create_directories(stage, ec);
   if (ec) {
     LOG(ERROR) << "cannot create " << stage << ": " << ec.message();
     return 1;
   }
   const ScopedRemove cleanup{stage};
+  WriteFile(stage / ".bazelrc.local",
+            absl::StrCat(
+                "# Written by arena_tournament kit, for the kit at "
+                "/kit in this image.\n",
+                KitBuildSettings("/kit", cached, /*portable=*/true, vendored)));
 
-  // uid 1000 is "ubuntu" in the arena's base, and the user the image runs
-  // as: the vendored tree and the cache are theirs to write to.
-  const std::vector<std::string> owner = {"--owner=1000", "--group=1000",
-                                          "--numeric-owner"};
   std::printf("\nAdding to %s, as %s...\n", tools.base.filename().c_str(),
               image.c_str());
   std::fflush(stdout);
-  std::vector<std::filesystem::path> tars;
-
-  // What priming left in the kit. vendor/bazel-external is a symlink into
-  // this host's output base; bazel makes its own in the image.
-  std::vector<std::string> primed;
+  // uid 1000 is "ubuntu" in the arena's base, and the user the image runs
+  // as: the vendored tree and the cache are theirs to write to.
+  // vendor/bazel-external is a symlink into this host's output base; bazel
+  // makes its own in the image.
+  std::vector<std::string> tar = {"--create",
+                                  "--file",
+                                  (stage / "kit.tar").string(),
+                                  "--owner=1000",
+                                  "--group=1000",
+                                  "--numeric-owner",
+                                  "--anchored",
+                                  "--exclude=.arena/vendor/bazel-external",
+                                  "--transform=s,^,kit/,S",
+                                  "--directory",
+                                  kit.string()};
   if (vendored) {
-    primed.push_back(".arena/vendor");
+    tar.push_back(".arena/vendor");
   }
   if (cached) {
-    primed.push_back(".arena/cache");
+    tar.push_back(".arena/cache");
   }
-  if (!primed.empty()) {
-    std::vector<std::string> primed_tar = {"--create", "--file",
-                                           (stage / "primed.tar").string()};
-    primed_tar.insert(primed_tar.end(), owner.begin(), owner.end());
-    primed_tar.insert(primed_tar.end(),
-                      {"--anchored", "--exclude=.arena/vendor/bazel-external",
-                       "--transform=s,^,kit/,S", "--directory", kit.string()});
-    primed_tar.insert(primed_tar.end(), primed.begin(), primed.end());
-    if (RunInherit("tar", primed_tar, kit) != 0) {
-      LOG(ERROR) << "cannot archive the primed cache in " << kit;
-      return 1;
-    }
-    tars.push_back(stage / "primed.tar");
-  }
-
-  // The same files as the kit's, except the two that name where it is.
-  std::vector<std::string> participant_tar = {
-      "--create", "--file", (stage / "participant.tar").string()};
-  participant_tar.insert(participant_tar.end(), owner.begin(), owner.end());
-  participant_tar.insert(participant_tar.end(),
-                         {"--directory", participant.parent_path().string()});
-  const std::filesystem::path in_image = "/kit";
-  for (const std::string_view name : kKitParticipantFiles) {
-    const std::string file(name);
-    if (file == "mcp.json") {
-      WriteFile(participant / file,
-                KitMcpJson(in_image, server, token, client_id));
-    } else if (file == ".bazelrc.local") {
-      WriteFile(participant / file,
-                absl::StrCat("# Written by arena_tournament kit, for the kit "
-                             "at /kit in this image.\n",
-                             KitBuildSettings(in_image, cached,
-                                              /*portable=*/true, vendored)));
-    } else {
-      std::filesystem::copy_file(kit / file, participant / file, ec);
-      if (ec) {
-        LOG(ERROR) << "cannot copy " << file << ": " << ec.message();
-        return 1;
-      }
-    }
-    participant_tar.push_back("kit/" + file);
-  }
-  if (RunInherit("tar", participant_tar, stage) != 0) {
-    LOG(ERROR) << "cannot archive the participant's files";
+  tar.insert(tar.end(), {"--directory", stage.string(), ".bazelrc.local"});
+  if (RunInherit("tar", tar, kit) != 0) {
+    LOG(ERROR) << "cannot archive the primed kit in " << kit;
     return 1;
   }
-  tars.push_back(stage / "participant.tar");
-
-  std::vector<std::string> settings = {
-      "--env",
-      "ARENA_SERVER=" + server,
-      "--label",
-      "org.opencontainers.image.title=arena kit for " +
-          (client_id.empty() ? "a participant" : client_id),
-      "--label",
-      absl::StrCat("org.opencontainers.image.description=Development "
-                   "environment for one participant of an arena tournament at ",
-                   server, " (leaderboard: http://", http, "/)")};
-  if (!token.empty()) {
-    settings.insert(settings.end(), {"--env", "ARENA_TOKEN=" + token});
-  }
-  if (!client_id.empty()) {
-    settings.insert(settings.end(), {"--env", "ARENA_NAME=" + client_id});
-  }
   return DeliverImage(
-             tools, stage, tars, settings, image,
+             tools, stage, stage / "kit.tar", image,
              kit.parent_path() / (kit.filename().string() + ".image.tar"))
              ? 0
              : 1;
 }
 
 // What to do with a kit image, once there is one.
-void PrintKitImageUsage(const std::string &image, bool has_token) {
-  std::printf("\nMade %s%s. %s\n\n", image.c_str(),
-              absl::GetFlag(FLAGS_push) ? " and pushed it" : "",
-              has_token
-                  ? "It is one participant's environment, token included; run "
-                    "it wherever they work:"
-                  : "There is no token in it, so it is anyone's: reads work, "
-                    "and submitting takes `docker run -e ARENA_TOKEN=...`:");
+void PrintKitImageUsage(const std::string &image) {
   std::printf(
-      "  docker run -it %s                          # a shell in "
-      "/kit, everything built\n",
+      "\nMade %s%s. It is anyone's: who and where are given when it runs,\n\n"
+      "  docker run -it -e ARENA_SERVER=<host:port> -e ARENA_NAME=<id> -e "
+      "ARENA_TOKEN=<token> %s\n\n"
+      "and `bazel run //:mcp_server` after the image is the MCP server on "
+      "stdio (docker run -i).\n",
+      image.c_str(), absl::GetFlag(FLAGS_push) ? " and pushed it" : "",
       image.c_str());
-  std::printf(
-      "  docker run -it %s arena_cli leaderboard      # the builtin, on "
-      "PATH\n",
-      image.c_str());
-  std::printf(
-      "  docker run -i %s bazel run //:mcp_server   # the MCP "
-      "server on stdio, for an agent\n",
-      image.c_str());
-  std::printf(
-      "  docker run -e ARENA_SERVER=<host:port> ...   # the same kit "
-      "against another coordinator\n");
 }
 
 int RunKit(const ArenaRunfiles &runfiles) {
@@ -1360,8 +1270,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
   }
   const std::filesystem::path root = WorkspaceRoot();
 
-  // Whether --image can be honoured, settled before a token is minted for a
-  // kit that then cannot be delivered. It is derived from the kit image bazel
+  // Whether --image can be honoured. It is derived from the kit image bazel
   // built, which the kit_image_issue target carries.
   const std::string image = absl::GetFlag(FLAGS_image);
   const std::optional<ImageTools> image_tools =
@@ -1380,6 +1289,12 @@ int RunKit(const ArenaRunfiles &runfiles) {
                << image
                << " ... (or `bazel build //:kit_image` for the image with "
                   "nothing added)";
+    return 1;
+  }
+  if (layered && !(absl::GetFlag(FLAGS_mint).empty() &&
+                   absl::GetFlag(FLAGS_token).empty())) {
+    LOG(ERROR) << "an image holds no token: hand one over with `docker run -e "
+                  "ARENA_TOKEN=...`";
     return 1;
   }
   if (!image.empty() && !CanPush(image, "Pass --image=REGISTRY/NAME:TAG.")) {
@@ -1522,8 +1437,8 @@ int RunKit(const ArenaRunfiles &runfiles) {
   // An image's dependencies are vendored into the kit unless the problem lets
   // a kit's builds fetch: a dependency that resolves in the kit but not in the
   // sandbox is a submission that fails after it was tested. Part of priming,
-  // so --prime_cache=false adds the token and nothing else, which takes
-  // seconds, and leaves the image fetching and building cold as it was built.
+  // so --prime_cache=false leaves the image fetching and building cold as it
+  // was built.
   const bool vendored =
       layered && prime && !config->kit().allow_network_builds();
 
@@ -1553,8 +1468,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
     absl::StrAppend(&env, "export ARENA_NAME=", client_id, "\n");
   }
   WriteFile(out / "arena.env", env);
-  WriteFile(out / "arena.textproto",
-            KitConfigText(*config, server, client_id));
+  WriteFile(out / "arena.textproto", KitConfigText(*config, server, client_id));
   if (!InstallBuiltins(runfiles, out)) {
     return 1;
   }
@@ -1566,7 +1480,9 @@ int RunKit(const ArenaRunfiles &runfiles) {
       absl::GetFlag(FLAGS_kit_path).empty()
           ? out
           : std::filesystem::path(absl::GetFlag(FLAGS_kit_path));
-  WriteFile(out / "mcp.json", KitMcpJson(home, server, token, client_id));
+  // A kit in an image takes its address from the container's ARENA_SERVER.
+  WriteFile(out / "mcp.json",
+            KitMcpJson(home, home == out ? server : "", token, client_id));
 
   // bazel-* are symlinks the priming build leaves behind; .bazelrc.local
   // names this host's paths; .arena/cache is a bazel disk cache and
@@ -1688,20 +1604,12 @@ int RunKit(const ArenaRunfiles &runfiles) {
   if (image.empty()) {
     return 0;
   }
-  if (server.rfind("localhost", 0) == 0 || server.rfind("127.", 0) == 0) {
-    LOG(WARNING) << "--server=" << server
-                 << " is baked into the image, and inside a container that "
-                    "is the container itself; pass --server=<host>:<port> "
-                    "as the coordinator is reached from where the kit runs, "
-                    "or override with `docker run -e ARENA_SERVER=...`";
-  }
-  if (const int code =
-          LayerKitImage(*image_tools, out, image, server, http, token,
-                        client_id, /*cached=*/prime, vendored);
+  if (const int code = LayerKitImage(*image_tools, out, image,
+                                     /*cached=*/prime, vendored);
       code != 0) {
     return code;
   }
-  PrintKitImageUsage(image, !token.empty());
+  PrintKitImageUsage(image);
   return 0;
 }
 

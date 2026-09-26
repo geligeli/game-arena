@@ -44,7 +44,7 @@ bazel run //:play                            # the tournament, a kit for you, a 
 bazel run //:tournament                      # the coordinator; a worker is a process of its own
 bazel run //:kit -- --out=DIR --mint=alice   # a participant's workspace + token
 bazel build //:kit_image                     # the same, as an image: a build output, no docker
-bazel run //:kit_image_issue -- --mint=bob --image=TAG   # that image + a primed cache + bob's token
+bazel run //:kit_image_issue -- --image=TAG   # that image + a primed cache
 bazel build //:sandbox_image                 # the image sandbox.image names: this tree, on the arena's base
 ```
 
@@ -73,17 +73,17 @@ to write the kit for `/kit` and tars it, and rules_oci stacks that on
 same bytes for the same kit, and it holds nothing that is not a build's to
 hold: no token, and nothing built.
 
-Those two are added outside the build, by `kit_image_issue`, each as a layer
-on the built image and either on its own. *Priming* is bazel run on a kit,
+Priming is added outside the build, by `kit_image_issue`, as a layer on the
+built image. It is bazel run on a kit,
 which an action cannot do: the tool writes the same kit on this host, runs
 `bazel vendor` into `.arena/vendor` and the build into `.arena/cache`, and
 adds the two directories. Both run with `--nohome_rc --nosystem_rc` and the
 kit carries `--incompatible_strict_action_env`, because a cache only hits for
 the build that filled it -- a remote executor's platform properties in a
 `~/.bazelrc`, or this shell's `PATH`, are part of every action's key, and the
-container has neither. A *token* is a secret, and an action's inputs end up in
-a remote cache; `--mint` or `--token` puts it in the image's environment and
-the participant's files, with `regctl`, in a couple of seconds. `--push` goes
+container has neither. A token never goes into an image: it is a secret, and
+one image serves everyone, each with `docker run -e ARENA_TOKEN=...
+-e ARENA_NAME=...`. `--push` goes
 straight to the registry with the logins docker keeps; without it the image is
 loaded into the local daemon when there is one, and left as an archive when
 there is not. A problem that would rather prime its kits another way -- a
