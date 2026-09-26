@@ -5,6 +5,8 @@
 **/bazel-**
 .cache
 .claude
+# The agents image's Claude Code config, which is source.
+!/docker/coding-agents/home/.claude
 __pycache__
 compile_commands.json
 

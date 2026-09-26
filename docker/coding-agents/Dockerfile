@@ -19,19 +19,14 @@ FROM registry.takumi.city/game-arena-base@sha256:52a3d7317cc865f1071e857506f03e4
 USER ubuntu
 WORKDIR /home/ubuntu
 RUN curl -fsSL https://claude.ai/install.sh | bash
-RUN echo '{"hasCompletedOnboarding":true,"projects":{"/kit":{"hasTrustDialogAccepted":true}}}' \
-      > /home/ubuntu/.claude.json
-RUN mkdir -p /home/ubuntu/.claude \
- && echo '{"skipDangerousModePermissionPrompt":true}' > /home/ubuntu/.claude/settings.json
-
 RUN curl -fsSL https://opencode.ai/install | bash
-RUN mkdir -p /home/ubuntu/.config/opencode \
- && echo '{"$schema":"https://opencode.ai/config.json","model":"anthropic/claude-sonnet-5","permission":{"edit":"allow","bash":"allow","webfetch":"allow"}}' \
-      > /home/ubuntu/.config/opencode/opencode.json
-
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
-RUN mkdir -p /home/ubuntu/.gemini/antigravity-cli \
- && echo '{"modelProvider":"gemini"}' > /home/ubuntu/.gemini/antigravity-cli/settings.json
+
+# Each agent's config, in the file that agent reads (home/): its permissions
+# and model, and the arena's MCP server -- the kit's own arena_cli, run as
+# `arena_cli mcp`. Claude Code takes that from the kit's .mcp.json. Nothing of
+# a participant: the address, name and token are `docker run -e ARENA_*`.
+COPY --chown=ubuntu:ubuntu home/ /home/ubuntu/
 
 # What game_arena/image:kit_base sets on the base, which this image replaces,
 # with the agents' directories on PATH.

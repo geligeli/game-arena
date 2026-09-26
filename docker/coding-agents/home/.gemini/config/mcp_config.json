@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "arena": {
+      "command": "/kit/.arena/bin/arena_cli",
+      "args": ["mcp"]
+    }
+  }
+}

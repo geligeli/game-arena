@@ -42,6 +42,7 @@ tmux split-window -vf -t $SESSION -c $TARGET_DIR "docker run \
  -e ARENA_SERVER=localhost:50051 \
  -e ARENA_NAME=${NAME_P1} \
  -e ARENA_TOKEN=${TOKEN_P1} \
+ -e CLAUDE_CODE_OAUTH_TOKEN \
  ${REGISTRY}:${TAG}
 "
 

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "anthropic/claude-sonnet-5",
+  "permission": {
+    "edit": "allow",
+    "bash": "allow",
+    "webfetch": "allow"
+  },
+  "mcp": {
+    "arena": {
+      "type": "local",
+      "command": ["/kit/.arena/bin/arena_cli", "mcp"],
+      "enabled": true
+    }
+  }
+}
