@@ -244,6 +244,37 @@ TEST_F(NimGameRunTest, IllegalActionLosesTheGame) {
   EXPECT_EQ(honest->game_over()->result(), proto::GameOver::WIN);
 }
 
+TEST_F(NimGameRunTest, RecordsAViewOfEveryState) {
+  std::optional<proto::GameRecord> record;
+  GameRunConfig config;
+  config.on_record = [&record](const proto::GameRecord &r) { record = r; };
+  auto alice =
+      std::make_shared<FakeClient>("alice", FakeClient::Mode::kPlayValid);
+  auto bob = std::make_shared<FakeClient>("bob", FakeClient::Mode::kPlayValid);
+  RunToCompletion({MakeSeat(alice), MakeSeat(bob)}, config);
+
+  ASSERT_TRUE(record.has_value());
+  EXPECT_EQ(record->initial_view(), "21:0");
+  ASSERT_EQ(record->steps_size(), 21);
+  EXPECT_EQ(record->steps(0).view(), "20:1");
+  EXPECT_EQ(record->steps(20).view(), "0:0");
+}
+
+TEST_F(NimGameRunTest, StopsRecordingViewsPastTheCap) {
+  std::optional<proto::GameRecord> record;
+  GameRunConfig config;
+  config.max_view_bytes = 10;
+  config.on_record = [&record](const proto::GameRecord &r) { record = r; };
+  auto alice =
+      std::make_shared<FakeClient>("alice", FakeClient::Mode::kPlayValid);
+  auto bob = std::make_shared<FakeClient>("bob", FakeClient::Mode::kPlayValid);
+  RunToCompletion({MakeSeat(alice), MakeSeat(bob)}, config);
+
+  ASSERT_TRUE(record.has_value());
+  EXPECT_EQ(record->steps(1).view(), "19:0");
+  EXPECT_EQ(record->steps(2).view(), "");
+}
+
 // A builtin seat takes the same path as a remote one, so the registry's
 // make_builtin has to work through GameRun as well as in isolation.
 TEST_F(NimGameRunTest, BuiltinSeatPlaysAGameThrough) {

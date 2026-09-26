@@ -25,6 +25,19 @@ TEST(Connect4Session, StartsEmptyWithPlayerZeroToMove) {
   EXPECT_FALSE(session.Outcome().has_value());
 }
 
+TEST(Connect4Session, RendersTheBoardTopRowFirst) {
+  Connect4Session session;
+  ASSERT_TRUE(Drop(&session, 3));
+  EXPECT_EQ(session.RenderState(),
+            ".......\n"
+            ".......\n"
+            ".......\n"
+            ".......\n"
+            ".......\n"
+            "...X...\n"
+            "0123456\n");
+}
+
 TEST(Connect4Session, DiscsStackFromTheBottom) {
   Connect4Session session;
   ASSERT_TRUE(Drop(&session, 3));

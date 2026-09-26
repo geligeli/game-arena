@@ -56,6 +56,8 @@ class Connect4Session final : public tournament_broker::GameSession {
   Connect4Session(Cells cells, int player) : cells_(cells), player_(player) {}
 
   auto SerializeState() const -> std::string override;
+  // The board as a replay shows it: six rows, top first, over the columns.
+  auto RenderState() const -> std::string override;
   auto CurrentPlayer() const -> int override { return player_; }
   auto IsChanceNode() const -> bool override { return false; }
   void ApplyChanceAction(std::mt19937 &gen) override;

@@ -52,6 +52,8 @@ class GameSession {
   virtual ~GameSession() = default;
 
   virtual std::string SerializeState() const = 0;
+  // The state as text for a person: what a replay shows, one per step.
+  virtual std::string RenderState() const { return SerializeState(); }
   virtual int CurrentPlayer() const = 0;  // seat index
   virtual bool IsChanceNode() const = 0;
   // Resolves a chance node with the rules-defined distribution and records the

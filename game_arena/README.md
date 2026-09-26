@@ -185,6 +185,10 @@ cc_binary(
 `game_arena/testgame` is the complete worked example. Nothing needs to change
 in this package to add a game — that is the point of the seam.
 
+A replay on the dashboard shows `RenderState()` after every move. It defaults
+to the serialized state; override it when that is not readable as it is
+(`examples/connect4` draws its board).
+
 If your games already exist in some framework, write the adapter once as a
 template over that framework's game concept and register instances of it;
 `game_mcts/arena/game_session_impl.h` in the

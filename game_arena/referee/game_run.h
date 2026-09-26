@@ -18,11 +18,13 @@
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "game_arena/proto/tournament_broker.pb.h"
 #include "game_arena/referee/client_handle.h"
@@ -40,6 +42,9 @@ struct GameRunConfig {
   // of thousands of moves.
   std::chrono::milliseconds game_time_budget{0};
   int max_moves_per_game = 50000;
+  // Bytes of views (GameRecord.Step.view) one game records. A record crosses
+  // gRPC whole, so the steps past this have none.
+  std::size_t max_view_bytes = 1 << 20;
 
   // Called with the finished game's record, on the game's own strand, right
   // after it is persisted. The match referee tallies through this rather than
@@ -79,6 +84,8 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   void Begin();
   void Step();
   void Conclude(GameOutcome outcome, std::string reason);
+  // Renders the state for every step recorded since the last call.
+  void CaptureViews();
   bool SendYourTurn(int seat, std::chrono::milliseconds allowed);
   void ArmTurnTimer(std::chrono::milliseconds delay);
   void CancelTurnTimer();
@@ -99,6 +106,9 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   std::unique_ptr<GameSession> session_;
   proto::GameRecord record_;
   std::mt19937 gen_;
+  // The view after each step so far, and their size against max_view_bytes.
+  std::vector<std::string> views_;
+  std::size_t view_bytes_ = 0;
 
   // Keeps the game alive between events: once Step() returns, nothing else
   // holds a strong reference until an action or the deadline arrives.

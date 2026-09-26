@@ -69,6 +69,8 @@ void GameRun::Begin() {
     record_.add_player_names(seat.display_name);
   }
   record_.set_initial_state(session_->SerializeState());
+  record_.set_initial_view(session_->RenderState());
+  view_bytes_ = record_.initial_view().size();
   record_.set_started_unix_ms(NowUnixMs());
 
   // Observers hold a weak reference: seats_ owns the handles, so a strong one
@@ -150,6 +152,7 @@ void GameRun::Step() {
   }
 
   for (;;) {
+    CaptureViews();
     if (const auto terminal = session_->Outcome()) {
       Conclude(*terminal, "normal");
       return;
@@ -227,6 +230,16 @@ void GameRun::Step() {
   }
 }
 
+void GameRun::CaptureViews() {
+  while (views_.size() < session_->Steps().size()) {
+    std::string view = view_bytes_ < config_.max_view_bytes
+                           ? session_->RenderState()
+                           : std::string();
+    view_bytes_ += view.size();
+    views_.push_back(std::move(view));
+  }
+}
+
 void GameRun::Conclude(GameOutcome outcome, std::string reason) {
   if (concluded_) {
     return;
@@ -241,11 +254,14 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
     }
   }
 
-  for (const RecordedStep &step : session_->Steps()) {
+  CaptureViews();
+  const std::vector<RecordedStep> &steps = session_->Steps();
+  for (std::size_t i = 0; i < steps.size(); ++i) {
     auto *record_step = record_.add_steps();
-    record_step->set_player(step.player);
-    record_step->set_action(step.action_bytes);
-    record_step->set_unix_ms(step.unix_ms);
+    record_step->set_player(steps[i].player);
+    record_step->set_action(steps[i].action_bytes);
+    record_step->set_unix_ms(steps[i].unix_ms);
+    record_step->set_view(std::move(views_[i]));
   }
   record_.set_termination_reason(reason);
   record_.set_finished_unix_ms(NowUnixMs());

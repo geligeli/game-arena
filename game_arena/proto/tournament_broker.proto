@@ -82,11 +82,16 @@ message GameRecord {
   string game = 2;
   repeated string player_names = 3;  // indexed by seat
   bytes initial_state = 4;
+  // GameSession::RenderState() of the initial state, and of the state after
+  // each step: what a replay shows. Bytes, because the default is the
+  // serialized state. Empty past the referee's per-game budget for them.
+  bytes initial_view = 11;
 
   message Step {
     int32 player = 1;    // deciding player; -1 for chance resolutions
     bytes action = 2;    // serialized per-game action proto
     int64 unix_ms = 3;
+    bytes view = 4;
   }
   repeated Step steps = 5;
 

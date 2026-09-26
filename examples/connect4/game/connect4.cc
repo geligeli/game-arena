@@ -124,6 +124,16 @@ auto Connect4Session::SerializeState() const -> std::string {
   return SerializeBoard(cells_, player_);
 }
 
+auto Connect4Session::RenderState() const -> std::string {
+  std::string text;
+  for (int row = 0; row < kRows; ++row) {
+    text.append(cells_.begin() + row * kCols,
+                cells_.begin() + (row + 1) * kCols);
+    text += '\n';
+  }
+  return text + "0123456\n";
+}
+
 void Connect4Session::ApplyChanceAction(std::mt19937 & /*gen*/) {
   // Unreachable: IsChanceNode() is always false. Connect Four has no dice.
 }
