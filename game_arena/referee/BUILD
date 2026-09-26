@@ -127,14 +127,14 @@ cc_library(
     ],
 )
 
-# One match, then exit. Started by a sandbox worker per order; see main.cc.
+# One match, then exit. Started by a sandbox worker per order; see referee_main.cc.
 #
 # A library rather than a cc_binary because main() is game-agnostic but the
 # registry it drives is not: link this with a registry to get a referee.
 # alwayslink so main() survives the archive.
 cc_library(
     name = "referee_main",
-    srcs = ["main.cc"],
+    srcs = ["referee_main.cc"],
     alwayslink = 1,
     deps = [
         "//game_arena/common/kv_options",

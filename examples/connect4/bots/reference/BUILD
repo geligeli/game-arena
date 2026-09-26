@@ -18,7 +18,7 @@ cc_library(
 
 cc_binary(
     name = "bot",
-    srcs = ["//bots:bot_main.cc"],
+    srcs = ["//bots:bot.cc"],
     local_defines = [
         r'CANDIDATE_ENTRY_HEADER=\"' + package_name() + r'/strategy.h\"',
     ],

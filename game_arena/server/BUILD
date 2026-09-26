@@ -202,7 +202,7 @@ cc_library(
 # :no_problem_code_test, not by convention.
 cc_binary(
     name = "problem_server",
-    srcs = ["main.cc"],
+    srcs = ["problem_server.cc"],
     deps = [
         "//game_arena/common/process",
         ":arena_service",

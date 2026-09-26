@@ -5,7 +5,7 @@
 //
 // One function. Everything else -- connecting to the broker, the handshake,
 // parsing the board, serializing the move, reporting the result -- is
-// bot_main.cc, compiled unchanged around your header.
+// bot.cc, compiled unchanged around your header.
 //
 //   auto ChooseColumn(const bot::Board &board, std::mt19937 &gen) -> int;
 //

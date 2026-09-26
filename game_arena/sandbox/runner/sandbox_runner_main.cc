@@ -1,7 +1,7 @@
 // Standalone sandbox runner server: `bazel run //<target>` per request,
 // inside a throwaway docker container.
 /*
-bazel run //game_arena/sandbox/runner:sandbox_runner -- \
+bazel run //game_arena/sandbox/runner:sandbox_runner_main -- \
   --port=50052 --docker_image=nim-sandbox:1 \
   --repo_dir=/large_nfs/game-mcts --timeout_s=1800
 */

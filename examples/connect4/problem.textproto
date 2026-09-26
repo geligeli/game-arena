@@ -40,7 +40,7 @@ submission {
     # These are this repo's labels. The arena has no opinion about them; it
     # writes exactly these into the BUILD it generates per submission.
     api_dep: "//bots:bot_api"
-    main_src: "//bots:bot_main.cc"
+    main_src: "//bots:bot.cc"
     bot_deps: "//bots:bot_deps"
   }
 

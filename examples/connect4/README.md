@@ -33,7 +33,7 @@ which is roughly where a submission should start.
 | `game/connect4.{h,cc}` | the rules, as a `tournament_broker::GameSession` |
 | `game/registry.cc` | **the seam** — defines `GameRegistry()` |
 | `bots/bot_api.h` | the board, as a submitter sees it |
-| `bots/bot_main.cc` | the harness compiled around every submission |
+| `bots/bot.cc` | the harness compiled around every submission |
 | `bots/reference/strategy.h` | the starting point for a submission |
 
 ## The seam
@@ -68,7 +68,7 @@ coordinator runs this and a knapsack solver without knowing the difference.
 ## Writing a bot
 
 One function. Everything else — connecting, the handshake, parsing the board,
-serializing the move — is `bots/bot_main.cc`, compiled unchanged around your
+serializing the move — is `bots/bot.cc`, compiled unchanged around your
 header.
 
 ```cpp
@@ -100,7 +100,7 @@ a kit `arena_cli` copies it to `bots/<you>/` the first time, and
 ```textproto
 harness {
   api_dep: "//bots:bot_api"        # what every submission links
-  main_src: "//bots:bot_main.cc"   # provides main(), compiled per submission
+  main_src: "//bots:bot.cc"   # provides main(), compiled per submission
   bot_deps: "//bots:bot_deps"      # the rest of the binary's deps
 }
 ```

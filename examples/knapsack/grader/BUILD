@@ -7,7 +7,7 @@ package(default_visibility = ["//visibility:public"])
 # editing the scoreboard.
 cc_binary(
     name = "grade",
-    srcs = ["grade_main.cc"],
+    srcs = ["grade.cc"],
     deps = [
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",

@@ -8,7 +8,7 @@
 // build tooling -- games, draws and an ELO number are the arena's vocabulary,
 // and a sandbox that merely runs things must not have to know them.
 //
-// The contract is printed by the referee (see referee/main.cc) and is
+// The contract is printed by the referee (see referee/referee_main.cc) and is
 // deliberately one line of ASCII, so a harness in any language can emit it
 // and a failing test stays legible.
 

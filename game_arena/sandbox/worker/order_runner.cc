@@ -97,7 +97,7 @@ sandbox_exec::Engine *OrderRunner::EngineFor(
   // The problem decides, by naming an image or not -- and the coordinator
   // requires one (server/problem_config.cc), so in a tournament this is
   // always the container engine. A worker binary is built with no other
-  // (sandbox/worker/worker_main.cc); the process engine reaches this class
+  // (sandbox/worker/sandbox_worker.cc); the process engine reaches this class
   // only from a test.
   return order.sandbox().image().empty() ? process_engine_ : container_engine_;
 }

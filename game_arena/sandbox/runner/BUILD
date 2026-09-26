@@ -32,7 +32,7 @@ cc_grpc_library(
 )
 
 cc_library(
-    name = "sandbox_runner_lib",
+    name = "sandbox_runner",
     srcs = ["sandbox_runner.cc"],
     hdrs = ["sandbox_runner.h"],
     deps = [
@@ -48,10 +48,10 @@ cc_library(
 )
 
 cc_binary(
-    name = "sandbox_runner",
-    srcs = ["main.cc"],
+    name = "sandbox_runner_main",
+    srcs = ["sandbox_runner_main.cc"],
     deps = [
-        ":sandbox_runner_lib",
+        ":sandbox_runner",
         "//game_arena/sandbox/exec:container_engine",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
@@ -86,7 +86,7 @@ cc_test(
     name = "sandbox_runner_integration_test",
     srcs = ["sandbox_runner_integration_test.cc"],
     deps = [
-        ":sandbox_runner_lib",
+        ":sandbox_runner",
         "//game_arena/sandbox/exec:container_engine",
         ":sandbox_service_cc_grpc",
         "@googletest//:gtest_main",
@@ -99,7 +99,7 @@ cc_test(
     name = "sandbox_runner_test",
     srcs = ["sandbox_runner_test.cc"],
     deps = [
-        ":sandbox_runner_lib",
+        ":sandbox_runner",
         "@googletest//:gtest_main",
     ],
 )

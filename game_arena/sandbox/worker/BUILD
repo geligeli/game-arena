@@ -134,7 +134,7 @@ cc_library(
 # configuration.
 cc_binary(
     name = "sandbox_worker",
-    srcs = ["worker_main.cc"],
+    srcs = ["sandbox_worker.cc"],
     deps = [
         ":order_runner",
         "//game_arena/common/process",

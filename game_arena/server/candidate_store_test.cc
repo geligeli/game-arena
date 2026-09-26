@@ -184,7 +184,7 @@ TEST_F(CandidateStoreTest, APatchMayOnlyTouchItsOwnDirectory) {
       << error;
   EXPECT_FALSE(
       store.Validate(patch_by("alice", "bots/bob/strategy.h"), &error));
-  EXPECT_FALSE(store.Validate(patch_by("alice", "bots/bot_main.cc"), &error));
+  EXPECT_FALSE(store.Validate(patch_by("alice", "bots/bot.cc"), &error));
 }
 
 TEST_F(CandidateStoreTest, RejectsAPatchThatEscapesTheRepo) {

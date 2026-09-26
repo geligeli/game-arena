@@ -32,7 +32,7 @@ has to be something to beat.
 | --- | --- |
 | `BUILD` | one `arena_problem()` call: the config test, the tournament, the kit |
 | `problem.textproto` | the whole problem: what to build, what to run, what to rank |
-| `grader/grade_main.cc` | runs each case, checks the answer, writes the report |
+| `grader/grade.cc` | runs each case, checks the answer, writes the report |
 | `cases/*.txt`, `*.best` | the instances and their known optima |
 | `solutions/reference/` | an exact DP — the shape a submission takes |
 | `solutions/greedy/` | a worse one, so the board has an order |
@@ -58,7 +58,7 @@ zero for that case, and so does a crash or a timeout.
 
 ## Writing a grader
 
-`grade_main.cc` is ~150 lines and the only part worth copying. Two rules it
+`grade.cc` is ~150 lines and the only part worth copying. Two rules it
 follows:
 
 **Check feasibility yourself.** A submission is not a collaborator. The score

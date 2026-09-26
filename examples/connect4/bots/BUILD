@@ -16,7 +16,7 @@ cc_library(
 # Exported as a source, not wrapped in a cc_library, because the per-submission
 # BUILD the coordinator generates has to compile it *itself*: the entry header
 # arrives as a local_define, and those do not propagate from a dependency.
-exports_files(["bot_main.cc"])
+exports_files(["bot.cc"])
 
 # What the generated per-submission binary links. Named here so
 # problem.textproto's submission.harness can point at one label instead of
