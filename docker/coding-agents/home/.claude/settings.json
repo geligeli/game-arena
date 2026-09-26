@@ -1,4 +1,7 @@
 {
   "skipDangerousModePermissionPrompt": true,
-  "enableAllProjectMcpServers": true
+  "enableAllProjectMcpServers": true,
+  "permissions": {
+    "allow": ["mcp__arena"]
+  }
 }
