@@ -55,9 +55,7 @@ void MetricStandings::Record(const std::string &candidate_id,
     std::lock_guard lock(mutex_);
     proto::MetricRecord &record = (*store_.mutable_records())[candidate_id];
     record.set_candidate_id(candidate_id);
-    // Replace rather than merge: the newest measurement is the one that stands,
-    // and keeping a stale metric alongside a fresh one would rank a submission
-    // on numbers taken at different times.
+    // Replace, not merge: never rank on numbers taken at different times.
     record.mutable_metrics()->clear();
     for (const auto &[name, value] : result.metrics()) {
       (*record.mutable_metrics())[name] = value;
@@ -135,8 +133,7 @@ std::vector<Standing> MetricStandings::Rank(int limit) const {
   for (Standing &row : rows) {
     row = Get(row.candidate_id);
   }
-  // A submission with no reading for the primary metric cannot be placed, so it
-  // is left off rather than shown at one end as if it had scored there.
+  // No primary metric, no place: left off rather than shown at one end.
   std::erase_if(rows, [&](const Standing &row) {
     return !row.metrics.contains(metric_name_);
   });

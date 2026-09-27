@@ -1,16 +1,8 @@
 #ifndef GAME_ARENA_GAME_ARENA_STANDINGS_METRIC_STANDINGS_H
 #define GAME_ARENA_GAME_ARENA_STANDINGS_METRIC_STANDINGS_H
 
-// Standings for a graded problem: a measured number per submission, ranked by
-// the problem's primary metric.
-//
-// Persisted the same way EloStore is -- loaded once at startup, rewritten
-// atomically (tmp + rename) after every update, with the rewrite outside the
-// lock so a finishing order never blocks the leaderboard on disk I/O.
-//
-// The worker and machine class are stored beside the numbers because a
-// wall-clock measurement is not a property of the submission alone. A board
-// that forgot which host produced each row would be ranking the fleet.
+// Standings for a graded problem, persisted like EloStore. Each row keeps its
+// worker and machine class: a wall-clock number depends on the host.
 
 #include <cstdint>
 #include <filesystem>
@@ -24,9 +16,7 @@ namespace tournament_arena {
 
 class MetricStandings final : public Standings {
  public:
-  // |metric_name| selects the number the board is ordered by, and
-  // |lower_is_better| decides which end wins. Taken as plain values rather than
-  // a MetricSpec so this does not depend on the problem-config schema.
+  // Plain values, not a MetricSpec, so this does not depend on problem.proto.
   MetricStandings(std::filesystem::path path, std::string metric_name,
                   bool lower_is_better);
 
@@ -41,8 +31,7 @@ class MetricStandings final : public Standings {
   bool has(const std::string &candidate_id) const override;
 
  private:
-  // Atomic rewrite of an already-serialized store. Called without mutex_ held;
-  // drops |blob| if a newer version already landed.
+  // Call without mutex_ held; drops |blob| if a newer version already landed.
   void Save(const std::string &blob, uint64_t version);
 
   const std::filesystem::path path_;

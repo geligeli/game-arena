@@ -28,8 +28,7 @@ GameHistory::GameHistory(std::filesystem::path dir) : dir_(std::move(dir)) {
     LOG(ERROR) << "Cannot create game history dir " << dir_ << ": "
                << ec.message();
   }
-  // Seed the in-memory tail from whatever a previous run left behind. This is
-  // the only time the index file is read.
+  // Seed the tail from what a previous run left behind.
   std::ifstream in(dir_ / "index.jsonl");
   std::string line;
   while (std::getline(in, line)) {
@@ -53,9 +52,8 @@ std::filesystem::path GameHistory::Store(const proto::GameRecord &record) {
     }
   }
 
-  // One line of index.jsonl. serialize() never emits a newline of its own --
-  // a name carrying one comes back as \n -- so the object stays on one line
-  // however the players are called.
+  // serialize() escapes newlines, so an entry stays on one line whatever the
+  // names.
   json::object entry{
       {"game_id", record.game_id()},
       {"game", record.game()},

@@ -65,8 +65,7 @@ std::pair<double, double> EloStore::RecordResult(const std::string &game,
     blob = store_.SerializeAsString();
     version = ++version_;
   }
-  // Disk I/O outside mutex_: readers (leaderboard) and other finishing games
-  // are not blocked by this rewrite.
+  // Outside mutex_, so readers and finishing games do not wait on disk.
   Save(blob, version);
   return new_ratings;
 }

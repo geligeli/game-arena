@@ -1,35 +1,17 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
-package(
-    default_visibility = ["//visibility:public"],
-)
+package(default_visibility = ["//visibility:public"])
 
-# How a tournament's results are rated, kept and shown.
-#
-# Its own package because two very different things link it: the coordinator,
-# which owns the authoritative standings, and the referee -- a worker's, or
-# the one `arena_cli spar` runs in a kit. That second one is why
-# nothing here may reach into //game_arena/server -- a kit gets this package
-# and not the coordinator, and the dependency edge is what keeps that true.
-#
-#   bazel query 'somepath(//game_arena/standings/..., //game_arena/server/...)'
-#
-# must stay empty.
-
-# The score a problem is ordered by, whatever it is: an ELO rating or a
-# measured metric, behind one interface so the scheduler, the Arena service
-# and the leaderboard need no branch.
+# A kit gets this package and the referee links it, so nothing here may depend
+# on //game_arena/server.
 cc_library(
     name = "standings",
     hdrs = ["standings.h"],
     deps = ["//game_arena/proto:arena_cc_proto"],
 )
 
-# Reading candidates, for the things that only read them: the standings and
-# the leaderboard. Depending on the store that writes them would drag the
-# coordinator's submission machinery -- the patch validator, the BUILD
-# generator -- into every kit.
+# Read-only, so a kit need not carry the store that writes candidates.
 cc_library(
     name = "candidate_view",
     hdrs = ["candidate_view.h"],
@@ -137,8 +119,7 @@ cc_test(
     ],
 )
 
-# Every file of this package, for the arena a participant's kit builds
-# against: a kit gets these packages whole (see //:kit_surface).
+# A kit vendors this package whole (//:kit_surface).
 filegroup(
     name = "kit_surface_files",
     srcs = glob(["**"]),
