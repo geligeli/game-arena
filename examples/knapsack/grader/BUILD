@@ -23,5 +23,4 @@ cc_binary(
 filegroup(
     name = "tree",
     srcs = glob(["**"]),
-    visibility = ["//visibility:public"],
 )

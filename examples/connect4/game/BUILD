@@ -52,5 +52,4 @@ cc_test(
 filegroup(
     name = "tree",
     srcs = glob(["**"]),
-    visibility = ["//visibility:public"],
 )

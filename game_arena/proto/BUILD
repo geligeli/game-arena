@@ -1,7 +1,6 @@
 load("@grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
 load("@protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@protobuf//bazel:proto_library.bzl", "proto_library")
-load("@protobuf//bazel:py_proto_library.bzl", "py_proto_library")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -47,11 +46,6 @@ proto_library(
 
 cc_proto_library(
     name = "problem_cc_proto",
-    deps = [":problem_proto"],
-)
-
-py_proto_library(
-    name = "problem_py_proto",
     deps = [":problem_proto"],
 )
 

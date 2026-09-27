@@ -6,7 +6,6 @@ module(
 )
 
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "rules_python", version = "1.9.0")
 bazel_dep(name = "rules_cc", version = "0.2.25")
 
 # The C++ toolchain: hermetic-llvm (clang + libc++ + compiler-rt, no sysroot).
@@ -93,10 +92,6 @@ single_version_override(
     patches = ["//:protobuf_bzlmod_fixes.patch"],
     patch_strip = 1,
 )
-
-python = use_extension("@rules_python//python/extensions:python.bzl", "python")
-python.toolchain(python_version = "3.12")
-
 
 # C++ formatting (//tools/cpp_format.sh). Dev-only, and deliberately so: it is
 # not in the BCR, so it can only be resolved through the archive_override below,

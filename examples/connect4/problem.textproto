@@ -71,7 +71,6 @@ sandbox {
   # empty cache volume.
   run_as_user: "1000:1000"
   memory_limit_mb: 4096
-  # The two bots must reach their referee, and nothing else.
 }
 
 match {
