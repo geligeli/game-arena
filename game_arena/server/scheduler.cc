@@ -6,17 +6,13 @@
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "game_arena/server/problem_config.h"
 
 namespace tournament_arena {
 
 namespace {
-
-int64_t NowUnixMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
 
 constexpr std::string_view kBuiltinPrefix = "builtin:";
 constexpr std::string_view kPlayerPrefix = "player:";
@@ -78,7 +74,7 @@ void Scheduler::AbortJobLocked(Job *job, const std::string &reason) {
   // CANCELLED, not FAILED: "you replaced it" is not "it broke".
   job->status.set_state(proto::Job::CANCELLED);
   job->status.set_error(reason);
-  job->status.set_finished_unix_ms(NowUnixMs());
+  job->status.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
   PersistLocked(job);
 }
 
@@ -166,8 +162,8 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
     const proto::Candidate &candidate, const std::string &opponent, int games,
     const std::string &job_id) {
   proto::WorkOrder order = config_.order();
-  order.set_order_id("o" + std::to_string(NowUnixMs()) + "_" +
-                     std::to_string(++order_counter_));
+  order.set_order_id("o" + std::to_string(absl::ToUnixMillis(absl::Now())) +
+                     "_" + std::to_string(++order_counter_));
   order.set_job_id(job_id);
   order.set_game(candidate.game());
   order.set_opponent_spec(opponent);
@@ -202,15 +198,16 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
 std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
                                      const std::vector<std::string> &opponents,
                                      int games, const std::string &client_id) {
-  const std::string job_id =
-      "j" + std::to_string(NowUnixMs()) + "_" + std::to_string(++job_counter_);
+  const std::string job_id = "j" +
+                             std::to_string(absl::ToUnixMillis(absl::Now())) +
+                             "_" + std::to_string(++job_counter_);
 
   Job job;
   job.client_id = client_id;
   job.status.set_job_id(job_id);
   job.status.set_candidate_id(candidate.candidate_id());
   job.status.set_state(proto::Job::QUEUED);
-  job.status.set_created_unix_ms(NowUnixMs());
+  job.status.set_created_unix_ms(absl::ToUnixMillis(absl::Now()));
   *job.record.mutable_submission() = candidate;
 
   int requested = 0;
@@ -234,7 +231,7 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
     // Nothing runnable: fail now rather than leave the caller polling.
     jobs_[job_id].status.set_state(proto::Job::FAILED);
     jobs_[job_id].status.set_error("no runnable opponent");
-    jobs_[job_id].status.set_finished_unix_ms(NowUnixMs());
+    jobs_[job_id].status.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
     PersistLocked(&jobs_[job_id]);
     return job_id;
   }
@@ -513,7 +510,7 @@ void Scheduler::ConcludeJobLocked(Job *job) {
   if (job->status.state() != proto::Job::FAILED) {
     job->status.set_state(proto::Job::DONE);
   }
-  job->status.set_finished_unix_ms(NowUnixMs());
+  job->status.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
 }
 
 void Scheduler::PersistLocked(Job *job) {

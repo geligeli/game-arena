@@ -8,6 +8,7 @@ cc_library(
     name = "game_session",
     srcs = ["game_session.cc"],
     hdrs = ["game_session.h"],
+    deps = ["@abseil-cpp//absl/time"],
 )
 
 # Declared, never defined here: a binary links a registry (//game_arena/testgame).
@@ -42,6 +43,7 @@ cc_library(
         "//game_arena/proto:tournament_broker_cc_proto",
         "//game_arena/standings:game_history",
         "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/time",
     ],
 )
 

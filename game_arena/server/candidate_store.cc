@@ -2,13 +2,14 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <string_view>
 
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "game_arena/server/generated_build.h"
 #include "game_arena/server/problem_config.h"
 #include "game_arena/server/unified_diff.h"
@@ -16,12 +17,6 @@
 namespace tournament_arena {
 
 namespace {
-
-int64_t NowUnixMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
 
 // Only what the generated BUILD compiles: a submitted BUILD or script runs.
 constexpr std::array<std::string_view, 5> kAllowedExtensions = {
@@ -368,7 +363,7 @@ std::optional<proto::Candidate> CandidateStore::Create(
   *candidate.mutable_extra_deps() = request.extra_deps();
   *candidate.mutable_params() = request.params();
   candidate.set_status(proto::Candidate::PENDING);
-  candidate.set_submitted_unix_ms(NowUnixMs());
+  candidate.set_submitted_unix_ms(absl::ToUnixMillis(absl::Now()));
 
   const std::optional<std::string> patch =
       PatchForLocked(request, candidate.candidate_id(), error);

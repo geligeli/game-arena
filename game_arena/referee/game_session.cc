@@ -1,23 +1,14 @@
 #include "game_arena/referee/game_session.h"
 
-#include <chrono>
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 
 namespace tournament_broker {
-
-namespace {
-
-int64_t NowUnixMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
-
-}  // namespace
 
 void GameSession::RecordStep(int player, std::string action_bytes) {
   steps_.push_back(RecordedStep{.player = player,
                                 .action_bytes = std::move(action_bytes),
-                                .unix_ms = NowUnixMs()});
+                                .unix_ms = absl::ToUnixMillis(absl::Now())});
 }
 
 }  // namespace tournament_broker

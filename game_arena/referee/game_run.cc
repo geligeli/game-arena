@@ -3,18 +3,10 @@
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 
 namespace tournament_broker {
-
-namespace {
-
-int64_t NowUnixMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
-
-}  // namespace
 
 GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
                  std::array<Seat, 2> seats, uint64_t game_counter,
@@ -26,7 +18,7 @@ GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
       timer_(timer),
       on_finished_(std::move(on_finished)),
       strand_(Strand::Create(pool)),
-      game_id_("g" + std::to_string(NowUnixMs()) + "_" +
+      game_id_("g" + std::to_string(absl::ToUnixMillis(absl::Now())) + "_" +
                std::to_string(game_counter)),
       seats_(std::move(seats)),
       session_(descriptor.new_session()),
@@ -60,7 +52,7 @@ void GameRun::Begin() {
   record_.set_initial_state(session_->SerializeState());
   record_.set_initial_view(session_->RenderState());
   view_bytes_ = record_.initial_view().size();
-  record_.set_started_unix_ms(NowUnixMs());
+  record_.set_started_unix_ms(absl::ToUnixMillis(absl::Now()));
 
   // Weak: seats_ owns the handles, so a strong reference would be a cycle.
   for (int seat = 0; seat < 2; ++seat) {
@@ -91,7 +83,7 @@ bool GameRun::SendYourTurn(int seat, std::chrono::milliseconds allowed) {
   auto *turn = msg.mutable_your_turn();
   turn->set_state(session_->SerializeState());
   turn->set_move_number(session_->MoveCount());
-  turn->set_deadline_unix_ms(NowUnixMs() + allowed.count());
+  turn->set_deadline_unix_ms(absl::ToUnixMillis(absl::Now()) + allowed.count());
   return seats_[seat].client->Send(msg);
 }
 
@@ -237,7 +229,7 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
     record_step->set_view(std::move(views_[i]));
   }
   record_.set_termination_reason(reason);
-  record_.set_finished_unix_ms(NowUnixMs());
+  record_.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
   const double score0 =
       outcome.is_draw ? 0.5 : (outcome.winning_player == 0 ? 1.0 : 0.0);
   record_.set_result(outcome.is_draw ? proto::GameRecord::DRAW

@@ -108,6 +108,7 @@ cc_library(
         "//game_arena/proto:problem_cc_proto",
         "@abseil-cpp//absl/log",
         "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/time",
     ],
 )
 
@@ -210,6 +211,7 @@ cc_library(
         "//game_arena/proto:tournament_broker_cc_proto",
         "//game_arena/proto:clients_cc_proto",
         "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/time",
     ],
 )
 

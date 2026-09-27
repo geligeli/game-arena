@@ -1,25 +1,16 @@
 #include "game_arena/standings/metric_standings.h"
 
 #include <algorithm>
-#include <chrono>
 #include <fstream>
 #include <ios>
 #include <string>
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 
 namespace tournament_arena {
-
-namespace {
-
-int64_t NowUnixMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
-
-}  // namespace
 
 MetricStandings::MetricStandings(std::filesystem::path path,
                                  std::string metric_name, bool lower_is_better)
@@ -62,7 +53,7 @@ void MetricStandings::Record(const std::string &candidate_id,
     }
     record.set_worker_id(result.worker_id());
     record.set_machine_class(result.machine_class());
-    record.set_measured_unix_ms(NowUnixMs());
+    record.set_measured_unix_ms(absl::ToUnixMillis(absl::Now()));
     record.set_runs(result.games_played());
     version = ++version_;
     blob = store_.SerializeAsString();

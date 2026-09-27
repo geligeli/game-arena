@@ -59,6 +59,7 @@ cc_library(
     deps = [
         ":standings",
         "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/time",
     ],
 )
 
