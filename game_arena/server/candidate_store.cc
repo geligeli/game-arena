@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "absl/log/log.h"
+#include "absl/strings/ascii.h"
 #include "game_arena/server/generated_build.h"
 #include "game_arena/server/problem_config.h"
 #include "game_arena/server/unified_diff.h"
@@ -30,12 +31,9 @@ constexpr std::array<std::string_view, 5> kAllowedExtensions = {
 
 bool HasAllowedExtension(const std::string &path) {
   const auto dot = path.rfind('.');
-  if (dot == std::string::npos) {
-    return false;
-  }
-  const std::string_view ext(path.data() + dot, path.size() - dot);
-  return std::find(kAllowedExtensions.begin(), kAllowedExtensions.end(), ext) !=
-         kAllowedExtensions.end();
+  return dot != std::string::npos &&
+         std::ranges::contains(kAllowedExtensions,
+                               std::string_view(path).substr(dot));
 }
 
 }  // namespace
@@ -68,14 +66,12 @@ bool ValidateSourcePath(const std::string &path, std::string *error) {
     *error = "malformed file path: '" + path + "'";
     return false;
   }
-  for (const char c : path) {
-    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                    (c >= '0' && c <= '9') || c == '.' || c == '_' ||
-                    c == '-' || c == '/';
-    if (!ok) {
-      *error = "file path has an unsupported character: '" + path + "'";
-      return false;
-    }
+  if (!std::ranges::all_of(path, [](char c) {
+        return absl::ascii_isalnum(c) || c == '.' || c == '_' || c == '-' ||
+               c == '/';
+      })) {
+    *error = "file path has an unsupported character: '" + path + "'";
+    return false;
   }
   if (!HasAllowedExtension(path)) {
     *error = "unsupported file type: '" + path +
@@ -87,31 +83,19 @@ bool ValidateSourcePath(const std::string &path, std::string *error) {
 
 std::string Slugify(const std::string &display_name) {
   std::string slug;
-  slug.reserve(display_name.size());
   for (const char c : display_name) {
-    if (c >= 'a' && c <= 'z') {
-      slug += c;
-    } else if (c >= 'A' && c <= 'Z') {
-      slug += static_cast<char>(c - 'A' + 'a');
-    } else if (c >= '0' && c <= '9') {
-      slug += c;
-    } else if (!slug.empty() && slug.back() != '-') {
+    if (absl::ascii_isalnum(c)) {
+      slug += absl::ascii_tolower(c);
+    } else if (!slug.empty() && !slug.ends_with('-')) {
       slug += '-';
     }
   }
-  while (!slug.empty() && slug.back() == '-') {
+  // No "--" and no leading '-', so at most one trailing '-' to drop.
+  slug.resize(std::min<std::size_t>(slug.size(), 40));
+  if (slug.ends_with('-')) {
     slug.pop_back();
   }
-  if (slug.empty()) {
-    slug = "candidate";
-  }
-  if (slug.size() > 40) {
-    slug.resize(40);
-    while (!slug.empty() && slug.back() == '-') {
-      slug.pop_back();
-    }
-  }
-  return slug;
+  return slug.empty() ? "candidate" : slug;
 }
 
 CandidateStore::CandidateStore(std::filesystem::path dir,

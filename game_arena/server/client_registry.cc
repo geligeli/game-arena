@@ -1,6 +1,7 @@
 #include "game_arena/server/client_registry.h"
 
 #include <google/protobuf/text_format.h>
+#include <openssl/mem.h>
 #include <openssl/sha.h>
 
 #include <cstddef>
@@ -13,6 +14,7 @@
 
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 
 namespace tournament_arena {
@@ -22,14 +24,8 @@ namespace {
 // Equal-length, data-independent comparison. A byte-at-a-time early return
 // would let a caller with a stopwatch learn a valid hash one byte at a time.
 bool ConstantTimeEquals(std::string_view a, std::string_view b) {
-  if (a.size() != b.size()) {
-    return false;
-  }
-  unsigned char diff = 0;
-  for (std::size_t i = 0; i < a.size(); ++i) {
-    diff |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
-  }
-  return diff == 0;
+  return a.size() == b.size() &&
+         CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
 }
 
 }  // namespace
@@ -38,27 +34,18 @@ std::string HashToken(std::string_view token) {
   unsigned char digest[SHA256_DIGEST_LENGTH];
   ::SHA256(reinterpret_cast<const unsigned char *>(token.data()), token.size(),
            digest);
-  std::string hex;
-  hex.reserve(sizeof(digest) * 2);
-  static constexpr char kHex[] = "0123456789abcdef";
-  for (const unsigned char byte : digest) {
-    hex.push_back(kHex[byte >> 4]);
-    hex.push_back(kHex[byte & 0x0f]);
-  }
-  return hex;
+  return absl::BytesToHexString(
+      {reinterpret_cast<const char *>(digest), sizeof(digest)});
 }
 
 std::string MintToken() {
   // random_device is the right source here and nowhere near a hot path.
   std::random_device entropy;
-  std::uniform_int_distribution<unsigned> nibble(0, 15);
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string token;
-  token.reserve(64);
-  for (int i = 0; i < 64; ++i) {
-    token.push_back(kHex[nibble(entropy)]);
+  std::string bytes(32, '\0');
+  for (char &byte : bytes) {
+    byte = static_cast<char>(entropy());
   }
-  return token;
+  return absl::BytesToHexString(bytes);
 }
 
 proto::Client MakeClient(std::string_view client_id,

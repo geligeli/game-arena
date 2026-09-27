@@ -53,6 +53,12 @@ std::string PlayerLink(std::string_view name) {
                       "</a>");
 }
 
+std::string PlayerLinks(const std::vector<std::string> &players) {
+  return absl::StrJoin(players, " vs ", [](std::string *out, const auto &name) {
+    out->append(PlayerLink(name));
+  });
+}
+
 std::string OpponentLink(std::string_view spec) {
   if (spec.empty()) {
     return "graded run";
@@ -398,12 +404,8 @@ std::string Dashboard::GamesPage(int page, const std::string &player) const {
        ++i) {
     const json::object &game = games[i];
     const std::vector<std::string> players = Players(game);
-    std::vector<std::string> links;
-    for (const std::string &name : players) {
-      links.push_back(PlayerLink(name));
-    }
     html << "<tr><td class=\"l\">" << Time(Number(game, "finished_unix_ms"))
-         << "</td><td class=\"l\">" << absl::StrJoin(links, " vs ")
+         << "</td><td class=\"l\">" << PlayerLinks(players)
          << "</td><td class=\"l\">"
          << ResultText(Number(game, "result"), Number(game, "winning_player"),
                        players)
@@ -434,14 +436,10 @@ std::optional<std::string> Dashboard::ReplayPage(
   }
   const std::vector<std::string> players(record->player_names().begin(),
                                          record->player_names().end());
-  std::vector<std::string> links;
-  for (const std::string &name : players) {
-    links.push_back(PlayerLink(name));
-  }
 
   std::ostringstream html;
   html << PageStart(record->game() + ": " + absl::StrJoin(players, " vs "))
-       << "<p>" << absl::StrJoin(links, " vs ") << " &middot; "
+       << "<p>" << PlayerLinks(players) << " &middot; "
        << ResultText(record->result(), record->winning_player(), players)
        << " (" << HtmlEscape(record->termination_reason()) << ") &middot; "
        << record->steps_size() << " moves &middot; "

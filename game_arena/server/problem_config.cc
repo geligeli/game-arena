@@ -3,7 +3,7 @@
 #include <google/protobuf/io/tokenizer.h>
 #include <google/protobuf/text_format.h>
 
-#include <cctype>
+#include <algorithm>
 #include <cstddef>
 #include <fstream>
 #include <ios>
@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "game_arena/common/kv_options/kv_options.h"
 
@@ -40,50 +41,21 @@ class CollectingErrors final : public google::protobuf::io::ErrorCollector {
   std::string text_;
 };
 
-int CountPrimaryMetrics(const proto::GradeSpec &grade) {
-  int primaries = 0;
-  for (const proto::MetricSpec &metric : grade.metrics()) {
-    primaries += metric.primary() ? 1 : 0;
-  }
-  return primaries;
-}
-
 }  // namespace
 
 bool IsValidProblemId(std::string_view problem_id) {
-  if (problem_id.empty() || problem_id.size() > 64) {
-    return false;
-  }
-  const auto is_lower_alnum = [](char c) {
-    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
-  };
-  if (!is_lower_alnum(problem_id.front())) {
-    return false;
-  }
-  for (const char c : problem_id) {
-    if (!is_lower_alnum(c) && c != '-' && c != '_') {
-      return false;
-    }
-  }
-  return true;
+  constexpr std::string_view kLowerAlnum =
+      "abcdefghijklmnopqrstuvwxyz0123456789";
+  return !problem_id.empty() && problem_id.size() <= 64 &&
+         kLowerAlnum.contains(problem_id.front()) &&
+         std::ranges::all_of(problem_id, [&](char c) {
+           return kLowerAlnum.contains(c) || c == '-' || c == '_';
+         });
 }
 
 std::string ExpandSubmissionId(std::string_view text,
                                std::string_view submission_id) {
-  constexpr std::string_view kPlaceholder = "{submission_id}";
-  std::string out;
-  out.reserve(text.size());
-  for (std::size_t at = 0; at < text.size();) {
-    const std::size_t hit = text.find(kPlaceholder, at);
-    if (hit == std::string_view::npos) {
-      out.append(text.substr(at));
-      break;
-    }
-    out.append(text.substr(at, hit - at));
-    out.append(submission_id);
-    at = hit + kPlaceholder.size();
-  }
-  return out;
+  return absl::StrReplaceAll(text, {{"{submission_id}", submission_id}});
 }
 
 std::optional<proto::ProblemConfig> ParseProblemConfigText(
@@ -170,7 +142,8 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
         *error = "grade.metrics must declare at least one metric";
         return false;
       }
-      const int primaries = CountPrimaryMetrics(grade);
+      const auto primaries =
+          std::ranges::count_if(grade.metrics(), &proto::MetricSpec::primary);
       if (primaries != 1) {
         *error = absl::StrCat(
             "exactly one grade.metrics entry must set primary: true, found ",

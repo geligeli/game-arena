@@ -134,14 +134,13 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
     order->set_match_deadline_s(std::max(1, order->run_timeout_s() - 30));
     // The bot is the build target named per submission; a problem that builds
     // nothing per submission plays with the first target it builds.
-    for (const std::string &target : config.build_targets()) {
-      if (target.find("{submission_id}") != std::string::npos) {
-        config.set_bot_target(target);
-        break;
-      }
-    }
-    if (!config.has_bot_target() && config.build_targets_size() > 0) {
-      config.set_bot_target(config.build_targets(0));
+    const auto &targets = config.build_targets();
+    const auto bot = std::find_if(
+        targets.begin(), targets.end(), [](const std::string &target) {
+          return target.find("{submission_id}") != std::string::npos;
+        });
+    if (!targets.empty()) {
+      config.set_bot_target(bot != targets.end() ? *bot : targets[0]);
     }
   } else {
     // A graded problem has no opponents: one order is the whole evaluation.
@@ -150,9 +149,7 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
     order->set_run_timeout_s(static_cast<int>(grade.timeout_s()));
 
     auto *graded = order->mutable_grade();
-    for (const std::string &arg : grade.argv()) {
-      graded->add_argv(arg);  // "{submission_id}" expanded per submission
-    }
+    *graded->mutable_argv() = grade.argv();  // "{submission_id}" still in it
     graded->set_repeats(static_cast<int>(grade.repeats()));
     graded->set_aggregate(
         static_cast<tournament_arena::proto::GradeOrder::Aggregate>(
@@ -254,27 +251,16 @@ int main(int argc, char **argv) {
   info.set_max_patch_bytes(problem->submission().max_patch_bytes());
   info.set_max_files(problem->submission().max_files());
   info.set_max_hunks(problem->submission().max_hunks());
-  for (const std::string &pattern : problem->submission().allow_paths()) {
-    info.add_allow_paths(pattern);
-  }
-  for (const std::string &pattern : problem->submission().deny_paths()) {
-    info.add_deny_paths(pattern);
-  }
+  *info.mutable_allow_paths() = problem->submission().allow_paths();
+  *info.mutable_deny_paths() = problem->submission().deny_paths();
   info.set_files_submit_dir(problem->submission().files_submit_dir());
-  switch (problem->source().visibility()) {
-    case tournament_arena::proto::SourcePolicy::OWN:
-      info.set_source_visibility(
-          tournament_arena::proto::ProblemInfo::SOURCE_OWN);
-      break;
-    case tournament_arena::proto::SourcePolicy::NONE:
-      info.set_source_visibility(
-          tournament_arena::proto::ProblemInfo::SOURCE_NONE);
-      break;
-    default:
-      info.set_source_visibility(
-          tournament_arena::proto::ProblemInfo::SOURCE_ALL);
-      break;
-  }
+  const auto visibility = problem->source().visibility();
+  info.set_source_visibility(
+      visibility == tournament_arena::proto::SourcePolicy::OWN
+          ? tournament_arena::proto::ProblemInfo::SOURCE_OWN
+      : visibility == tournament_arena::proto::SourcePolicy::NONE
+          ? tournament_arena::proto::ProblemInfo::SOURCE_NONE
+          : tournament_arena::proto::ProblemInfo::SOURCE_ALL);
   info.set_graded(graded);
   if (graded) {
     const auto *primary = tournament_arena::PrimaryMetric(*problem);
