@@ -61,8 +61,8 @@ One bidirectional `TournamentBroker.Play` stream per game
 find its next write rejected, because the server has already finished the call.
 It must keep reading until `Read()` returns false anyway: gRPC's synchronous
 `Finish()` blocks until the stream is drained, so bailing out on a failed write
-hangs instead of reporting the loss. `PlayRemoteGames` handles this; hand-rolled
-clients must too.
+hangs instead of reporting the loss. `PlayOneGame` (`client/play_loop.h`)
+handles this; hand-rolled clients must too.
 
 ## Concurrency
 

@@ -9,10 +9,11 @@
 
 namespace tournament_client {
 
-bool PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
-                 const std::string &name, const std::string &game,
-                 const std::string &opponent, const ChooseActionFn &choose,
-                 std::mt19937 &gen) {
+bool PlayOneGame(
+    tournament_broker::proto::TournamentBroker::StubInterface *stub,
+    const std::string &name, const std::string &game,
+    const std::string &opponent, const ChooseActionFn &choose,
+    std::mt19937 &gen) {
   grpc::ClientContext context;
   auto stream = stub->Play(&context);
 
@@ -37,8 +38,7 @@ bool PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
       reply.mutable_action()->set_action(
           choose(server_msg.your_turn().state(), gen));
       if (!stream->Write(reply)) {
-        LOG(ERROR) << "Stream died while sending action";
-        return false;
+        continue;  // Deadline passed mid-think; game_over is still to be read.
       }
     } else if (server_msg.has_game_over()) {
       const auto &over = server_msg.game_over();
@@ -58,7 +58,7 @@ bool PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
   return true;
 }
 
-bool PlayGames(tournament_broker::proto::TournamentBroker::Stub *stub,
+bool PlayGames(tournament_broker::proto::TournamentBroker::StubInterface *stub,
                const std::string &name, const std::string &game,
                const std::string &opponent, int games,
                const ChooseActionFn &choose, std::mt19937 &gen) {

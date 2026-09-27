@@ -1,4 +1,5 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -11,6 +12,17 @@ cc_library(
         "//game_arena/proto:tournament_broker_cc_grpc",
         "@abseil-cpp//absl/log",
         "@grpc//:grpc++",
+    ],
+)
+
+cc_test(
+    name = "play_loop_test",
+    srcs = ["play_loop_test.cc"],
+    deps = [
+        ":play_loop",
+        "//game_arena/proto:tournament_broker_cc_grpc",
+        "@googletest//:gtest_main",
+        "@grpc//:grpc++_test",
     ],
 )
 

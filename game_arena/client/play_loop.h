@@ -17,13 +17,14 @@ using ChooseActionFn =
     std::function<std::string(std::string_view state_bytes, std::mt19937 &gen)>;
 
 // One game on its own stream. False if the stream failed, not if it was lost.
-bool PlayOneGame(tournament_broker::proto::TournamentBroker::Stub *stub,
-                 const std::string &name, const std::string &game,
-                 const std::string &opponent, const ChooseActionFn &choose,
-                 std::mt19937 &gen);
+bool PlayOneGame(
+    tournament_broker::proto::TournamentBroker::StubInterface *stub,
+    const std::string &name, const std::string &game,
+    const std::string &opponent, const ChooseActionFn &choose,
+    std::mt19937 &gen);
 
 // Plays |games| of them in sequence, stopping at the first stream failure.
-bool PlayGames(tournament_broker::proto::TournamentBroker::Stub *stub,
+bool PlayGames(tournament_broker::proto::TournamentBroker::StubInterface *stub,
                const std::string &name, const std::string &game,
                const std::string &opponent, int games,
                const ChooseActionFn &choose, std::mt19937 &gen);

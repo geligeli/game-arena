@@ -17,6 +17,7 @@ cc_proto_library(
 cc_grpc_library(
     name = "tournament_broker_cc_grpc",
     srcs = [":tournament_broker_proto"],
+    generate_mocks = True,
     grpc_only = True,
     deps = [":tournament_broker_cc_proto"],
 )
