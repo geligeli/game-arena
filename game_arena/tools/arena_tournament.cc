@@ -63,7 +63,9 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -2088,20 +2090,15 @@ int main(int argc, char **argv) {
   }
   const std::string command = positional[1];
   const ArenaRunfiles runfiles(argv[0]);
-  if (command == "up") {
-    return RunUp(runfiles);
-  }
-  if (command == "kit") {
-    return RunKit(runfiles);
-  }
-  if (command == "sandbox") {
-    return RunSandbox(runfiles);
-  }
-  if (command == "check") {
-    return RunCheck();
-  }
-  if (command == "play") {
-    return RunPlay(runfiles);
+  const std::map<std::string, std::function<int()>> commands = {
+      {"up", [&] { return RunUp(runfiles); }},
+      {"kit", [&] { return RunKit(runfiles); }},
+      {"sandbox", [&] { return RunSandbox(runfiles); }},
+      {"check", RunCheck},
+      {"play", [&] { return RunPlay(runfiles); }},
+  };
+  if (const auto it = commands.find(command); it != commands.end()) {
+    return it->second();
   }
   PrintUsage();
   return 2;

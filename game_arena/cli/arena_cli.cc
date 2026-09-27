@@ -42,6 +42,7 @@ ARENA_RESTORE=1 arena_cli init       # your directory, from your last submission
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -329,9 +330,9 @@ void PrintJob(const proto::Job &job) {
   }
 }
 
-// Polls until the job reaches a terminal state, printing state transitions.
-// Returns the exit code: 0 on DONE, 1 on FAILED/CANCELLED or an RPC error.
-int WaitForJob(const Client &client, const std::string &job_id) {
+// Prints the job, and with |wait| polls until it reaches a terminal state,
+// printing state transitions. 1 on FAILED/CANCELLED or an RPC error.
+int WaitForJob(const Client &client, const std::string &job_id, bool wait) {
   proto::Job::State last = proto::Job::QUEUED;
   // Tracked alongside the state so a long build reports preparing, then
   // building, then running, instead of one "running" line for half an hour.
@@ -350,6 +351,9 @@ int WaitForJob(const Client &client, const std::string &job_id) {
     }
     if (IsTerminal(job.state())) {
       return job.state() == proto::Job::DONE ? 0 : kExitError;
+    }
+    if (!wait) {
+      return 0;
     }
     std::this_thread::sleep_for(std::chrono::seconds(kPollIntervalS));
   }
@@ -577,7 +581,7 @@ int CmdSubmit(const Client &client) {
     std::printf("poll: job %s [--wait]\n", response.job_id().c_str());
     return 0;
   }
-  return WaitForJob(client, response.job_id());
+  return WaitForJob(client, response.job_id(), true);
 }
 
 int CmdJob(const Client &client, const std::vector<char *> &args) {
@@ -585,18 +589,7 @@ int CmdJob(const Client &client, const std::vector<char *> &args) {
     std::fprintf(stderr, "job: a job id is required\n");
     return kExitUsage;
   }
-  if (absl::GetFlag(FLAGS_wait)) {
-    return WaitForJob(client, args[0]);
-  }
-  proto::GetJobRequest request;
-  request.set_job_id(args[0]);
-  proto::Job job;
-  if (!Call(client, &Stub::GetJob, request, &job)) {
-    return kExitError;
-  }
-  PrintJob(job);
-  return IsTerminal(job.state()) && job.state() != proto::Job::DONE ? kExitError
-                                                                    : 0;
+  return WaitForJob(client, args[0], absl::GetFlag(FLAGS_wait));
 }
 
 int CmdCandidates(const Client &client) {
@@ -786,28 +779,23 @@ int CmdSource(const Client &client, const std::vector<char *> &args) {
   const bool to_stdout = absl::GetFlag(FLAGS_print) || client.kit_dir.empty() ||
                          client.kit.submit_dir().empty() ||
                          candidate.candidate_id() == client.me;
-  if (to_stdout) {
-    for (const std::string &path : candidate.file_paths()) {
-      std::printf("----- %s -----\n", path.c_str());
-      if (const int code =
-              PullSourceFile(client, candidate.candidate_id(), path, {});
-          code != 0) {
-        return code;
-      }
+  const std::filesystem::path into =
+      to_stdout ? std::filesystem::path()
+                : client.DirOf(candidate.candidate_id());
+  if (!to_stdout) {
+    std::error_code ec;
+    std::filesystem::create_directories(into, ec);
+    if (ec) {
+      std::fprintf(stderr, "source: cannot create %s: %s\n", into.c_str(),
+                   ec.message().c_str());
+      return kExitError;
     }
-    return 0;
+    std::printf("pulled into %s:\n", into.c_str());
   }
-
-  const std::filesystem::path into = client.DirOf(candidate.candidate_id());
-  std::error_code ec;
-  std::filesystem::create_directories(into, ec);
-  if (ec) {
-    std::fprintf(stderr, "source: cannot create %s: %s\n", into.c_str(),
-                 ec.message().c_str());
-    return kExitError;
-  }
-  std::printf("pulled into %s:\n", into.c_str());
   for (const std::string &path : candidate.file_paths()) {
+    if (to_stdout) {
+      std::printf("----- %s -----\n", path.c_str());
+    }
     if (const int code =
             PullSourceFile(client, candidate.candidate_id(), path, into);
         code != 0) {
@@ -1067,26 +1055,17 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  if (command == "rules") {
-    return CmdRules(client);
-  }
-  if (command == "submit") {
-    return CmdSubmit(client);
-  }
-  if (command == "job") {
-    return CmdJob(client, args);
-  }
-  if (command == "candidates") {
-    return CmdCandidates(client);
-  }
-  if (command == "leaderboard") {
-    return CmdLeaderboard(client);
-  }
-  if (command == "source") {
-    return CmdSource(client, args);
-  }
-  if (command == "spar") {
-    return CmdSpar(client, args);
+  const std::map<std::string, std::function<int()>> commands = {
+      {"rules", [&] { return CmdRules(client); }},
+      {"submit", [&] { return CmdSubmit(client); }},
+      {"job", [&] { return CmdJob(client, args); }},
+      {"candidates", [&] { return CmdCandidates(client); }},
+      {"leaderboard", [&] { return CmdLeaderboard(client); }},
+      {"source", [&] { return CmdSource(client, args); }},
+      {"spar", [&] { return CmdSpar(client, args); }},
+  };
+  if (const auto it = commands.find(command); it != commands.end()) {
+    return it->second();
   }
   PrintUsage();
   return kExitUsage;
