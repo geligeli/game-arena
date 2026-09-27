@@ -25,6 +25,7 @@ cc_library(
     deps = [
         "//game_arena/proto:tournament_broker_cc_proto",
         "@abseil-cpp//absl/log",
+        ":game_history",
     ],
 )
 
@@ -60,6 +61,7 @@ cc_library(
         ":standings",
         "@abseil-cpp//absl/log",
         "@abseil-cpp//absl/time",
+        ":game_history",
     ],
 )
 

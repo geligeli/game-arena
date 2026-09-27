@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "absl/log/log.h"
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_broker {
 
@@ -88,20 +89,9 @@ void EloStore::Save(const std::string &blob, uint64_t version) {
     // A newer store already reached disk; this blob is stale.
     return;
   }
-  const std::filesystem::path tmp = path_.string() + ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out ||
-        !out.write(blob.data(), static_cast<std::streamsize>(blob.size()))) {
-      LOG(ERROR) << "Could not write rating store " << tmp;
-      return;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path_, ec);
-  if (ec) {
-    LOG(ERROR) << "Could not rename " << tmp << " -> " << path_ << ": "
-               << ec.message();
+  std::string error;
+  if (!WriteAtomically(path_, blob, &error)) {
+    LOG(ERROR) << "Could not write rating store: " << error;
     return;
   }
   saved_version_ = version;

@@ -16,6 +16,7 @@
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_arena {
 
@@ -134,23 +135,7 @@ bool SetClientToken(const std::filesystem::path &path,
   }
   std::string text;
   google::protobuf::TextFormat::PrintToString(parsed, &text);
-  // Written aside and renamed, so a server reading it never sees half a file.
-  const std::filesystem::path tmp = path.string() + ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    out << text;
-    if (!out) {
-      *error = absl::StrCat("cannot write ", tmp.string());
-      return false;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path, ec);
-  if (ec) {
-    *error = absl::StrCat("cannot replace ", path.string(), ": ", ec.message());
-    return false;
-  }
-  return true;
+  return tournament_broker::WriteAtomically(path, text, error);
 }
 
 ClientRegistry::ClientRegistry(std::filesystem::path path,

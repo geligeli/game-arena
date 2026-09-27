@@ -9,6 +9,7 @@
 
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/str_cat.h"
 
 namespace tournament_broker {
 
@@ -19,6 +20,21 @@ bool IsSafeId(std::string_view id) {
     return absl::ascii_isalnum(static_cast<unsigned char>(c)) || c == '_' ||
            c == '-';
   });
+}
+
+bool WriteAtomically(const std::filesystem::path &path, std::string_view bytes,
+                     std::string *error) {
+  const std::filesystem::path tmp = path.string() + ".tmp";
+  if (!(std::ofstream(tmp, std::ios::binary) << bytes)) {
+    *error = absl::StrCat("cannot write ", tmp.string());
+    return false;
+  }
+  std::error_code ec;
+  std::filesystem::rename(tmp, path, ec);
+  if (ec) {
+    *error = absl::StrCat("cannot replace ", path.string(), ": ", ec.message());
+  }
+  return !ec;
 }
 
 GameHistory::GameHistory(std::filesystem::path dir) : dir_(std::move(dir)) {

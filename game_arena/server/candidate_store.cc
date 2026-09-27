@@ -13,6 +13,7 @@
 #include "game_arena/server/generated_build.h"
 #include "game_arena/server/problem_config.h"
 #include "game_arena/server/unified_diff.h"
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_arena {
 
@@ -326,20 +327,10 @@ bool CandidateStore::WriteManifestLocked(
     const proto::Candidate &candidate) const {
   proto::CandidateManifest manifest;
   *manifest.mutable_candidate() = candidate;
-  const std::filesystem::path path = root / "manifest.pb";
-  // Temp file and rename: Load() would skip a manifest a crash half-wrote.
-  const std::filesystem::path tmp = path.string() + ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out || !manifest.SerializeToOstream(&out)) {
-      LOG(ERROR) << "Could not write candidate manifest " << path;
-      return false;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path, ec);
-  if (ec) {
-    LOG(ERROR) << "Could not install manifest " << path << ": " << ec.message();
+  std::string error;
+  if (!tournament_broker::WriteAtomically(
+          root / "manifest.pb", manifest.SerializeAsString(), &error)) {
+    LOG(ERROR) << "Could not write candidate manifest: " << error;
     return false;
   }
   return true;

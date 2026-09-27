@@ -20,6 +20,11 @@ namespace tournament_broker {
 // reach the coordinator's pages from URLs.
 bool IsSafeId(std::string_view id);
 
+// Writes |bytes| to a temp file renamed over |path|, so a reader never sees
+// half a file. On failure, false with *error set.
+bool WriteAtomically(const std::filesystem::path &path, std::string_view bytes,
+                     std::string *error);
+
 class GameHistory {
  public:
   // Index lines kept in memory for RecentGames().

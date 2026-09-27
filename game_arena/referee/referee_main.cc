@@ -176,26 +176,14 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Written after the listener is up, so a worker that sees the file knows the
-  // port accepts connections. Written to a temp name and renamed, so a reader
-  // never sees a half-written number.
+  // Written once the listener is up: a worker that sees the file can connect.
   const std::string port_file = absl::GetFlag(FLAGS_port_file);
-  if (!port_file.empty()) {
-    const std::filesystem::path tmp = port_file + ".tmp";
-    {
-      std::ofstream out(tmp);
-      out << bound_port << "\n";
-      if (!out) {
-        LOG(ERROR) << "Cannot write --port_file " << tmp;
-        return 1;
-      }
-    }
-    std::filesystem::rename(tmp, port_file, ec);
-    if (ec) {
-      LOG(ERROR) << "Cannot rename " << tmp << " to " << port_file << ": "
-                 << ec.message();
-      return 1;
-    }
+  std::string error;
+  if (!port_file.empty() &&
+      !tournament_broker::WriteAtomically(
+          port_file, std::to_string(bound_port) + "\n", &error)) {
+    LOG(ERROR) << "Cannot write --port_file: " << error;
+    return 1;
   }
 
   LOG(INFO) << "Referee on :" << bound_port << " for " << target_games << " "

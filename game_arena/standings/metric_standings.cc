@@ -9,6 +9,7 @@
 #include "absl/log/log.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_arena {
 
@@ -66,19 +67,9 @@ void MetricStandings::Save(const std::string &blob, uint64_t version) {
   if (version <= saved_version_) {
     return;  // a newer store already landed
   }
-  const std::filesystem::path tmp = path_.string() + ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out.write(blob.data(), static_cast<std::streamsize>(blob.size()))) {
-      LOG(ERROR) << "Cannot write metric store " << tmp;
-      return;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path_, ec);
-  if (ec) {
-    LOG(ERROR) << "Cannot rename " << tmp << " to " << path_ << ": "
-               << ec.message();
+  std::string error;
+  if (!tournament_broker::WriteAtomically(path_, blob, &error)) {
+    LOG(ERROR) << "Could not write metric store: " << error;
     return;
   }
   saved_version_ = version;

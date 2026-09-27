@@ -36,6 +36,7 @@ cc_library(
         "@abseil-cpp//absl/strings",
         "@boringssl//:crypto",
         "@protobuf//:protobuf",
+        "//game_arena/standings:game_history",
     ],
 )
 
@@ -109,6 +110,7 @@ cc_library(
         "@abseil-cpp//absl/log",
         "@abseil-cpp//absl/strings",
         "@abseil-cpp//absl/time",
+        "//game_arena/standings:game_history",
     ],
 )
 
