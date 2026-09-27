@@ -7,6 +7,7 @@ cc_library(
     name = "kv_options",
     srcs = ["kv_options.cc"],
     hdrs = ["kv_options.h"],
+    deps = ["@abseil-cpp//absl/strings"],
 )
 
 cc_test(
