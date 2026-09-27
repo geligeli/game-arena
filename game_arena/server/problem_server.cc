@@ -6,9 +6,13 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
@@ -48,11 +52,44 @@ ABSL_FLAG(int, keepalive_s, 60,
           "Interval between HTTP/2 keepalive pings on idle connections. "
           "Reclaims connections whose peer vanished without a TCP FIN, which "
           "otherwise linger indefinitely");
+ABSL_FLAG(std::vector<std::string>, replay_assets, {},
+          "Files replay pages may load, served at /assets/<file name>: the "
+          "problem's own (arena_problem's replay_assets), of any kind");
+ABSL_FLAG(std::string, replay_module, "",
+          "The ES module among --replay_assets that draws a replay's views. "
+          "Empty: views are shown as text");
 ABSL_FLAG(int, shutdown_grace_s, 5,
           "How long a shutdown waits for in-flight RPCs to finish before "
           "cancelling them");
 
 namespace {
+
+// --replay_assets and --replay_module, read once; nullopt, with *error, when
+// a file is missing, two share a name, or the module is not among them.
+std::optional<tournament_arena::ReplayAssets> LoadReplayAssets(
+    std::string* error) {
+  tournament_arena::ReplayAssets assets;
+  assets.module = absl::GetFlag(FLAGS_replay_module);
+  for (const std::string& path : absl::GetFlag(FLAGS_replay_assets)) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+      *error = "cannot read replay asset " + path;
+      return std::nullopt;
+    }
+    std::string bytes((std::istreambuf_iterator<char>(in)),
+                      std::istreambuf_iterator<char>());
+    const std::string name = std::filesystem::path(path).filename().string();
+    if (!assets.files.emplace(name, std::move(bytes)).second) {
+      *error = "two replay assets are named " + name;
+      return std::nullopt;
+    }
+  }
+  if (!assets.module.empty() && !assets.files.contains(assets.module)) {
+    *error = "replay module " + assets.module + " is not among --replay_assets";
+    return std::nullopt;
+  }
+  return assets;
+}
 
 tournament_arena::SchedulerConfig SchedulerConfigFor(
     const tournament_arena::proto::ProblemConfig& problem) {
@@ -241,10 +278,18 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  std::string assets_error;
+  std::optional<tournament_arena::ReplayAssets> assets =
+      LoadReplayAssets(&assets_error);
+  if (!assets.has_value()) {
+    LOG(ERROR) << assets_error;
+    return 1;
+  }
   const tournament_arena::Dashboard dashboard(
       &candidates, &job_log, &history, standings.get(),
       problem->source().visibility() ==
-          tournament_arena::proto::SourcePolicy::ALL);
+          tournament_arena::proto::SourcePolicy::ALL,
+      std::move(*assets));
   tournament_broker::HttpLeaderboard leaderboard(
       absl::GetFlag(FLAGS_http_port), &history, &candidates, standings.get(),
       problem->display_name().empty() ? problem->problem_id()

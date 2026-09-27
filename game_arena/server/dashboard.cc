@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "absl/strings/ascii.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -167,6 +168,45 @@ std::string ViewHtml(std::string_view bytes) {
   return out;
 }
 
+// Any file is an asset; the extension only picks the header, which browsers
+// insist on for a module script and for streamed WebAssembly.
+std::string_view ContentType(std::string_view name) {
+  static constexpr std::array<std::pair<std::string_view, std::string_view>, 10>
+      kTypes = {{{".js", "text/javascript; charset=utf-8"},
+                 {".mjs", "text/javascript; charset=utf-8"},
+                 {".wasm", "application/wasm"},
+                 {".svg", "image/svg+xml"},
+                 {".json", "application/json"},
+                 {".css", "text/css; charset=utf-8"},
+                 {".html", "text/html; charset=utf-8"},
+                 {".png", "image/png"},
+                 {".txt", "text/plain; charset=utf-8"},
+                 {".map", "application/json"}}};
+  for (const auto& [extension, type] : kTypes) {
+    if (name.ends_with(extension)) {
+      return type;
+    }
+  }
+  return "application/octet-stream";
+}
+
+// A JSON string that is also safe inside <script>: no "<", ">" or "&".
+std::string JsonString(std::string_view text) {
+  std::string out = "\"";
+  for (const char c : text) {
+    const auto byte = static_cast<unsigned char>(c);
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if (byte < 0x20 || c == '<' || c == '>' || c == '&') {
+      absl::StrAppend(&out, "\\u00", absl::Hex(byte, absl::kZeroPad2));
+    } else {
+      out += c;
+    }
+  }
+  return out + "\"";
+}
+
 std::string FirstLine(std::string_view text) {
   const std::string_view line = text.substr(0, text.find('\n'));
   return line.size() <= 120 ? std::string(line)
@@ -260,6 +300,7 @@ at=0,timer=null;
 function go(i){at=Math.max(0,Math.min(frames.length-1,i));
 frames.forEach(function(f,j){f.hidden=j!=at});
 var v=+frames[at].dataset.v;views.forEach(function(e,k){e.hidden=k!=v});
+if(window.showView)showView(at,v);
 document.getElementById('slider').value=at}
 function seek(d){for(var i=at+d;i>=0&&i<frames.length;i+=d){
 if(frames[i].dataset.own){go(i);return}}go(d<0?0:frames.length-1)}
@@ -273,16 +314,36 @@ End:function(){go(frames.length-1)}}[e.key];if(k){e.preventDefault();k()}};
 go(0);
 </script>)";
 
+// With a replay module: it draws each view (bytes, base64 in #views) into
+// #stage; a view past the budget, or a module that fails, says so instead.
+constexpr std::string_view kModuleScript = R"(<script>
+(function(){var stage=document.getElementById('stage'),
+raw=JSON.parse(document.getElementById('views').textContent),
+game=JSON.parse(document.getElementById('game').textContent),cache={};
+function bytes(v){if(!(v in cache)){var s=atob(raw[v]),b=new Uint8Array(s.length);
+for(var i=0;i<s.length;i++)b[i]=s.charCodeAt(i);cache[v]=b}return cache[v]}
+import(game.module).then(function(m){
+return Promise.resolve(m.init&&m.init(stage,game)).then(function(){
+window.showView=function(i,v){if(raw[v]===null){
+stage.textContent='(no view: past the budget for views)';return}
+var f=frames[i];m.render(stage,bytes(v),
+{index:i,player:+f.dataset.p,caption:f.textContent})};
+showView(at,+frames[at].dataset.v)})}).catch(function(e){
+stage.textContent='(replay module failed to load: '+e+')'})})();
+</script>)";
+
 }  // namespace
 
 Dashboard::Dashboard(const CandidateStore* candidates, const JobLog* jobs,
                      const tournament_broker::GameHistory* games,
-                     const Standings* standings, bool show_source)
+                     const Standings* standings, bool show_source,
+                     ReplayAssets assets)
     : candidates_(candidates),
       jobs_(jobs),
       games_(games),
       standings_(standings),
-      show_source_(show_source) {}
+      show_source_(show_source),
+      assets_(std::move(assets)) {}
 
 std::optional<std::pair<std::string, std::string>> Dashboard::Route(
     std::string_view target) const {
@@ -296,6 +357,15 @@ std::optional<std::pair<std::string, std::string>> Dashboard::Route(
       params[std::string(pair.substr(0, eq))] =
           eq == std::string_view::npos ? "" : pair.substr(eq + 1);
     }
+  }
+
+  // A lookup, never a path on disk: only the problem's own files are here.
+  if (absl::ConsumePrefix(&path, "/assets/")) {
+    const auto asset = assets_.files.find(path);
+    if (asset == assets_.files.end()) {
+      return std::nullopt;
+    }
+    return std::pair(std::string(ContentType(asset->first)), asset->second);
   }
 
   std::optional<std::string> body;
@@ -536,6 +606,10 @@ std::optional<std::string> Dashboard::ReplayPage(
   views.push_back(record->initial_view().empty()
                       ? Readable(record->initial_state())
                       : ViewHtml(record->initial_view()));
+  // The same views as bytes, for a replay module; nullopt past the budget.
+  std::vector<std::optional<std::string>> raw = {record->initial_view().empty()
+                                                     ? record->initial_state()
+                                                     : record->initial_view()};
   std::ostringstream frames;
   frames << "<div class=\"f\" data-v=\"0\" data-own=\"1\"><p>Start</p></div>";
   const int cut_at = record->has_views_cut_at() ? record->views_cut_at()
@@ -547,17 +621,19 @@ std::optional<std::string> Dashboard::ReplayPage(
     if (i >= cut_at) {
       if (cut_view < 0) {
         views.push_back("(no view: past the budget for views)");
+        raw.emplace_back(std::nullopt);
         cut_view = static_cast<int>(views.size()) - 1;
         own = true;
       }
     } else if (!step.view().empty()) {
       views.push_back(ViewHtml(step.view()));
+      raw.emplace_back(step.view());
       own = true;
     }
     frames << "<div class=\"f\" data-v=\""
            << (i >= cut_at ? cut_view : static_cast<int>(views.size()) - 1)
-           << "\"" << (own ? " data-own=\"1\"" : "") << "><p>Move " << i + 1
-           << ": ";
+           << "\" data-p=\"" << step.player() << "\""
+           << (own ? " data-own=\"1\"" : "") << "><p>Move " << i + 1 << ": ";
     if (step.player() >= 0 &&
         step.player() < static_cast<int>(players.size())) {
       frames << "seat " << step.player() << " ("
@@ -572,6 +648,28 @@ std::optional<std::string> Dashboard::ReplayPage(
              << Readable(step.action()) << "</code></p></div>";
     }
   }
+  if (!assets_.module.empty()) {
+    std::string encoded = "[";
+    for (const std::optional<std::string>& view : raw) {
+      absl::StrAppend(&encoded, encoded.size() > 1 ? "," : "",
+                      view.has_value()
+                          ? absl::StrCat("\"", absl::Base64Escape(*view), "\"")
+                          : "null");
+    }
+    std::string game = absl::StrCat(
+        "{\"game\":", JsonString(record->game()),
+        ",\"module\":", JsonString(absl::StrCat("/assets/", assets_.module)),
+        ",\"players\":[");
+    for (std::size_t seat = 0; seat < players.size(); ++seat) {
+      absl::StrAppend(&game, seat > 0 ? "," : "", JsonString(players[seat]));
+    }
+    html << frames.str() << "<div id=\"stage\"></div>"
+         << "<script type=\"application/json\" id=\"views\">" << encoded
+         << "]</script><script type=\"application/json\" id=\"game\">" << game
+         << "]}</script>" << kReplayScript << kModuleScript << kPageEnd;
+    return html.str();
+  }
+
   // The tallest view holds the controls in place while stepping.
   std::size_t lines = 1;
   for (const std::string& view : views) {

@@ -271,6 +271,26 @@ class ArenaRunfiles {
     return found;
   }
 
+  // A $(rlocationpath) as the macro wrote it: any repository's file,
+  // generated ones included.
+  auto LocateRunfile(const std::string& rlocation) const
+      -> std::filesystem::path {
+    std::vector<std::string> candidates;
+    if (runfiles_) {
+      candidates.push_back(runfiles_->Rlocation(rlocation));
+    }
+    const std::string dir = EnvOr("RUNFILES_DIR", "");
+    if (!dir.empty()) {
+      candidates.push_back(dir + "/" + rlocation);
+    }
+    for (const std::string& candidate : candidates) {
+      if (!candidate.empty() && std::filesystem::exists(candidate)) {
+        return std::filesystem::absolute(candidate);
+      }
+    }
+    return {};
+  }
+
   // Locate without the error: a missing source is the caller's to report.
   auto LocateSource(const std::string& path) const -> std::filesystem::path {
     std::vector<std::string> candidates;
@@ -554,13 +574,33 @@ int RunUp(const ArenaRunfiles& runfiles) {
 
   const int grpc_port = absl::GetFlag(FLAGS_grpc_port);
   const int http_port = absl::GetFlag(FLAGS_http_port);
-  const std::vector<std::string> server_args = {
+  std::vector<std::string> server_args = {
       "--problem_config=" + effective.string(),
       "--data_dir=" + data_dir.string(),
       absl::StrCat("--grpc_port=", grpc_port),
       absl::StrCat("--http_port=", http_port),
       "--clients=" + clients.string(),
   };
+  // arena_problem's replay_assets, by runfiles path, and the module among
+  // them; the coordinator serves the files and checks the module is one.
+  std::vector<std::string> assets;
+  for (const std::string_view rlocation : absl::StrSplit(
+           EnvOr("ARENA_REPLAY_ASSETS", ""), ' ', absl::SkipEmpty())) {
+    const std::filesystem::path found =
+        runfiles.LocateRunfile(std::string(rlocation));
+    if (found.empty()) {
+      LOG(ERROR) << "cannot find replay asset " << rlocation << " in runfiles";
+      return 1;
+    }
+    assets.push_back(found.string());
+  }
+  if (!assets.empty()) {
+    server_args.push_back("--replay_assets=" + absl::StrJoin(assets, ","));
+  }
+  if (const std::string module = EnvOr("ARENA_REPLAY_MODULE", "");
+      !module.empty()) {
+    server_args.push_back("--replay_module=" + module);
+  }
 
   struct sigaction action{};
   action.sa_handler = OnStopSignal;

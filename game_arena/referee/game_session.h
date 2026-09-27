@@ -40,9 +40,10 @@ class GameSession {
   virtual ~GameSession() = default;
 
   virtual std::string SerializeState() const = 0;
-  // The state as text for a person: what a replay shows, one per step. Empty
-  // after a step means unchanged: the replay keeps showing the last view. May
-  // be ANSI-coloured (SGR only).
+  // What a replay shows of the state, one per step: text for a person
+  // (ANSI-coloured, SGR only), or bytes for the problem's replay module to
+  // draw (arena_problem's replay_module). Empty after a step means unchanged:
+  // the replay keeps showing the last view.
   virtual std::string RenderState() const { return SerializeState(); }
   // The last step, as one line for a person: the replay's caption for it.
   // Empty shows the action's bytes instead. May be ANSI-coloured.

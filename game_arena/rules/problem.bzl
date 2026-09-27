@@ -5,6 +5,8 @@
         config = "problem.textproto",
         registry = "//game:registry",              # match problems only
         kit_files = ["//game:kit", "//bots:kit"],  # what a participant gets
+        replay_assets = ["//game:replay"],         # optional: drawn replays
+        replay_module = "replay.js",
     )
 
 defines, in the calling package:
@@ -25,6 +27,11 @@ defines, in the calling package:
   :<name>               every binary a tournament needs
 
 Each runnable target is arena_tournament with the same flags.
+
+A replay page imports `replay_module` from the coordinator's /assets/, where
+every file of `replay_assets` is served under its own name, and calls, per
+frame, `render(stage, view, step)` with the step's RenderState() bytes
+(`init(stage, game)` first, if exported). See game_arena/README.md.
 """
 
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
@@ -67,6 +74,8 @@ def arena_problem(
         tree = [],
         exclude = [],
         kit_base = None,
+        replay_assets = [],
+        replay_module = None,
         visibility = None):
     """Defines the tournament targets for one problem. See the module docstring.
 
@@ -77,6 +86,10 @@ def arena_problem(
       exclude: glob patterns kept out of the root package's share of the sandbox tree. That
         share is every file on disk there, git-ignored ones included, e.g. compile_commands.json.
       kit_base: in place of the arena's kit_base; build it on that one and keep its uid 1000.
+      replay_assets: files the coordinator serves at /assets/<file name>, of any kind: a
+        replay module and whatever it loads (an SVG, a .wasm, ...).
+      replay_module: the file name of the ES module among replay_assets that draws a
+        replay's views in the browser; without one, views are shown as text.
     """
     if registry:
         cc_binary(
@@ -92,7 +105,20 @@ def arena_problem(
         "ARENA_KIT_FILES": " ".join(["$(rootpaths %s)" % f for f in kit_files]),
         "ARENA_KIT_REGISTRY": registry or "",
     }
-    _tool(sh_binary, "tournament", "up", config, visibility = visibility)
+    # The coordinator reads them at start; they reach it as runfiles.
+    replay_env = {
+        "ARENA_REPLAY_ASSETS": " ".join(["$(rlocationpaths %s)" % a for a in replay_assets]),
+        "ARENA_REPLAY_MODULE": replay_module or "",
+    }
+    _tool(
+        sh_binary,
+        "tournament",
+        "up",
+        config,
+        replay_assets,
+        env = replay_env,
+        visibility = visibility,
+    )
 
     # manual, like every target that carries a base: `//...` must not need a registry.
     sandbox_tree(
@@ -235,9 +261,9 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         "play",
         "play",
         config,
-        kit_files,
+        kit_files + replay_assets,
         # Run, not carried: carrying the base would put it in `//...`.
-        env = kit_env | {
+        env = kit_env | replay_env | {
             "ARENA_SANDBOX_LOAD_TARGET": "//%s:sandbox_image_load" % native.package_name(),
             "ARENA_SANDBOX_ISSUE_TARGET": "//%s:sandbox_image_issue" % native.package_name(),
         },

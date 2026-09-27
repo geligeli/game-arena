@@ -220,11 +220,67 @@ TEST_F(DashboardTest, AReplayShowsCaptionsAndKeepsTheLastView) {
   EXPECT_THAT(html, HasSubstr("seat 0 (alice): alice takes 2</p>"));
   EXPECT_THAT(html, Not(HasSubstr("not text")));
   // Step 2 has no view of its own: it shows step 1's.
-  EXPECT_THAT(html, HasSubstr("data-v=\"1\" data-own=\"1\"><p>Move 1:"));
-  EXPECT_THAT(html, HasSubstr("data-v=\"1\"><p>Move 2:"));
+  EXPECT_THAT(html,
+              HasSubstr("data-v=\"1\" data-p=\"0\" data-own=\"1\"><p>Move 1:"));
+  EXPECT_THAT(html, HasSubstr("data-v=\"1\" data-p=\"0\"><p>Move 2:"));
   EXPECT_THAT(html, HasSubstr("(no view: past the budget for views)"));
   EXPECT_THAT(html, HasSubstr("id=\"speed\""));
   EXPECT_THAT(html, HasSubstr("seek(1)"));
+}
+
+// Any file a problem ships is served by its name; the extension only picks
+// the Content-Type a browser needs for a module script or streamed wasm.
+TEST_F(DashboardTest, ServesReplayAssetsWhateverTheyAre) {
+  const Dashboard dashboard(
+      store_.get(), jobs_.get(), games_.get(), nullptr, true,
+      ReplayAssets{.files = {{"nim.js", "export function render() {}"},
+                             {"nim.wasm", std::string("\0asm", 4)},
+                             {"board.svg", "<svg/>"},
+                             {"notes.xyz", "anything"}},
+                   .module = "nim.js"});
+  const auto js = dashboard.Route("/assets/nim.js?v=3");
+  ASSERT_TRUE(js.has_value());
+  EXPECT_EQ(js->first, "text/javascript; charset=utf-8");
+  EXPECT_EQ(js->second, "export function render() {}");
+  EXPECT_EQ(dashboard.Route("/assets/nim.wasm")->first, "application/wasm");
+  EXPECT_EQ(dashboard.Route("/assets/nim.wasm")->second.size(), 4u);
+  EXPECT_EQ(dashboard.Route("/assets/board.svg")->first, "image/svg+xml");
+  EXPECT_EQ(dashboard.Route("/assets/notes.xyz")->first,
+            "application/octet-stream");
+  EXPECT_FALSE(dashboard.Route("/assets/missing.js").has_value());
+  EXPECT_FALSE(dashboard.Route("/assets/../jobs/j1_1").has_value());
+  EXPECT_FALSE(Found("/assets/nim.js")) << "no assets without the problem's";
+}
+
+// With a module the page hands it each view's bytes: base64 in #views, the
+// game and players in #game, and no text views of its own.
+TEST_F(DashboardTest, AReplayWithAModuleHandsItTheViews) {
+  GameRecord record;
+  record.set_game_id("o1_1-g4_0");
+  record.set_game("nim");
+  record.add_player_names("</script><b>");
+  record.add_player_names("builtin:random");
+  record.set_initial_view("board 0");
+  GameRecord::Step* step = record.add_steps();
+  step->set_player(0);
+  step->set_action("1");
+  step->set_view(std::string("\x01\xff", 2));
+  record.set_views_cut_at(1);
+  record.add_steps()->set_player(1);
+  record.set_result(GameRecord::WIN);
+  games_->Store(record);
+
+  const Dashboard dashboard(
+      store_.get(), jobs_.get(), games_.get(), nullptr, true,
+      ReplayAssets{.files = {{"nim.js", ""}}, .module = "nim.js"});
+  const std::string html = dashboard.Route("/games/o1_1-g4_0")->second;
+  EXPECT_THAT(html, HasSubstr("<div id=\"stage\">"));
+  EXPECT_THAT(html, HasSubstr(">[\"Ym9hcmQgMA==\",\"Af8=\",null]</script>"));
+  EXPECT_THAT(html, HasSubstr("\"module\":\"/assets/nim.js\""));
+  // A name cannot close the script it sits in.
+  EXPECT_THAT(html, HasSubstr("\"\\u003c/script\\u003e\\u003cb\\u003e\""));
+  EXPECT_THAT(html, Not(HasSubstr("<pre class=\"v\"")));
+  EXPECT_THAT(html, HasSubstr("data-p=\"1\""));
 }
 
 TEST_F(DashboardTest, UnknownAndUnsafeTargetsAreNotFound) {

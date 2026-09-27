@@ -201,10 +201,26 @@ A replay on the dashboard shows `RenderState()` after every move, with
 `RenderLastStep()` as the move's caption. `RenderState()` defaults to the
 serialized state; override it when that is not readable as it is
 (`examples/connect4` draws its board). Both may use ANSI colours (SGR codes
-only). An empty `RenderState()` after a move keeps the previous view on screen,
-which is how a long game fits `match.max_view_bytes`: captions and views count
-against it, and the record notes the step where it ran out (`views_cut_at`).
-Without a caption the replay shows the action's bytes, if they are text.
+only). An empty `RenderState()` after a move keeps the previous view on screen.
+Captions and views count against `match.max_view_bytes`, and the record notes
+the step where it ran out (`views_cut_at`). Without a caption the replay shows
+the action's bytes, if they are text.
+
+A problem can draw its own replays instead: `arena_problem(replay_assets =
+[...], replay_module = "replay.js")`. The coordinator serves every file of
+`replay_assets` at `/assets/<file name>`, whatever it is (a `.wasm` as
+`application/wasm`), and a replay page imports the module and calls
+
+```js
+export async function init(stage, game) {}  // optional; game: {game, players}
+export function render(stage, view, step) {}  // view: Uint8Array; step: {index, player, caption}
+```
+
+for each frame shown, with that step's `RenderState()` bytes (the last
+non-empty one). Views can then be compact data (a few hundred bytes of JSON a
+step) rather than text art. The module runs in the browser, never in the
+coordinator, and treats names, captions and views as data (`textContent`,
+never `innerHTML`): display names are the submitters'.
 
 If your games already exist in some framework, write the adapter once as a
 template over that framework's game concept and register instances of it;
