@@ -12,7 +12,7 @@
 # image; the digest a problem pins is what stays put. No credentials in here:
 # `docker run -e CLAUDE_CODE_OAUTH_TOKEN=...` and the like.
 
-FROM registry.takumi.city/game-arena-base@sha256:52a3d7317cc865f1071e857506f03e42238d2bcb4db098f3c13f359440b1648f
+FROM registry.takumi.city/game-arena-base@sha256:42c08fcb56d9579f980e360f258d0a71c46a0fbf05000c23486c6048c40fdab6
 
 # As the kit's user, so each agent lands in, and updates itself in, a home it
 # owns.

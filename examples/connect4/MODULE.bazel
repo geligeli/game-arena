@@ -27,7 +27,7 @@ bazel_dep(name = "rules_oci", version = "2.3.0")
 oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
     name = "kit_agents",
-    digest = "sha256:5aae307566f2cb137cfeeeba03bdd49ae611a594799b05fc7447f3840b7ff67a",
+    digest = "sha256:73cb97998482134edeab224f91e09955846e2048709eb662d6c2a231091733ff",
     image = "registry.takumi.city/game-arena-kit-agents",
 )
 use_repo(oci, "kit_agents")

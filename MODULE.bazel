@@ -35,7 +35,7 @@ bazel_dep(name = "rules_oci", version = "2.3.0")
 oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
     name = "arena_base",
-    digest = "sha256:52a3d7317cc865f1071e857506f03e42238d2bcb4db098f3c13f359440b1648f",
+    digest = "sha256:42c08fcb56d9579f980e360f258d0a71c46a0fbf05000c23486c6048c40fdab6",
     image = "registry.takumi.city/game-arena-base",
     # tag = "noble-bazel8.8.0-nano"
 )
