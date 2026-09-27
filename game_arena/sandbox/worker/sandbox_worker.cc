@@ -71,12 +71,9 @@ namespace {
 // problem or a host makes a different number right.
 constexpr std::chrono::seconds kReconnectDelay{5};
 
-std::string Hostname() {
+std::string Hostname(const std::string &fallback) {
   char name[256] = {};
-  if (::gethostname(name, sizeof(name) - 1) != 0) {
-    return "host";
-  }
-  return name;
+  return ::gethostname(name, sizeof(name) - 1) == 0 ? name : fallback;
 }
 
 std::string EnvOr(const char *name, const std::string &fallback) {
@@ -91,15 +88,6 @@ namespace proto = tournament_arena::proto;
 
 using Stream =
     grpc::ClientReaderWriter<proto::WorkerMessage, proto::FleetMessage>;
-
-std::string DefaultWorkerId() {
-  char hostname[256] = {};
-  if (::gethostname(hostname, sizeof(hostname) - 1) != 0) {
-    hostname[0] = '\0';
-  }
-  const std::string host = hostname[0] != '\0' ? hostname : "worker";
-  return host + "-" + std::to_string(::getpid());
-}
 
 // Runs orders on a fixed pool of slot threads and reports results back on the
 // stream. One instance per attached session: when the stream drops, the
@@ -247,16 +235,18 @@ int main(int argc, char **argv) {
 
   const int slots = std::max(1, std::atoi(EnvOr("ARENA_SLOTS", "2").c_str()));
   const std::string machine_class = EnvOr("ARENA_MACHINE_CLASS", "");
-  const std::string worker_id = EnvOr("ARENA_WORKER_ID", DefaultWorkerId());
+  const std::string host = Hostname("");
+  const std::string worker_id =
+      EnvOr("ARENA_WORKER_ID", (host.empty() ? "worker" : host) + "-" +
+                                   std::to_string(::getpid()));
 
   // This host's own layout, and nothing about any problem.
   const std::filesystem::path work_dir =
       EnvOr("ARENA_WORK_DIR", "/tmp/arena_sandbox");
   OrderJobConfig job_config;
   job_config.work_dir = work_dir;
-  job_config.disk_cache = work_dir / "disk_cache";
   job_config.volume_prefix =
-      EnvOr("ARENA_VOLUME_PREFIX", "arena-" + Hostname());
+      EnvOr("ARENA_VOLUME_PREFIX", "arena-" + Hostname("host"));
   job_config.bind_output_base_dir = EnvOr("ARENA_BIND_OUTPUT_BASE", "");
   job_config.bind_disk_cache_dir = EnvOr("ARENA_BIND_DISK_CACHE", "");
 
@@ -265,16 +255,13 @@ int main(int argc, char **argv) {
   // an order this worker cannot isolate is an order it hands back. That is
   // also why there is no flag here -- the choice it would express is not one
   // an operator should be able to make by accident.
-  std::unique_ptr<sandbox_exec::ContainerEngine> container_engine;
   if (process::ResolveExecutable("docker").empty()) {
     LOG(ERROR) << "no docker on PATH: a worker builds and runs every order in "
                   "a container, so this one would refuse all of them";
     return 1;
   }
-  container_engine = std::make_unique<sandbox_exec::ContainerEngine>(
-      sandbox_exec::ContainerEngineConfig{});
-
-  OrderRunner runner(/*process_engine=*/nullptr, container_engine.get(),
+  sandbox_exec::ContainerEngine container_engine({});
+  OrderRunner runner(/*process_engine=*/nullptr, &container_engine,
                      std::move(job_config), machine_class);
 
   // No tree named here: it is in the image each order names.
