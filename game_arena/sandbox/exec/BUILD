@@ -35,6 +35,7 @@ cc_library(
         ":sandbox_job_cc_proto",
         "//game_arena/sandbox/common:docker",
         "//game_arena/sandbox/common:files",
+        "@abseil-cpp//absl/strings",
     ],
 )
 

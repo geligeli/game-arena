@@ -1,5 +1,6 @@
 #include "game_arena/sandbox/exec/container_engine.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -217,30 +218,13 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
   const std::string user = job.isolation().run_as_user().empty()
                                ? "0:0"
                                : job.isolation().run_as_user();
-  std::string script = "chown -R " + user + " " + sandbox_common::kWorkspace +
-                       " " + sandbox_common::kPatchMount + " " +
-                       sandbox_common::kScratch + "\n";
-  for (const proto::Step *step : PrivateScratchSteps(job)) {
-    script += "chown " + user + " " + LoaderScratchMount(*step) + "\n";
-  }
-  for (const proto::Mount &mount : ws.mounts()) {
-    if (mount.kind() == proto::Mount::VOLUME) {
-      script += "chown " + user + " " + mount.target() + "\n";
-    }
-  }
-  // A read-only mount is not the sandbox's to write, and is usually another
-  // step's writable one again.
-  for (const proto::Phase &phase : job.phases()) {
-    for (const proto::Mount &mount : phase.foreground().mounts()) {
-      if (mount.kind() == proto::Mount::VOLUME && !mount.readonly()) {
-        script += "chown " + user + " " + mount.target() + "\n";
-      }
-    }
-  }
+  const std::string loader = LoaderName(job);
   sandbox_common::DockerRunSpec spec;
-  spec.name = LoaderName(job);
+  spec.name = loader;
   spec.image = job.isolation().image();
-  spec.script = script;
+  spec.script = "chown -R " + user + " " + sandbox_common::kWorkspace + " " +
+                sandbox_common::kPatchMount + " " + sandbox_common::kScratch +
+                "\n";
   spec.create = true;
   spec.network = "none";
   spec.mounts = {sandbox_common::VolumeMount(WorkspaceVolume(job),
@@ -249,24 +233,30 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
                      PatchesVolume(job), sandbox_common::kPatchMount, false),
                  sandbox_common::VolumeMount(ScratchVolume(job),
                                              sandbox_common::kScratch, false)};
+  const auto own = [&](const std::string &volume, const std::string &target,
+                       bool readonly) {
+    spec.mounts.push_back(
+        sandbox_common::VolumeMount(volume, target, readonly));
+    spec.script += "chown " + user + " " + target + "\n";
+  };
   for (const proto::Step *step : PrivateScratchSteps(job)) {
-    spec.mounts.push_back(sandbox_common::VolumeMount(
-        ScratchVolume(job, *step), LoaderScratchMount(*step), false));
+    own(ScratchVolume(job, *step), LoaderScratchMount(*step), false);
   }
   for (const proto::Mount &mount : ws.mounts()) {
     if (mount.kind() == proto::Mount::VOLUME) {
-      spec.mounts.push_back(MountArg(mount));
+      own(mount.source(), mount.target(), mount.readonly());
     }
   }
+  // A read-only mount is not the sandbox's to write, and is usually another
+  // step's writable one again.
   for (const proto::Phase &phase : job.phases()) {
     for (const proto::Mount &mount : phase.foreground().mounts()) {
       if (mount.kind() == proto::Mount::VOLUME && !mount.readonly()) {
-        spec.mounts.push_back(MountArg(mount));
+        own(mount.source(), mount.target(), false);
       }
     }
   }
 
-  const std::string loader = LoaderName(job);
   Quiet(config_.docker, {"rm", "-f", loader});
   const auto fail_load = [&](const std::string &what, const StepResult &step) {
     Quiet(config_.docker, {"rm", "-f", loader});
@@ -465,16 +455,13 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   // Whatever the steps were asked to bring home, copied out of the exited
   // container's scratch through the daemon. The container was kept for this.
   for (proto::StepResult &step_result : *result->mutable_steps()) {
-    const proto::Step *step = nullptr;
-    for (const proto::Step *candidate : steps) {
-      if (candidate->name() == step_result.name()) {
-        step = candidate;
-        break;
-      }
-    }
-    if (step == nullptr) {
+    const auto it = std::ranges::find_if(steps, [&](const proto::Step *step) {
+      return step->name() == step_result.name();
+    });
+    if (it == steps.end()) {
       continue;
     }
+    const proto::Step *step = *it;
     for (const std::string &file : step->collect_files()) {
       const std::filesystem::path local =
           log_dir / "collected" / step->name() / file;

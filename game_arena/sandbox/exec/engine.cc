@@ -1,45 +1,29 @@
 #include "game_arena/sandbox/exec/engine.h"
 
-#include <cstddef>
 #include <map>
 #include <string>
 
+#include "absl/strings/str_replace.h"
 #include "game_arena/sandbox/common/docker.h"
 #include "game_arena/sandbox/common/files.h"
 
 namespace sandbox_exec {
 
-namespace {
-
-std::string Replaced(std::string text, const std::string &from,
-                     const std::string &to) {
-  if (from.empty()) {
-    return text;
-  }
-  for (std::size_t at = text.find(from); at != std::string::npos;
-       at = text.find(from, at + to.size())) {
-    text.replace(at, from.size(), to);
-  }
-  return text;
-}
-
-}  // namespace
-
 proto::Step Substituted(
     const proto::Step &step,
     const std::map<std::string, std::string> &replacements) {
+  // One key at a time, in key order: a value may itself hold a placeholder.
+  const auto replace = [&](std::string *text) {
+    for (const auto &[from, to] : replacements) {
+      absl::StrReplaceAll({{from, to}}, text);
+    }
+  };
   proto::Step out = step;
   for (proto::Token &token : *out.mutable_argv()) {
-    std::string text = token.text();
-    for (const auto &[from, to] : replacements) {
-      text = Replaced(text, from, to);
-    }
-    token.set_text(text);
+    replace(token.mutable_text());
   }
   for (auto &[key, value] : *out.mutable_env()) {
-    for (const auto &[from, to] : replacements) {
-      value = Replaced(value, from, to);
-    }
+    replace(&value);
   }
   return out;
 }
