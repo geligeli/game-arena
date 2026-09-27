@@ -36,7 +36,7 @@ class DashboardTest : public ::testing::Test {
     request.set_display_name("alice");
     request.set_game("nim");
     request.set_entry_header("strategy.h");
-    auto *file = request.add_files();
+    auto* file = request.add_files();
     file->set_path("strategy.h");
     file->set_content("// alice's <strategy>\n");
     std::string error;
@@ -49,7 +49,7 @@ class DashboardTest : public ::testing::Test {
     record.mutable_job()->set_candidate_id("alice");
     record.mutable_job()->set_state(proto::Job::DONE);
     *record.mutable_submission() = *candidate;
-    JobRecord::Order *order = record.add_orders();
+    JobRecord::Order* order = record.add_orders();
     order->set_order_id("o1_1");
     order->set_opponent_spec("builtin:random");
     order->mutable_result()->set_build_ok(true);
@@ -65,8 +65,8 @@ class DashboardTest : public ::testing::Test {
   void TearDown() override { std::filesystem::remove_all(dir_); }
 
   // A Nim game of three moves, won by seat 0.
-  void Store(const std::string &game_id, int64_t finished_unix_ms,
-             const std::string &seat0) {
+  void Store(const std::string& game_id, int64_t finished_unix_ms,
+             const std::string& seat0) {
     GameRecord record;
     record.set_game_id(game_id);
     record.set_game("nim");
@@ -75,7 +75,7 @@ class DashboardTest : public ::testing::Test {
     record.set_initial_state("3:0");
     record.set_initial_view("3 stones <start>");
     for (int taken = 1; taken <= 3; ++taken) {
-      GameRecord::Step *step = record.add_steps();
+      GameRecord::Step* step = record.add_steps();
       step->set_player((taken - 1) % 2);
       step->set_action("1");
       step->set_view(std::to_string(3 - taken) + " stones");
@@ -171,6 +171,27 @@ TEST_F(DashboardTest, AReplayHasAFrameForTheStartAndEveryMove) {
   EXPECT_THAT(html, HasSubstr("seat 1 (builtin:random) played <code>1</code>"));
   EXPECT_THAT(html, HasSubstr("<pre>0 stones</pre>"));
   EXPECT_THAT(html, HasSubstr("<a href=\"/participants/alice\">alice</a> won"));
+}
+
+// A view may colour itself with ANSI SGR; any other control byte is not text.
+TEST_F(DashboardTest, AReplayShowsAnsiColouredViewsAsSpans) {
+  GameRecord record;
+  record.set_game_id("o1_1-g2_0");
+  record.set_game("nim");
+  record.add_player_names("alice");
+  record.add_player_names("builtin:random");
+  record.set_initial_view("\x1b[41m<red>\x1b[0m plain");
+  GameRecord::Step* step = record.add_steps();
+  step->set_player(0);
+  step->set_action("1");
+  step->set_view("\x1b]0;title\x07");
+  record.set_result(GameRecord::WIN);
+  games_->Store(record);
+
+  const std::string html = Page("/games/o1_1-g2_0");
+  EXPECT_THAT(html, HasSubstr("<span style=\"background:#c33;\">&lt;red&gt;"
+                              "</span> plain"));
+  EXPECT_THAT(html, HasSubstr("(10 bytes, not text)"));
 }
 
 TEST_F(DashboardTest, UnknownAndUnsafeTargetsAreNotFound) {

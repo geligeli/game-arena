@@ -1,6 +1,7 @@
 #include "game_arena/server/dashboard.h"
 
 #include <algorithm>
+#include <array>
 #include <boost/json/object.hpp>
 #include <boost/json/parse.hpp>
 #include <boost/json/value.hpp>
@@ -53,8 +54,8 @@ std::string PlayerLink(std::string_view name) {
                       "</a>");
 }
 
-std::string PlayerLinks(const std::vector<std::string> &players) {
-  return absl::StrJoin(players, " vs ", [](std::string *out, const auto &name) {
+std::string PlayerLinks(const std::vector<std::string>& players) {
+  return absl::StrJoin(players, " vs ", [](std::string* out, const auto& name) {
     out->append(PlayerLink(name));
   });
 }
@@ -97,15 +98,84 @@ std::string Readable(std::string_view bytes) {
               : absl::StrCat("(", bytes.size(), " bytes, not text)");
 }
 
+// A replay view: text that may colour itself with ANSI SGR (ESC [ n;... m),
+// shown as spans. Any other escape or control byte makes it not text.
+std::string ViewHtml(std::string_view bytes) {
+  static constexpr std::array<std::string_view, 16> kPalette = {
+      "#000", "#c33", "#3a3", "#c90", "#36c", "#a3a", "#3aa", "#ddd",
+      "#666", "#f55", "#5d5", "#fd5", "#59f", "#d5d", "#5dd", "#fff"};
+  std::string out;
+  std::string_view fg;
+  std::string_view bg;
+  bool bold = false;
+  bool open = false;
+  std::size_t run = 0;  // start of the text not yet appended
+  for (std::size_t i = 0; i < bytes.size();) {
+    const auto c = static_cast<unsigned char>(bytes[i]);
+    if (c >= 0x20 || c == '\n' || c == '\t' || c == '\r') {
+      ++i;
+      continue;
+    }
+    std::size_t end = i + 2;
+    while (end < bytes.size() &&
+           (absl::ascii_isdigit(bytes[end]) || bytes[end] == ';')) {
+      ++end;
+    }
+    if (c != 0x1b || i + 1 >= bytes.size() || bytes[i + 1] != '[' ||
+        end >= bytes.size() || bytes[end] != 'm') {
+      return absl::StrCat("(", bytes.size(), " bytes, not text)");
+    }
+    absl::StrAppend(&out, HtmlEscape(bytes.substr(run, i - run)));
+    for (std::string_view param :
+         absl::StrSplit(bytes.substr(i + 2, end - i - 2), ';')) {
+      int n = 0;
+      if (!param.empty() && !absl::SimpleAtoi(param, &n)) {
+        continue;
+      }
+      if (n == 0) {
+        fg = bg = {};
+        bold = false;
+      } else if (n == 1 || n == 22) {
+        bold = n == 1;
+      } else if (n >= 30 && n <= 37) {
+        fg = kPalette[n - 30];
+      } else if (n >= 90 && n <= 97) {
+        fg = kPalette[n - 90 + 8];
+      } else if (n == 39) {
+        fg = {};
+      } else if (n >= 40 && n <= 47) {
+        bg = kPalette[n - 40];
+      } else if (n >= 100 && n <= 107) {
+        bg = kPalette[n - 100 + 8];
+      } else if (n == 49) {
+        bg = {};
+      }
+    }
+    if (open) {
+      out += "</span>";
+    }
+    open = !fg.empty() || !bg.empty() || bold;
+    if (open) {
+      absl::StrAppend(
+          &out, "<span style=\"", fg.empty() ? "" : "color:", fg,
+          fg.empty() ? "" : ";", bg.empty() ? "" : "background:", bg,
+          bg.empty() ? "" : ";", bold ? "font-weight:bold;" : "", "\">");
+    }
+    i = run = end + 1;
+  }
+  absl::StrAppend(&out, HtmlEscape(bytes.substr(run)), open ? "</span>" : "");
+  return out;
+}
+
 std::string FirstLine(std::string_view text) {
   const std::string_view line = text.substr(0, text.find('\n'));
   return line.size() <= 120 ? std::string(line)
                             : absl::StrCat(line.substr(0, 120), "...");
 }
 
-std::string BuildSummary(const JobRecord &record) {
+std::string BuildSummary(const JobRecord& record) {
   std::string summary = "-";
-  for (const JobRecord::Order &order : record.orders()) {
+  for (const JobRecord::Order& order : record.orders()) {
     if (!order.has_result()) {
       continue;
     }
@@ -117,7 +187,7 @@ std::string BuildSummary(const JobRecord &record) {
   return summary;
 }
 
-std::string SourceOf(const std::string &patch) {
+std::string SourceOf(const std::string& patch) {
   Patch parsed;
   std::string error;
   if (!ParseUnifiedDiff(patch, &parsed, &error) ||
@@ -125,15 +195,15 @@ std::string SourceOf(const std::string &patch) {
     return Pre(patch);
   }
   std::string html;
-  for (const PatchFile &file : parsed.files) {
+  for (const PatchFile& file : parsed.files) {
     absl::StrAppend(&html, "<h3>", HtmlEscape(file.path()), "</h3>",
                     Pre(file.added_content));
   }
   return html;
 }
 
-std::string JobRow(const JobRecord &record, bool show_source) {
-  const proto::Job &job = record.job();
+std::string JobRow(const JobRecord& record, bool show_source) {
+  const proto::Job& job = record.job();
   return absl::StrCat(
       "<tr><td class=\"l\">", Time(job.created_unix_ms()),
       "</td><td class=\"l\"><a href=\"/jobs/", HtmlEscape(job.job_id()), "\">",
@@ -151,19 +221,19 @@ constexpr std::string_view kJobHeader =
     "<th>State</th><th>Build</th><th>W</th><th>D</th><th>L</th>"
     "<th>Error</th></tr>";
 
-std::string Field(const json::object &game, std::string_view key) {
-  const json::value *value = game.if_contains(key);
+std::string Field(const json::object& game, std::string_view key) {
+  const json::value* value = game.if_contains(key);
   return value != nullptr && value->is_string()
              ? std::string(value->as_string())
              : std::string();
 }
 
-int64_t Number(const json::object &game, std::string_view key) {
-  const json::value *value = game.if_contains(key);
+int64_t Number(const json::object& game, std::string_view key) {
+  const json::value* value = game.if_contains(key);
   return value != nullptr && value->is_int64() ? value->as_int64() : 0;
 }
 
-std::vector<std::string> Players(const json::object &game) {
+std::vector<std::string> Players(const json::object& game) {
   std::vector<std::string> players;
   for (int seat = 0; game.contains("player" + std::to_string(seat)); ++seat) {
     players.push_back(Field(game, "player" + std::to_string(seat)));
@@ -172,7 +242,7 @@ std::vector<std::string> Players(const json::object &game) {
 }
 
 std::string ResultText(int64_t result, int64_t winner,
-                       const std::vector<std::string> &players) {
+                       const std::vector<std::string>& players) {
   if (result == GameRecord::DRAW) {
     return "draw";
   }
@@ -198,9 +268,9 @@ go(0);
 
 }  // namespace
 
-Dashboard::Dashboard(const CandidateStore *candidates, const JobLog *jobs,
-                     const tournament_broker::GameHistory *games,
-                     const Standings *standings, bool show_source)
+Dashboard::Dashboard(const CandidateStore* candidates, const JobLog* jobs,
+                     const tournament_broker::GameHistory* games,
+                     const Standings* standings, bool show_source)
     : candidates_(candidates),
       jobs_(jobs),
       games_(games),
@@ -246,19 +316,19 @@ std::optional<std::pair<std::string, std::string>> Dashboard::Route(
 std::string Dashboard::JobsPage() const {
   std::ostringstream html;
   html << PageStart("Jobs") << kJobHeader;
-  for (const JobRecord &record : jobs_->List()) {
+  for (const JobRecord& record : jobs_->List()) {
     html << JobRow(record, show_source_);
   }
   html << "</table>" << kPageEnd;
   return html.str();
 }
 
-std::optional<std::string> Dashboard::JobPage(const std::string &job_id) const {
+std::optional<std::string> Dashboard::JobPage(const std::string& job_id) const {
   const std::optional<JobRecord> record = jobs_->Get(job_id);
   if (!record.has_value()) {
     return std::nullopt;
   }
-  const proto::Job &job = record->job();
+  const proto::Job& job = record->job();
   std::ostringstream html;
   html << PageStart("Job " + job_id) << "<p>" << PlayerLink(job.candidate_id())
        << " &middot; submitted "
@@ -270,13 +340,13 @@ std::optional<std::string> Dashboard::JobPage(const std::string &job_id) const {
     html << (show_source_ ? Pre(job.error()) : std::string(kHidden));
   }
 
-  for (const JobRecord::Order &order : record->orders()) {
+  for (const JobRecord::Order& order : record->orders()) {
     html << "<h2>" << OpponentLink(order.opponent_spec()) << "</h2>";
     if (!order.has_result()) {
       html << "<p>Not back yet.</p>";
       continue;
     }
-    const proto::OrderResult &result = order.result();
+    const proto::OrderResult& result = order.result();
     html << "<p>" << (result.build_ok() ? "built" : "build failed") << " on "
          << HtmlEscape(result.worker_id().empty() ? "-" : result.worker_id());
     if (!result.machine_class().empty()) {
@@ -297,7 +367,7 @@ std::optional<std::string> Dashboard::JobPage(const std::string &job_id) const {
       html << Pre(result.error());
     }
     // An older worker sends only the compacted diagnostics of a failure.
-    const std::string &output = result.build_output().empty()
+    const std::string& output = result.build_output().empty()
                                     ? result.build_log()
                                     : result.build_output();
     if (!output.empty()) {
@@ -314,10 +384,10 @@ std::optional<std::string> Dashboard::JobPage(const std::string &job_id) const {
 }
 
 std::optional<std::string> Dashboard::ParticipantPage(
-    const std::string &id) const {
+    const std::string& id) const {
   const std::optional<proto::Candidate> candidate = candidates_->Get(id);
   std::vector<JobRecord> submissions;
-  for (JobRecord &record : jobs_->List()) {
+  for (JobRecord& record : jobs_->List()) {
     if (record.job().candidate_id() == id) {
       submissions.push_back(std::move(record));
     }
@@ -336,7 +406,7 @@ std::optional<std::string> Dashboard::ParticipantPage(
          << row.draws << "/" << row.losses;
   }
   html << "</p><h2>Submissions</h2>" << kJobHeader;
-  for (const JobRecord &record : submissions) {
+  for (const JobRecord& record : submissions) {
     html << JobRow(record, show_source_);
   }
   html << "</table>";
@@ -351,7 +421,7 @@ std::optional<std::string> Dashboard::ParticipantPage(
       if (!candidate->build_error().empty()) {
         html << Pre(candidate->build_error());
       }
-      for (const std::string &path : candidate->file_paths()) {
+      for (const std::string& path : candidate->file_paths()) {
         std::string error;
         const std::optional<std::string> source =
             candidates_->ReadSource(id, path, &error);
@@ -364,9 +434,9 @@ std::optional<std::string> Dashboard::ParticipantPage(
   return html.str();
 }
 
-std::string Dashboard::GamesPage(int page, const std::string &player) const {
+std::string Dashboard::GamesPage(int page, const std::string& player) const {
   std::vector<json::object> games;
-  for (const std::string &line : games_->AllGames()) {
+  for (const std::string& line : games_->AllGames()) {
     boost::system::error_code ec;
     json::value value = json::parse(line, ec);
     if (ec || !value.is_object()) {
@@ -380,7 +450,7 @@ std::string Dashboard::GamesPage(int page, const std::string &player) const {
     games.push_back(std::move(value.as_object()));
   }
   // The index is in arrival order, and an order sends its games at the end.
-  std::ranges::stable_sort(games, std::greater{}, [](const json::object &game) {
+  std::ranges::stable_sort(games, std::greater{}, [](const json::object& game) {
     return Number(game, "finished_unix_ms");
   });
 
@@ -392,7 +462,7 @@ std::string Dashboard::GamesPage(int page, const std::string &player) const {
   const std::size_t first = static_cast<std::size_t>(page) * kGamesPerPage;
   for (std::size_t i = first; i < games.size() && i < first + kGamesPerPage;
        ++i) {
-    const json::object &game = games[i];
+    const json::object& game = games[i];
     const std::vector<std::string> players = Players(game);
     html << "<tr><td class=\"l\">" << Time(Number(game, "finished_unix_ms"))
          << "</td><td class=\"l\">" << PlayerLinks(players)
@@ -419,7 +489,7 @@ std::string Dashboard::GamesPage(int page, const std::string &player) const {
 }
 
 std::optional<std::string> Dashboard::ReplayPage(
-    const std::string &game_id) const {
+    const std::string& game_id) const {
   const std::optional<GameRecord> record = games_->Load(game_id);
   if (!record.has_value()) {
     return std::nullopt;
@@ -446,11 +516,11 @@ std::optional<std::string> Dashboard::ReplayPage(
 
   // A game recorded before views existed shows its state instead.
   html << "<div class=\"f\"><p>Start</p><pre>"
-       << Readable(record->initial_view().empty() ? record->initial_state()
-                                                  : record->initial_view())
+       << (record->initial_view().empty() ? Readable(record->initial_state())
+                                          : ViewHtml(record->initial_view()))
        << "</pre></div>";
   for (int i = 0; i < record->steps_size(); ++i) {
-    const GameRecord::Step &step = record->steps(i);
+    const GameRecord::Step& step = record->steps(i);
     html << "<div class=\"f\"><p>Move " << i + 1 << ": ";
     if (step.player() >= 0 &&
         step.player() < static_cast<int>(players.size())) {
@@ -461,7 +531,7 @@ std::optional<std::string> Dashboard::ReplayPage(
     }
     html << " <code>" << Readable(step.action()) << "</code></p>";
     if (!step.view().empty()) {
-      html << "<pre>" << Readable(step.view()) << "</pre>";
+      html << "<pre>" << ViewHtml(step.view()) << "</pre>";
     }
     html << "</div>";
   }
