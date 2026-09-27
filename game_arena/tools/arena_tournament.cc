@@ -142,8 +142,8 @@ volatile std::sig_atomic_t g_stop_requested = 0;
 
 extern "C" void OnStopSignal(int /*signum*/) { g_stop_requested = 1; }
 
-std::string EnvOr(const char *name, std::string fallback) {
-  const char *value = std::getenv(name);
+std::string EnvOr(const char* name, std::string fallback) {
+  const char* value = std::getenv(name);
   return value != nullptr && *value != '\0' ? std::string(value) : fallback;
 }
 
@@ -153,13 +153,13 @@ std::filesystem::path WorkspaceRoot() {
                       : std::filesystem::path(root);
 }
 
-auto Resolve(const std::string &path) -> std::filesystem::path {
+auto Resolve(const std::string& path) -> std::filesystem::path {
   const std::filesystem::path p(path);
   return p.is_absolute() ? p : WorkspaceRoot() / p;
 }
 
-std::filesystem::path PathFlag(const absl::Flag<std::string> &flag,
-                               const std::filesystem::path &fallback) {
+std::filesystem::path PathFlag(const absl::Flag<std::string>& flag,
+                               const std::filesystem::path& fallback) {
   const std::string value = absl::GetFlag(flag);
   return value.empty() ? fallback : Resolve(value);
 }
@@ -170,7 +170,7 @@ std::filesystem::path StateDir(std::string_view problem_id) {
   return base / std::string(problem_id);
 }
 
-std::optional<std::string> ReadFile(const std::filesystem::path &path) {
+std::optional<std::string> ReadFile(const std::filesystem::path& path) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     return std::nullopt;
@@ -179,7 +179,7 @@ std::optional<std::string> ReadFile(const std::filesystem::path &path) {
                      std::istreambuf_iterator<char>());
 }
 
-bool WriteFile(const std::filesystem::path &path, std::string_view text) {
+bool WriteFile(const std::filesystem::path& path, std::string_view text) {
   std::error_code ec;
   std::filesystem::create_directories(path.parent_path(), ec);
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -188,16 +188,16 @@ bool WriteFile(const std::filesystem::path &path, std::string_view text) {
 }
 
 // With this process's stdout and stderr; -1 when it could not be started.
-int RunInherit(const std::string &executable,
-               const std::vector<std::string> &arguments,
-               const std::filesystem::path &cwd) {
+int RunInherit(const std::string& executable,
+               const std::vector<std::string>& arguments,
+               const std::filesystem::path& cwd) {
   return process::RunCommand(executable, arguments, {.cwd = cwd}).exit_code;
 }
 
 // Its stdout, or nullopt when it cannot start or exits non-zero.
-std::optional<std::string> Capture(const std::string &executable,
-                                   const std::vector<std::string> &arguments,
-                                   const std::filesystem::path &cwd) {
+std::optional<std::string> Capture(const std::string& executable,
+                                   const std::vector<std::string>& arguments,
+                                   const std::filesystem::path& cwd) {
   const std::filesystem::path out =
       std::filesystem::temp_directory_path() /
       absl::StrCat("arena_tournament_", ::getpid(), "_",
@@ -226,7 +226,7 @@ bool WaitForPort(int port, std::chrono::seconds timeout) {
     addr.sin_port = htons(static_cast<uint16_t>(port));
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     const bool open =
-        ::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0;
+        ::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
     ::close(fd);
     if (open) {
       return true;
@@ -237,7 +237,7 @@ bool WaitForPort(int port, std::chrono::seconds timeout) {
 }
 
 std::optional<proto::ProblemConfig> LoadConfig(
-    std::filesystem::path *config_path) {
+    std::filesystem::path* config_path) {
   const std::string flag = absl::GetFlag(FLAGS_problem_config);
   if (flag.empty()) {
     LOG(ERROR) << "--problem_config is required";
@@ -254,7 +254,7 @@ std::optional<proto::ProblemConfig> LoadConfig(
 
 class ArenaRunfiles {
  public:
-  explicit ArenaRunfiles(const char *argv0) {
+  explicit ArenaRunfiles(const char* argv0) {
     std::string error;
     runfiles_.reset(Runfiles::Create(argv0, BAZEL_CURRENT_REPOSITORY, &error));
     if (!runfiles_) {
@@ -262,7 +262,7 @@ class ArenaRunfiles {
     }
   }
 
-  auto Locate(const std::string &path) const -> std::filesystem::path {
+  auto Locate(const std::string& path) const -> std::filesystem::path {
     const std::filesystem::path found = LocateSource(path);
     if (found.empty()) {
       LOG(ERROR) << "cannot find " << path
@@ -272,7 +272,7 @@ class ArenaRunfiles {
   }
 
   // Locate without the error: a missing source is the caller's to report.
-  auto LocateSource(const std::string &path) const -> std::filesystem::path {
+  auto LocateSource(const std::string& path) const -> std::filesystem::path {
     std::vector<std::string> candidates;
     if (runfiles_) {
       candidates.push_back(runfiles_->Rlocation("game_arena/" + path));
@@ -284,7 +284,7 @@ class ArenaRunfiles {
       candidates.push_back(dir + "/game_arena+/" + path);
       candidates.push_back(dir + "/_main/" + path);
     }
-    for (const std::string &candidate : candidates) {
+    for (const std::string& candidate : candidates) {
       if (!candidate.empty() && std::filesystem::exists(candidate)) {
         return std::filesystem::absolute(candidate);
       }
@@ -296,19 +296,19 @@ class ArenaRunfiles {
   std::unique_ptr<Runfiles> runfiles_;
 };
 
-bool CheckConfig(const proto::ProblemConfig &config,
-                 const std::filesystem::path &config_path, std::string *error) {
+bool CheckConfig(const proto::ProblemConfig& config,
+                 const std::filesystem::path& config_path, std::string* error) {
   // Only under `bazel run` is there a tree: a test has the config alone.
   const std::string tree = EnvOr("BUILD_WORKSPACE_DIRECTORY", "").empty()
                                ? ""
                                : config_path.parent_path().string();
-  const auto in_tree = [&tree](const std::string &path) {
+  const auto in_tree = [&tree](const std::string& path) {
     return std::filesystem::exists(std::filesystem::path(tree) / path);
   };
-  const std::string &submit_dir = config.submission().files_submit_dir();
+  const std::string& submit_dir = config.submission().files_submit_dir();
   if (!submit_dir.empty()) {
     bool names_submission = false;
-    for (const std::string &target : config.build().targets()) {
+    for (const std::string& target : config.build().targets()) {
       names_submission |= target.find("{submission_id}") != std::string::npos;
     }
     if (!names_submission) {
@@ -357,8 +357,8 @@ struct ImageTools {
   std::filesystem::path regctl;
 };
 
-std::optional<ImageTools> FindImageTools(const std::string &flag,
-                                         const char *env) {
+std::optional<ImageTools> FindImageTools(const std::string& flag,
+                                         const char* env) {
   const std::string base = flag.empty() ? EnvOr(env, "") : flag;
   const std::string regctl = absl::GetFlag(FLAGS_regctl).empty()
                                  ? EnvOr("ARENA_REGCTL", "")
@@ -372,14 +372,14 @@ std::optional<ImageTools> FindImageTools(const std::string &flag,
 
 // rules_oci writes one untagged manifest: its digest is the image's only name.
 std::optional<std::string> LayoutManifestDigest(
-    const std::filesystem::path &layout) {
+    const std::filesystem::path& layout) {
   const auto index = ReadFile(layout / "index.json");
   if (!index) {
     return std::nullopt;
   }
   boost::system::error_code ec;
   const boost::json::value parsed = boost::json::parse(*index, ec);
-  const boost::json::value *digest =
+  const boost::json::value* digest =
       ec ? nullptr : parsed.find_pointer("/manifests/0/digest", ec);
   if (digest == nullptr || !digest->is_string()) {
     return std::nullopt;
@@ -388,7 +388,7 @@ std::optional<std::string> LayoutManifestDigest(
 }
 
 // A bare `name:tag` would push to Docker Hub: refused before the slow part.
-bool CanPush(const std::string &image, std::string_view how_to_name_it) {
+bool CanPush(const std::string& image, std::string_view how_to_name_it) {
   if (!absl::GetFlag(FLAGS_push)) {
     return true;
   }
@@ -418,10 +418,10 @@ bool HaveGnuTar() {
 }
 
 // |tars| on the built image: pushed, else loaded, else left in |archive|.
-bool DeliverImage(const ImageTools &tools, const std::filesystem::path &stage,
-                  const std::vector<std::filesystem::path> &tars,
-                  const std::string &image,
-                  const std::filesystem::path &archive) {
+bool DeliverImage(const ImageTools& tools, const std::filesystem::path& stage,
+                  const std::vector<std::filesystem::path>& tars,
+                  const std::string& image,
+                  const std::filesystem::path& archive) {
   const auto digest = LayoutManifestDigest(tools.base);
   if (!digest) {
     LOG(ERROR) << tools.base << " is not an OCI layout with a manifest in it";
@@ -433,7 +433,7 @@ bool DeliverImage(const ImageTools &tools, const std::filesystem::path &stage,
   // One `image mod` per layer: --layer-add takes one.
   std::string from =
       absl::StrCat("ocidir://", tools.base.string(), "@", *digest);
-  for (const std::filesystem::path &tar : tars) {
+  for (const std::filesystem::path& tar : tars) {
     std::vector<std::string> mod = {"image", "mod", from};
     if (from == layered) {
       mod.push_back("--replace");
@@ -495,13 +495,13 @@ std::vector<std::string> PrimeStartup(std::vector<std::string> startup) {
   return startup;
 }
 
-int Bazel(const std::vector<std::string> &startup,
-          std::vector<std::string> command, const std::filesystem::path &cwd) {
+int Bazel(const std::vector<std::string>& startup,
+          std::vector<std::string> command, const std::filesystem::path& cwd) {
   command.insert(command.begin(), startup.begin(), startup.end());
   return RunInherit("bazel", command, cwd);
 }
 
-int RunUp(const ArenaRunfiles &runfiles) {
+int RunUp(const ArenaRunfiles& runfiles) {
   std::filesystem::path config_path;
   auto config = LoadConfig(&config_path);
   if (!config) {
@@ -634,14 +634,14 @@ std::string WithoutArenaOverride(std::string text) {
 }
 
 std::string RerootedModuleFile(std::string text,
-                               const std::filesystem::path &root) {
+                               const std::filesystem::path& root) {
   static const std::regex kOverride(
       R"re(local_path_override\(([^)]*?)path\s*=\s*"([^"]+)")re");
   std::string out;
   auto begin = std::sregex_iterator(text.begin(), text.end(), kOverride);
   std::size_t last = 0;
   for (auto it = begin; it != std::sregex_iterator(); ++it) {
-    const std::smatch &m = *it;
+    const std::smatch& m = *it;
     const std::filesystem::path path(m[2].str());
     out.append(text, last, m.position(0) - last);
     if (path.is_absolute()) {
@@ -659,7 +659,7 @@ std::string RerootedModuleFile(std::string text,
   return out;
 }
 
-std::string KitBuildFile(const std::string &registry) {
+std::string KitBuildFile(const std::string& registry) {
   std::string text = "# Generated by arena_tournament kit";
   if (!registry.empty()) {
     text += ": the referee `arena_cli spar` plays with";
@@ -692,10 +692,10 @@ std::string KitBuildFile(const std::string &registry) {
   return text;
 }
 
-std::string KitReadme(const proto::ProblemConfig &config,
-                      const std::string &server, const std::string &http,
-                      const std::string &client_id, bool has_token,
-                      const std::vector<std::string> &files) {
+std::string KitReadme(const proto::ProblemConfig& config,
+                      const std::string& server, const std::string& http,
+                      const std::string& client_id, bool has_token,
+                      const std::vector<std::string>& files) {
   std::ostringstream md;
   const std::string title = config.display_name().empty()
                                 ? config.problem_id()
@@ -703,7 +703,7 @@ std::string KitReadme(const proto::ProblemConfig &config,
   md << "# " << title << "\n\n" << config.description() << "\n";
 
   md << "## Your solution\n\n";
-  const auto &submission = config.submission();
+  const auto& submission = config.submission();
   if (!submission.files_submit_dir().empty()) {
     md << "A submission is a set of files; the arena places them under `"
        << submission.files_submit_dir()
@@ -726,7 +726,7 @@ std::string KitReadme(const proto::ProblemConfig &config,
        << absl::StrJoin(submission.allow_paths(), "`, `") << "`.\n";
   }
   md << "\nThis kit holds what a solution is written against:\n\n";
-  for (const std::string &file : files) {
+  for (const std::string& file : files) {
     md << "- `" << file << "`\n";
   }
 
@@ -810,11 +810,11 @@ std::string KitReadme(const proto::ProblemConfig &config,
 }
 
 // |kit| is where the kit is used from: this host's path, or /kit in an image.
-std::string KitMcpJson(const std::filesystem::path &kit,
-                       const std::string &server, const std::string &token,
-                       const std::string &client_id) {
+std::string KitMcpJson(const std::filesystem::path& kit,
+                       const std::string& server, const std::string& token,
+                       const std::string& client_id) {
   boost::json::object env{{"ARENA_KIT", kit.string()}};
-  for (const auto &[key, value] :
+  for (const auto& [key, value] :
        {std::pair{"ARENA_SERVER", server}, std::pair{"ARENA_TOKEN", token},
         std::pair{"ARENA_NAME", client_id}}) {
     if (!value.empty()) {
@@ -833,7 +833,7 @@ std::string KitMcpJson(const std::filesystem::path &kit,
 
 // Absolute paths: bazel does not expand %workspace% inside a flag's value.
 // Strict action env: PATH is in every action's key; a primed cache must hit.
-std::string KitBuildSettings(const std::filesystem::path &kit, bool cached,
+std::string KitBuildSettings(const std::filesystem::path& kit, bool cached,
                              bool vendored) {
   std::string rc;
   if (cached) {
@@ -862,15 +862,15 @@ constexpr std::array<std::string_view, 3> kKitSurfaceFiles = {
     "MODULE.bazel", ".bazelversion", "protobuf_bzlmod_fixes.patch"};
 
 // Runfiles hold built files too (arena_cli, in bazel-out); a kit gets sources.
-bool IsBuildOutput(const std::filesystem::path &path) {
+bool IsBuildOutput(const std::filesystem::path& path) {
   std::error_code ec;
   const std::filesystem::path real =
       std::filesystem::weakly_canonical(path, ec);
   return !ec && real.string().find("/bazel-out/") != std::string::npos;
 }
 
-bool InstallArenaSurface(const ArenaRunfiles &runfiles,
-                         const std::filesystem::path &out) {
+bool InstallArenaSurface(const ArenaRunfiles& runfiles,
+                         const std::filesystem::path& out) {
   const std::filesystem::path arena = out / "arena";
   std::error_code ec;
   std::filesystem::remove_all(arena, ec);
@@ -885,7 +885,7 @@ bool InstallArenaSurface(const ArenaRunfiles &runfiles,
     }
     const std::filesystem::path to = arena / std::string(dir);
     std::filesystem::create_directories(to, ec);
-    for (const auto &entry :
+    for (const auto& entry :
          std::filesystem::recursive_directory_iterator(from, ec)) {
       if (!entry.is_regular_file() || IsBuildOutput(entry.path())) {
         continue;
@@ -927,8 +927,8 @@ bool InstallArenaSurface(const ArenaRunfiles &runfiles,
       "])\n");
 }
 
-bool InstallBuiltins(const ArenaRunfiles &runfiles,
-                     const std::filesystem::path &out) {
+bool InstallBuiltins(const ArenaRunfiles& runfiles,
+                     const std::filesystem::path& out) {
   const std::filesystem::path cli = runfiles.Locate("game_arena/cli/arena_cli");
   if (cli.empty()) {
     LOG(ERROR) << "cannot find arena_cli to install into the kit";
@@ -963,25 +963,26 @@ bool InstallBuiltins(const ArenaRunfiles &runfiles,
   return true;
 }
 
-std::string KitConfigText(const proto::ProblemConfig &config,
-                          const std::string &server,
-                          const std::string &client_id) {
+std::string KitConfigText(const proto::ProblemConfig& config,
+                          const std::string& server,
+                          const std::string& client_id) {
   proto::KitConfig kit;
   kit.set_server(server);
   kit.set_client_id(client_id);
   kit.set_submit_dir(config.submission().files_submit_dir());
   kit.set_starter_dir(config.kit().starter_dir());
   if (config.has_match()) {
-    const proto::MatchSpec &match = config.match();
+    const proto::MatchSpec& match = config.match();
     kit.set_bot_binary(config.submission().harness().binary_name().empty()
                            ? "bot"
                            : config.submission().harness().binary_name());
     kit.set_game(match.game());
     // Bounded as sandbox/worker/order_job.cc bounds a rated game.
-    for (const auto &[flag, value] :
+    for (const auto& [flag, value] :
          {std::pair{"--turn_timeout_ms=", match.turn_timeout_ms()},
           std::pair{"--game_time_budget_ms=", match.game_time_budget_ms()},
-          std::pair{"--max_moves_per_game=", match.max_moves_per_game()}}) {
+          std::pair{"--max_moves_per_game=", match.max_moves_per_game()},
+          std::pair{"--max_view_bytes=", match.max_view_bytes()}}) {
       if (value > 0) {
         kit.add_referee_flags(absl::StrCat(flag, value));
       }
@@ -1006,8 +1007,8 @@ std::string KitConfigText(const proto::ProblemConfig &config,
 }
 
 // |kit| is the image's kit, written again here so its primed cache hits there.
-int LayerKitImage(const ImageTools &tools, std::filesystem::path kit,
-                  const std::string &image, bool cached, bool vendored) {
+int LayerKitImage(const ImageTools& tools, std::filesystem::path kit,
+                  const std::string& image, bool cached, bool vendored) {
   if (kit.filename().empty()) {
     kit = kit.parent_path();
   }
@@ -1062,7 +1063,7 @@ int LayerKitImage(const ImageTools &tools, std::filesystem::path kit,
              : 1;
 }
 
-void PrintKitImageUsage(const std::string &image) {
+void PrintKitImageUsage(const std::string& image) {
   std::printf(
       "\nMade %s%s. It is anyone's: who and where are given when it runs,\n\n"
       "  docker run -it -e ARENA_SERVER=<host:port> -e ARENA_NAME=<id> -e "
@@ -1073,7 +1074,7 @@ void PrintKitImageUsage(const std::string &image) {
       image.c_str());
 }
 
-int RunKit(const ArenaRunfiles &runfiles) {
+int RunKit(const ArenaRunfiles& runfiles) {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
   if (!config) {
@@ -1116,7 +1117,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
   }
   std::vector<std::string> files =
       absl::StrSplit(EnvOr("ARENA_KIT_FILES", ""), ' ', absl::SkipWhitespace());
-  for (const std::string &file : files) {
+  for (const std::string& file : files) {
     if (file.rfind("../", 0) == 0 || file.rfind("bazel-out/", 0) == 0 ||
         std::filesystem::path(file).is_absolute()) {
       LOG(ERROR) << "kit_files must be source files of this repository: "
@@ -1144,7 +1145,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
                             (client_id.empty() ? "participant" : client_id));
   std::error_code ec;
   if (staged) {
-    for (const auto &entry : std::filesystem::directory_iterator(out, ec)) {
+    for (const auto& entry : std::filesystem::directory_iterator(out, ec)) {
       if (entry.path().filename() != ".arena") {
         std::filesystem::remove_all(entry.path(), ec);
       }
@@ -1202,12 +1203,12 @@ int RunKit(const ArenaRunfiles &runfiles) {
       out / "MODULE.bazel",
       absl::StrCat(WithoutArenaOverride(RerootedModuleFile(*module, root)),
                    ArenaOverrideBlock()));
-  for (const char *name : {"MODULE.bazel.lock", ".bazelversion", ".bazelrc"}) {
+  for (const char* name : {"MODULE.bazel.lock", ".bazelversion", ".bazelrc"}) {
     if (const auto text = ReadFile(root / name)) {
       WriteFile(out / name, *text);
     }
   }
-  for (const std::string &file : files) {
+  for (const std::string& file : files) {
     std::filesystem::create_directories((out / file).parent_path(), ec);
     std::filesystem::copy_file(
         root / file, out / file,
@@ -1251,7 +1252,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
       "ARENA_KIT=\"$(cd \"$(dirname \"${BASH_SOURCE[0]:-$0}\")\" && pwd)\"\n"
       "export ARENA_KIT\n"
       "export PATH=\"$ARENA_KIT/.arena/bin:$PATH\"\n");
-  for (const auto &[key, value] :
+  for (const auto& [key, value] :
        {std::pair{"ARENA_SERVER", server}, std::pair{"ARENA_TOKEN", token},
         std::pair{"ARENA_NAME", client_id}}) {
     if (!value.empty()) {
@@ -1380,7 +1381,7 @@ int RunKit(const ArenaRunfiles &runfiles) {
 constexpr char kSandboxVendor[] = "opt/arena/vendor";
 
 // Primed in the image's tree with its rc: a cache hits only the same build.
-int RunSandbox(const ArenaRunfiles &runfiles) {
+int RunSandbox(const ArenaRunfiles& runfiles) {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
   if (!config) {
@@ -1419,7 +1420,7 @@ int RunSandbox(const ArenaRunfiles &runfiles) {
       std::string(sandbox_common::kDiskCacheMount).substr(1);
   const std::filesystem::path scratch = stage / "image";
   std::error_code ec;
-  for (const std::filesystem::path &dir :
+  for (const std::filesystem::path& dir :
        {workspace, root / "opt/arena/src", root / cache_dir, scratch}) {
     std::filesystem::remove_all(dir, ec);
   }
@@ -1440,8 +1441,8 @@ int RunSandbox(const ArenaRunfiles &runfiles) {
 
   // The tree leaves submissions out; the starter is the one primed with.
   std::string submission;
-  const std::string &submit_dir = config->submission().files_submit_dir();
-  const std::string &starter = config->kit().starter_dir();
+  const std::string& submit_dir = config->submission().files_submit_dir();
+  const std::string& starter = config->kit().starter_dir();
   if (!submit_dir.empty() && !starter.empty()) {
     submission = std::filesystem::path(starter).filename().string();
     std::filesystem::create_directories(workspace / submit_dir, ec);
@@ -1556,7 +1557,7 @@ int RunSandbox(const ArenaRunfiles &runfiles) {
   return 0;
 }
 
-std::string KitToken(const std::filesystem::path &kit) {
+std::string KitToken(const std::filesystem::path& kit) {
   for (std::string_view line :
        absl::StrSplit(ReadFile(kit / "arena.env").value_or(""), '\n')) {
     line = absl::StripPrefix(line, "export ");
@@ -1567,7 +1568,7 @@ std::string KitToken(const std::filesystem::path &kit) {
   return "";
 }
 
-std::string TailOf(const std::filesystem::path &file, int lines) {
+std::string TailOf(const std::filesystem::path& file, int lines) {
   const auto text = ReadFile(file);
   if (!text) {
     return "";
@@ -1580,7 +1581,7 @@ std::string TailOf(const std::filesystem::path &file, int lines) {
 }
 
 // `up` and `kit` run as subprocesses: they have the flags and the checks.
-int RunPlay(const ArenaRunfiles &runfiles) {
+int RunPlay(const ArenaRunfiles& runfiles) {
   std::filesystem::path config_path;
   const auto config = LoadConfig(&config_path);
   if (!config) {
@@ -1788,10 +1789,10 @@ void PrintUsage() {
 
 }  // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   // Line by line, so what this prints lands before what its children do.
   std::setvbuf(stdout, nullptr, _IOLBF, 0);
-  const std::vector<char *> positional = absl::ParseCommandLine(argc, argv);
+  const std::vector<char*> positional = absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
 

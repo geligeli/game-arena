@@ -24,6 +24,9 @@ namespace tournament_arena {
 
 namespace {
 
+// A GameRecord, views included, crosses gRPC as one message (4 MB).
+constexpr std::size_t kMaxViewBytes = 3 << 20;
+
 class CollectingErrors final : public google::protobuf::io::ErrorCollector {
  public:
   void RecordError(int line, google::protobuf::io::ColumnNumber column,
@@ -33,7 +36,7 @@ class CollectingErrors final : public google::protobuf::io::ErrorCollector {
                     column + 1, ": ", message);
   }
 
-  const std::string &text() const { return text_; }
+  const std::string& text() const { return text_; }
 
  private:
   std::string text_;
@@ -57,7 +60,7 @@ std::string ExpandSubmissionId(std::string_view text,
 }
 
 std::optional<proto::ProblemConfig> ParseProblemConfigText(
-    std::string_view text, std::string *error) {
+    std::string_view text, std::string* error) {
   proto::ProblemConfig config;
   CollectingErrors errors;
   google::protobuf::TextFormat::Parser parser;
@@ -72,7 +75,7 @@ std::optional<proto::ProblemConfig> ParseProblemConfigText(
   return config;
 }
 
-void ApplyProblemDefaults(proto::ProblemConfig *config) {
+void ApplyProblemDefaults(proto::ProblemConfig* config) {
   // proto3: unset is zero, never a sane limit, so the config merges onto these.
   proto::ProblemConfig defaults;
   google::protobuf::TextFormat::ParseFromString(
@@ -99,8 +102,8 @@ void ApplyProblemDefaults(proto::ProblemConfig *config) {
   *config = std::move(defaults);
 }
 
-bool ValidateProblemConfig(const proto::ProblemConfig &config,
-                           std::string *error) {
+bool ValidateProblemConfig(const proto::ProblemConfig& config,
+                           std::string* error) {
   if (!IsValidProblemId(config.problem_id())) {
     *error = absl::StrCat(
         "problem_id ",
@@ -124,7 +127,7 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
 
   switch (config.evaluation_case()) {
     case proto::ProblemConfig::kGrade: {
-      const proto::GradeSpec &grade = config.grade();
+      const proto::GradeSpec& grade = config.grade();
       if (grade.argv().empty()) {
         *error = "grade.argv is required: nothing to run";
         return false;
@@ -144,7 +147,7 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
       break;
     }
     case proto::ProblemConfig::kMatch: {
-      const proto::MatchSpec &match = config.match();
+      const proto::MatchSpec& match = config.match();
       if (match.game().empty()) {
         *error = "match.game is required: it selects the referee's rules";
         return false;
@@ -153,8 +156,15 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
         *error = "match.referee_target is required";
         return false;
       }
+      if (match.max_view_bytes() > kMaxViewBytes) {
+        *error = absl::StrCat(
+            "match.max_view_bytes is ", match.max_view_bytes(), "; at most ",
+            kMaxViewBytes,
+            ": a game's record, views included, is one gRPC message");
+        return false;
+      }
       // They ride to the referee as one "k=v,k2=v2" flag.
-      for (const auto &[key, value] : match.registry_options()) {
+      for (const auto& [key, value] : match.registry_options()) {
         if (!kv_options::IsValidKey(key)) {
           *error =
               absl::StrCat("match.registry_options has an invalid key '", key,
@@ -198,13 +208,13 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
   return true;
 }
 
-const proto::MetricSpec *PrimaryMetric(const proto::ProblemConfig &config) {
+const proto::MetricSpec* PrimaryMetric(const proto::ProblemConfig& config) {
   if (config.ranking().kind() != proto::RankingSpec::METRIC ||
       !config.has_grade()) {
     return nullptr;
   }
-  const std::string &named = config.ranking().metric_name();
-  for (const proto::MetricSpec &metric : config.grade().metrics()) {
+  const std::string& named = config.ranking().metric_name();
+  for (const proto::MetricSpec& metric : config.grade().metrics()) {
     if (named.empty() ? metric.primary() : metric.name() == named) {
       return &metric;
     }
@@ -213,7 +223,7 @@ const proto::MetricSpec *PrimaryMetric(const proto::ProblemConfig &config) {
 }
 
 std::optional<proto::ProblemConfig> LoadProblemConfig(
-    const std::filesystem::path &path, std::string *error) {
+    const std::filesystem::path& path, std::string* error) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     *error = absl::StrCat("cannot read problem config ", path.string());

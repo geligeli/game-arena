@@ -82,6 +82,7 @@ cc_test(
     srcs = ["problem_config_test.cc"],
     deps = [
         ":problem_config",
+        "@abseil-cpp//absl/strings",
         "@googletest//:gtest_main",
     ],
 )

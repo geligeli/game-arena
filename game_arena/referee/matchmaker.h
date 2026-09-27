@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -30,26 +31,27 @@ struct MatchmakerConfig {
   // Or a partner that never builds parks the other side forever.
   std::chrono::milliseconds rendezvous_timeout{60000};
   int max_moves_per_game = 50000;
-  int worker_threads = 0;  // <= 0: hardware_concurrency()
+  std::size_t max_view_bytes = 1 << 20;  // see GameRunConfig
+  int worker_threads = 0;                // <= 0: hardware_concurrency()
 
-  std::function<void(const proto::GameRecord &)> on_record;
+  std::function<void(const proto::GameRecord&)> on_record;
 };
 
 class Matchmaker {
  public:
-  Matchmaker(MatchmakerConfig config, GameHistory *history);
+  Matchmaker(MatchmakerConfig config, GameHistory* history);
   ~Matchmaker();
 
-  Matchmaker(const Matchmaker &) = delete;
-  Matchmaker &operator=(const Matchmaker &) = delete;
+  Matchmaker(const Matchmaker&) = delete;
+  Matchmaker& operator=(const Matchmaker&) = delete;
 
   // Never blocks. False, with *error set, when the game, builtin spec or
   // partner name is unusable.
-  bool Join(std::shared_ptr<ClientHandle> client, const proto::Hello &hello,
-            std::string *error);
+  bool Join(std::shared_ptr<ClientHandle> client, const proto::Hello& hello,
+            std::string* error);
 
   // Unparks the client, and marks it disconnected so its game is forfeited.
-  void Disconnect(const std::shared_ptr<ClientHandle> &client);
+  void Disconnect(const std::shared_ptr<ClientHandle>& client);
 
   // Refuses joins, releases the waiting and aborts running games. Idempotent.
   void Shutdown();
@@ -65,15 +67,15 @@ class Matchmaker {
   };
 
   // Seat 0 moves first.
-  void StartGame(const GameDescriptor &descriptor, Seat seat0, Seat seat1);
+  void StartGame(const GameDescriptor& descriptor, Seat seat0, Seat seat1);
   // Precondition: |wanted| is non-empty and not the client's own name.
   bool JoinRendezvous(std::shared_ptr<ClientHandle> client,
-                      const std::string &game, const std::string &wanted,
-                      std::string *error);
+                      const std::string& game, const std::string& wanted,
+                      std::string* error);
   void ReaperLoop();
 
   const MatchmakerConfig config_;
-  GameHistory *history_;  // not owned
+  GameHistory* history_;  // not owned
 
   mutable std::mutex mutex_;  // guards rendezvous_*, running_, stopping_
   // By RendezvousKey(), so a collision means each side named the other.

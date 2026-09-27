@@ -55,16 +55,16 @@ ABSL_FLAG(int, shutdown_grace_s, 5,
 namespace {
 
 tournament_arena::SchedulerConfig SchedulerConfigFor(
-    const tournament_arena::proto::ProblemConfig &problem) {
+    const tournament_arena::proto::ProblemConfig& problem) {
   tournament_arena::SchedulerConfig config;
   *config.mutable_build_targets() = problem.build().targets();
-  tournament_arena::proto::WorkOrder *order = config.mutable_order();
+  tournament_arena::proto::WorkOrder* order = config.mutable_order();
   order->set_build_timeout_s(static_cast<int>(problem.build().timeout_s()));
   *order->mutable_bazel_flags() = problem.build().bazel_flags();
 
   // The sandbox, translated rather than embedded: see SandboxOrder.
-  const auto &sandbox = problem.sandbox();
-  auto *order_sandbox = order->mutable_sandbox();
+  const auto& sandbox = problem.sandbox();
+  auto* order_sandbox = order->mutable_sandbox();
   order_sandbox->set_image(sandbox.image());
   order_sandbox->set_memory_limit_mb(sandbox.memory_limit_mb());
   order_sandbox->set_cpus(sandbox.cpus());
@@ -72,7 +72,7 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
   order_sandbox->set_run_as_user(sandbox.run_as_user());
   order_sandbox->set_allow_build_network(sandbox.allow_build_network());
   if (problem.has_match()) {
-    const auto &match = problem.match();
+    const auto& match = problem.match();
     *config.mutable_placement_opponents() = match.placement_opponents();
     config.set_placement_games(static_cast<int>(match.games_per_order()));
     order->set_run_timeout_s(static_cast<int>(match.timeout_s()));
@@ -80,29 +80,30 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
     order->set_turn_timeout_ms(match.turn_timeout_ms());
     order->set_game_time_budget_ms(match.game_time_budget_ms());
     order->set_max_moves_per_game(match.max_moves_per_game());
+    order->set_max_view_bytes(match.max_view_bytes());
     *order->mutable_registry_options() = match.registry_options();
     // Under the run timeout, so a stuck match comes back as a partial tally.
     order->set_match_deadline_s(std::max(1, order->run_timeout_s() - 30));
-    const auto &targets = config.build_targets();
+    const auto& targets = config.build_targets();
     const auto bot = std::find_if(
-        targets.begin(), targets.end(), [](const std::string &target) {
+        targets.begin(), targets.end(), [](const std::string& target) {
           return target.find("{submission_id}") != std::string::npos;
         });
     if (!targets.empty()) {
       config.set_bot_target(bot != targets.end() ? *bot : targets[0]);
     }
   } else {
-    const auto &grade = problem.grade();
+    const auto& grade = problem.grade();
     config.set_placement_games(static_cast<int>(grade.repeats()));
     order->set_run_timeout_s(static_cast<int>(grade.timeout_s()));
 
-    auto *graded = order->mutable_grade();
+    auto* graded = order->mutable_grade();
     *graded->mutable_argv() = grade.argv();  // "{submission_id}" still in it
     graded->set_repeats(static_cast<int>(grade.repeats()));
     graded->set_aggregate(
         static_cast<tournament_arena::proto::GradeOrder::Aggregate>(
             static_cast<int>(grade.aggregate())));
-    for (const auto &metric : grade.metrics()) {
+    for (const auto& metric : grade.metrics()) {
       graded->add_metric_names(metric.name());
     }
     graded->set_timeout_s(static_cast<int>(grade.timeout_s()));
@@ -113,7 +114,7 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
 
 }  // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   // Before any thread starts, so only the sigwait below sees them.
   sigset_t shutdown_signals;
   sigemptyset(&shutdown_signals);
@@ -159,7 +160,7 @@ int main(int argc, char **argv) {
   std::unique_ptr<tournament_arena::MetricStandings> metric_standings;
   const bool graded = problem->has_grade();
   if (graded) {
-    const tournament_arena::proto::MetricSpec *primary =
+    const tournament_arena::proto::MetricSpec* primary =
         tournament_arena::PrimaryMetric(*problem);
     metric_standings = std::make_unique<tournament_arena::MetricStandings>(
         data_dir / "metrics.pb", primary->name(),
@@ -209,7 +210,7 @@ int main(int argc, char **argv) {
           : tournament_arena::proto::ProblemInfo::SOURCE_ALL);
   info.set_graded(graded);
   if (graded) {
-    const auto *primary = tournament_arena::PrimaryMetric(*problem);
+    const auto* primary = tournament_arena::PrimaryMetric(*problem);
     info.set_lower_is_better(primary->direction() ==
                              tournament_arena::proto::MetricSpec::MINIMIZE);
   }

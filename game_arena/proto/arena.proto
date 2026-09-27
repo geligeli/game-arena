@@ -275,6 +275,7 @@ message WorkOrder {
   uint32 turn_timeout_ms = 24;
   uint32 game_time_budget_ms = 25;
   uint32 max_moves_per_game = 26;
+  uint32 max_view_bytes = 27;
 
   // ProblemConfig.match.registry_options, forwarded verbatim to the referee.
   map<string, string> registry_options = 20;

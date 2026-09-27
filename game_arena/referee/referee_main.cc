@@ -3,6 +3,7 @@
 
 #include <grpcpp/grpcpp.h>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -47,6 +48,9 @@ ABSL_FLAG(int, rendezvous_timeout_ms, 60000,
           "How long one side waits for its named partner before giving up");
 ABSL_FLAG(int, max_moves_per_game, 50000,
           "Safety cap on moves per game before declaring a draw");
+ABSL_FLAG(int, max_view_bytes, 1 << 20,
+          "Per game, for the replay views; steps past it are recorded "
+          "without one");
 ABSL_FLAG(int, worker_threads, 0,
           "Threads serving games. 0 uses hardware_concurrency()");
 ABSL_FLAG(int, deadline_s, 0,
@@ -69,7 +73,7 @@ class Tally {
   Tally(std::string player_a, int target)
       : player_a_(std::move(player_a)), target_(target) {}
 
-  void Observe(const tournament_broker::proto::GameRecord &record) {
+  void Observe(const tournament_broker::proto::GameRecord& record) {
     {
       std::lock_guard lock(mutex_);
       if (!tournament_broker::AddGame(record, player_a_, &counts_)) {
@@ -113,7 +117,7 @@ class Tally {
 
 }  // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
@@ -157,8 +161,10 @@ int main(int argc, char **argv) {
   config.rendezvous_timeout =
       std::chrono::milliseconds(absl::GetFlag(FLAGS_rendezvous_timeout_ms));
   config.max_moves_per_game = absl::GetFlag(FLAGS_max_moves_per_game);
+  config.max_view_bytes = static_cast<std::size_t>(
+      std::max(0, absl::GetFlag(FLAGS_max_view_bytes)));
   config.worker_threads = absl::GetFlag(FLAGS_worker_threads);
-  config.on_record = [&tally](const tournament_broker::proto::GameRecord &r) {
+  config.on_record = [&tally](const tournament_broker::proto::GameRecord& r) {
     tally.Observe(r);
   };
   tournament_broker::Matchmaker matchmaker(config, &history);

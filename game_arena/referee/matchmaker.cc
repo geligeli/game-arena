@@ -17,16 +17,16 @@ constexpr std::string_view kBuiltinPrefix = "builtin:";
 constexpr std::string_view kPlayerPrefix = "player:";
 
 // Order-independent, so both sides of a rendezvous compute the same key.
-std::string RendezvousKey(const std::string &game, const std::string &a,
-                          const std::string &b) {
-  const std::string &lo = a < b ? a : b;
-  const std::string &hi = a < b ? b : a;
+std::string RendezvousKey(const std::string& game, const std::string& a,
+                          const std::string& b) {
+  const std::string& lo = a < b ? a : b;
+  const std::string& hi = a < b ? b : a;
   return game + "\t" + lo + "\t" + hi;
 }
 
 }  // namespace
 
-Matchmaker::Matchmaker(MatchmakerConfig config, GameHistory *history)
+Matchmaker::Matchmaker(MatchmakerConfig config, GameHistory* history)
     : config_(config),
       history_(history),
       pool_(config.worker_threads > 0
@@ -44,7 +44,7 @@ Matchmaker::~Matchmaker() {
 }
 
 bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
-                      const proto::Hello &hello, std::string *error) {
+                      const proto::Hello& hello, std::string* error) {
   {
     std::lock_guard lock(mutex_);
     if (stopping_) {
@@ -54,13 +54,13 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
     }
   }
 
-  const auto &registry = GameRegistry();
+  const auto& registry = GameRegistry();
   const auto it = registry.find(hello.game());
   if (it == registry.end()) {
     *error = "unknown game '" + hello.game() + "'";
     return false;
   }
-  const GameDescriptor &descriptor = it->second;
+  const GameDescriptor& descriptor = it->second;
 
   if (hello.opponent().substr(0, kBuiltinPrefix.size()) == kBuiltinPrefix) {
     const std::string_view spec =
@@ -98,8 +98,8 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
 }
 
 bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
-                                const std::string &game,
-                                const std::string &wanted, std::string *error) {
+                                const std::string& game,
+                                const std::string& wanted, std::string* error) {
   const std::string key = RendezvousKey(game, client->name(), wanted);
   std::shared_ptr<ClientHandle> partner;
   uint64_t pair_games = 0;
@@ -134,7 +134,7 @@ bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
     pair_games = rendezvous_games_[key]++;
   }
 
-  const GameDescriptor &descriptor = GameRegistry().at(game);
+  const GameDescriptor& descriptor = GameRegistry().at(game);
   Seat waiting{.display_name = partner->name(),
                .client = std::move(partner),
                .builtin = nullptr};
@@ -150,13 +150,14 @@ bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
   return true;
 }
 
-void Matchmaker::StartGame(const GameDescriptor &descriptor, Seat seat0,
+void Matchmaker::StartGame(const GameDescriptor& descriptor, Seat seat0,
                            Seat seat1) {
   GameRunConfig run_config;
   run_config.turn_timeout = config_.turn_timeout;
   run_config.on_record = config_.on_record;
   run_config.game_time_budget = config_.game_time_budget;
   run_config.max_moves_per_game = config_.max_moves_per_game;
+  run_config.max_view_bytes = config_.max_view_bytes;
 
   const uint64_t id = ++game_counter_;
   ++running_games_;
@@ -189,11 +190,11 @@ void Matchmaker::Shutdown() {
       return;
     }
     stopping_ = true;
-    for (auto &[key, parked] : rendezvous_) {
+    for (auto& [key, parked] : rendezvous_) {
       waiting.push_back(parked.client);
     }
     rendezvous_.clear();
-    for (auto &[id, weak] : running_) {
+    for (auto& [id, weak] : running_) {
       if (auto run = weak.lock()) {
         games.push_back(std::move(run));
       }
@@ -201,11 +202,11 @@ void Matchmaker::Shutdown() {
   }
   reaper_cv_.notify_all();
 
-  for (const std::shared_ptr<ClientHandle> &client : waiting) {
+  for (const std::shared_ptr<ClientHandle>& client : waiting) {
     client->MarkDisconnected();
     client->CloseAfterFlush();
   }
-  for (const std::shared_ptr<GameRun> &run : games) {
+  for (const std::shared_ptr<GameRun>& run : games) {
     run->Abort("server_shutdown");
   }
 }
@@ -219,7 +220,7 @@ void Matchmaker::ReaperLoop() {
     }
     const auto earliest =
         std::min_element(rendezvous_.begin(), rendezvous_.end(),
-                         [](const auto &a, const auto &b) {
+                         [](const auto& a, const auto& b) {
                            return a.second.deadline < b.second.deadline;
                          })
             ->second.deadline;
@@ -244,7 +245,7 @@ void Matchmaker::ReaperLoop() {
     }
     // Closing a stream can re-enter the matchmaker via Disconnect().
     lock.unlock();
-    for (const auto &client : expired) {
+    for (const auto& client : expired) {
       LOG(INFO) << "Rendezvous timed out for '" << client->name()
                 << "'; closing its stream";
       client->MarkDisconnected();
@@ -254,10 +255,10 @@ void Matchmaker::ReaperLoop() {
   }
 }
 
-void Matchmaker::Disconnect(const std::shared_ptr<ClientHandle> &client) {
+void Matchmaker::Disconnect(const std::shared_ptr<ClientHandle>& client) {
   client->MarkDisconnected();
   std::lock_guard lock(mutex_);
-  std::erase_if(rendezvous_, [&](const auto &entry) {
+  std::erase_if(rendezvous_, [&](const auto& entry) {
     return entry.second.client == client;
   });
 }

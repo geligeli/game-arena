@@ -4,6 +4,9 @@
 
 #include <fstream>
 #include <string>
+#include <string_view>
+
+#include "absl/strings/str_cat.h"
 
 namespace tournament_arena {
 namespace {
@@ -31,8 +34,8 @@ constexpr char kGradeConfig[] = R"pb(
   ranking { kind: METRIC }
 )pb";
 
-std::optional<proto::ProblemConfig> Load(const std::string &text,
-                                         std::string *error) {
+std::optional<proto::ProblemConfig> Load(const std::string& text,
+                                         std::string* error) {
   std::optional<proto::ProblemConfig> config =
       ParseProblemConfigText(text, error);
   if (!config) {
@@ -215,6 +218,19 @@ TEST(ProblemConfigTest, RequiresASandboxImage) {
                     )pb",
                     &error));
   EXPECT_NE(error.find("sandbox.image"), std::string::npos) << error;
+}
+
+// A game's record, views included, is one gRPC message.
+TEST(ProblemConfigTest, BoundsMaxViewBytes) {
+  const auto with = [](std::string_view field) {
+    std::string text = kMatchConfig;
+    text.insert(text.find("match {") + 7, absl::StrCat(" ", field));
+    return text;
+  };
+  std::string error;
+  EXPECT_TRUE(Load(with("max_view_bytes: 2097152"), &error)) << error;
+  EXPECT_FALSE(Load(with("max_view_bytes: 4194304"), &error));
+  EXPECT_NE(error.find("max_view_bytes"), std::string::npos) << error;
 }
 
 TEST(ProblemConfigTest, LoadFromFileReportsThePath) {
