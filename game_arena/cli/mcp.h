@@ -1,10 +1,7 @@
 #ifndef GAME_ARENA_GAME_ARENA_CLI_MCP_H
 #define GAME_ARENA_GAME_ARENA_CLI_MCP_H
 
-// arena_cli's commands as MCP tools, on stdio: what `arena_cli mcp` serves an
-// agent. A tool call is an arena_cli command line, its arguments the flags of
-// that command, and its result what the command prints -- so the agent and the
-// participant are handed the same operations, from one implementation.
+// arena_cli's commands as MCP tools: a tool call is an arena_cli command line.
 
 #include <boost/json/object.hpp>
 #include <functional>

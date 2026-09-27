@@ -1,31 +1,4 @@
-// Command-line client for the arena's Arena service.
-/*
-arena_cli rules
-arena_cli submit --wait                          # your directory, bots/<you>/
-arena_cli submit --file=strategy.h --wait
-arena_cli submit --patch=my.diff
-arena_cli job <job_id> [--wait]
-arena_cli candidates [--order=newest]
-arena_cli leaderboard [--limit=20]
-arena_cli source <name> [path]   # pulls their directory in beside yours
-arena_cli spar <name> [--games=10]   # and plays yours against it, here
-arena_cli spar builtin:greedy        # or against a builtin
-arena_cli mcp                        # all of the above as MCP tools, on stdio
-ARENA_RESTORE=1 arena_cli init       # your directory, from your last submission
-*/
-//
-// Same RPCs, same compact output, for a shell and -- as `mcp` -- for an
-// agent, whose tool calls are this program run again. Every call carries the
-// --token as x-arena-token metadata: Submit needs it, and so does reading
-// source a problem shows only to its author (ProblemInfo.source_visibility).
-//
-// It ships inside a kit as a binary, not as a bazel target: submitting should
-// not need a toolchain, and a participant should not have to know what the
-// arena's build looks like to enter a tournament. The kit's arena.textproto
-// (proto/kit.proto) is where it gets its defaults -- the coordinator's
-// address, what a solution is made of, where pulled rivals land. That file is
-// the participant's to edit: widening it changes what this tool sends, never
-// what the coordinator accepts.
+// The participant's client, for a shell and (as `mcp`) for an agent.
 
 #include <fcntl.h>
 #include <google/protobuf/text_format.h>
@@ -134,23 +107,16 @@ struct Client {
   std::string server;
   std::string token;
   int timeout_s;
-  // The kit this was run from, and its config. Both empty outside a kit,
-  // which is a working state: every default the config carries can also be
-  // given as a flag.
+  // Both empty outside a kit, which works: every default is also a flag.
   std::filesystem::path kit_dir;
   proto::KitConfig kit;
-  // Who this kit is: $ARENA_NAME, else the kit's client_id. What the
-  // participant's own directory is called, here and at the tournament.
   std::string me;
 
-  // <kit>/<submit_dir>/<name>: where a participant's implementation lives.
   std::filesystem::path DirOf(const std::string &name) const {
     return kit_dir / kit.submit_dir() / name;
   }
 };
 
-// The kit this command belongs to: --kit, $ARENA_KIT, or the nearest
-// enclosing directory holding an arena.textproto. Empty when there is none.
 std::filesystem::path FindKit() {
   if (const std::string flag = absl::GetFlag(FLAGS_kit); !flag.empty()) {
     return flag;
@@ -174,8 +140,6 @@ std::filesystem::path FindKit() {
   return {};
 }
 
-// The kit's config, or an empty one. A kit whose config does not parse is
-// worth saying out loud: the participant edited it, and the fix is theirs.
 proto::KitConfig LoadKitConfig(const std::filesystem::path &kit) {
   proto::KitConfig config;
   if (kit.empty()) {
@@ -206,7 +170,6 @@ void ConfigureContext(const Client &client, grpc::ClientContext *context) {
   }
 }
 
-// Prints a mapped error to stderr.
 void RpcError(const grpc::Status &status, const std::string &server) {
   switch (status.error_code()) {
     case grpc::StatusCode::UNAUTHENTICATED:
@@ -243,8 +206,7 @@ void RpcError(const grpc::Status &status, const std::string &server) {
   }
 }
 
-// |method| with the token and the deadline. False, the error printed, when it
-// fails.
+// False, with the error printed, when the call fails.
 template <typename Method, typename Request, typename Response>
 bool Call(const Client &client, Method method, const Request &request,
           Response *response) {
@@ -275,9 +237,6 @@ bool IsTerminal(proto::Job::State state) {
          state == proto::Job::CANCELLED;
 }
 
-// One leaderboard/candidates row, rendered for whichever kind of problem this
-// is: a measurement is not a property of the submission alone, so the host
-// that produced it belongs on the row.
 void PrintStandingHeader(const std::string &score_label, bool graded) {
   if (graded) {
     std::printf("%-28s %9s %5s %-12s %-12s %-12s %s\n", "candidate_id",
@@ -314,8 +273,6 @@ void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
 }
 
 void PrintJob(const proto::Job &job) {
-  // The phase only means anything while the job is still going; once it is
-  // done, the last phase it reached is noise.
   std::string state = NameOf(job.state());
   if (job.state() == proto::Job::RUNNING) {
     state += ", " + NameOf(job.phase());
@@ -330,12 +287,9 @@ void PrintJob(const proto::Job &job) {
   }
 }
 
-// Prints the job, and with |wait| polls until it reaches a terminal state,
-// printing state transitions. 1 on FAILED/CANCELLED or an RPC error.
+// Polls while |wait|. 1 once FAILED/CANCELLED, or on an RPC error.
 int WaitForJob(const Client &client, const std::string &job_id, bool wait) {
   proto::Job::State last = proto::Job::QUEUED;
-  // Tracked alongside the state so a long build reports preparing, then
-  // building, then running, instead of one "running" line for half an hour.
   std::optional<proto::OrderProgress::Phase> last_phase;
   for (;;) {
     proto::GetJobRequest request;
@@ -428,9 +382,7 @@ int CmdRules(const Client &client) {
   return 0;
 }
 
-// Under `bazel run` the working directory is the runfiles tree, so a relative
-// path is taken from the workspace the command was run in, which is where the
-// file the user means actually is.
+// Under `bazel run` the cwd is the runfiles tree; the user means their own.
 auto FromWorkspace(const std::string &path) -> std::filesystem::path {
   const std::filesystem::path p(path);
   const char *workspace = std::getenv("BUILD_WORKSPACE_DIRECTORY");
@@ -451,8 +403,7 @@ bool ReadFile(const std::string &path, std::string *content) {
   return true;
 }
 
-// The sources in |dir|, sorted. Not its BUILD: the coordinator generates the
-// one a submission is compiled with.
+// Not BUILD: the coordinator generates the one a submission is built with.
 std::vector<std::string> SourcesIn(const std::filesystem::path &dir) {
   static constexpr std::array<std::string_view, 5> kSources = {
       ".h", ".hpp", ".cc", ".cpp", ".inl"};
@@ -476,8 +427,6 @@ int CmdSubmit(const Client &client) {
   const std::string name =
       absl::GetFlag(FLAGS_name).empty() ? client.me : absl::GetFlag(FLAGS_name);
 
-  // No files and no patch: your directory is your solution. This is the
-  // ordinary way to submit from a kit -- `submit` and nothing else.
   if (files.empty() && patch_path.empty() && !client.me.empty()) {
     files = SourcesIn(client.DirOf(client.me));
     std::printf("submitting %zu file(s) from %s:\n", files.size(),
@@ -496,8 +445,7 @@ int CmdSubmit(const Client &client) {
 
   proto::SubmitRequest request;
   request.set_display_name(name);
-  // Who a coordinator with no registry takes this to be from; one with a
-  // registry goes by the token.
+  // Read only by a coordinator with no registry; one with goes by the token.
   request.set_author(client.me);
   request.set_game(absl::GetFlag(FLAGS_game));
   request.set_parent_id(absl::GetFlag(FLAGS_parent_id));
@@ -513,8 +461,7 @@ int CmdSubmit(const Client &client) {
     }
     request.set_patch(std::move(patch));
   } else {
-    // Flattened to the basename: a submission is its own directory, so the
-    // sender's layout above it is irrelevant and only invites "..".
+    // Basename only: a submission is its own directory; a path invites "..".
     std::vector<std::string> headers;
     for (const std::string &raw : files) {
       std::string content;
@@ -616,8 +563,7 @@ int CmdCandidates(const Client &client) {
     std::printf("no candidates yet\n");
     return 0;
   }
-  // This listing has no score_label of its own; a row carrying metrics is a
-  // graded one.
+  // No score_label here: a row with metrics is a graded one.
   const bool graded =
       std::any_of(response.candidates().begin(), response.candidates().end(),
                   [](const proto::CandidateStanding &standing) {
@@ -641,8 +587,7 @@ int CmdLeaderboard(const Client &client) {
     std::printf("nothing has been scored yet\n");
     return 0;
   }
-  // The server says what its score column means; a graded problem's is a
-  // metric name, not "elo".
+  // A graded problem's score_label is a metric name, not "elo".
   const bool graded =
       response.score_label() != "" && response.score_label() != "elo";
   PrintStandingHeader(response.score_label(), graded);
@@ -652,10 +597,7 @@ int CmdLeaderboard(const Client &client) {
   return 0;
 }
 
-// One file of a candidate, into the kit under |into| (empty: stdout). Paths
-// are repo-relative, which in a kit is where they belong -- but only below
-// the candidate's own directory: one that lands anywhere else is refused
-// rather than written.
+// Into |into| (empty: stdout); a path that would land outside it is refused.
 int PullSourceFile(const Client &client, const std::string &candidate_id,
                    const std::string &path, const std::filesystem::path &into) {
   proto::GetSourceRequest request;
@@ -689,8 +631,7 @@ int PullSourceFile(const Client &client, const std::string &candidate_id,
   return 0;
 }
 
-// Your last submission, into your directory: what $ARENA_RESTORE puts there
-// in place of the starter. False when there are no files of yours to pull.
+// Nothing to pull is not an error: false, and the caller uses the starter.
 bool Restore(const Client &client) {
   proto::GetCandidateRequest request;
   request.set_candidate_id(client.me);
@@ -774,8 +715,7 @@ int CmdSource(const Client &client, const std::vector<char *> &args) {
     return 0;
   }
 
-  // Where it lands: their directory, beside yours. Your own is printed
-  // instead, because what is there is what you are working on.
+  // Your own goes to stdout: pulling it would overwrite your work in progress.
   const bool to_stdout = absl::GetFlag(FLAGS_print) || client.kit_dir.empty() ||
                          client.kit.submit_dir().empty() ||
                          candidate.candidate_id() == client.me;
@@ -807,10 +747,8 @@ int CmdSource(const Client &client, const std::vector<char *> &args) {
 
 extern "C" char **environ;
 
-// Starts |argv| with its output in |log| (empty: this terminal), and with the
-// environment minus ARENA_TOKEN unless |with_token|: a rival's code has no use
-// for your credential. posix_spawn rather than fork, which a process with
-// gRPC's threads in it should not do.
+// No ARENA_TOKEN unless |with_token|: a rival's code has no use for yours.
+// posix_spawn, not fork: this process has gRPC's threads in it.
 pid_t Spawn(const std::vector<std::string> &argv, const std::string &log,
             bool with_token = false) {
   std::vector<char *> args;
@@ -845,9 +783,6 @@ int Wait(pid_t pid) {
   return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }
 
-// Yours against |name|'s, here: their directory pulled in beside yours, both
-// built, and the games refereed the way the tournament's workers do it -- the
-// same referee, the same bounds on a game, two bots naming each other.
 int CmdSpar(const Client &client, const std::vector<char *> &args) {
   if (args.empty() || client.me.empty() || client.kit.game().empty()) {
     std::fprintf(stderr,
@@ -859,8 +794,7 @@ int CmdSpar(const Client &client, const std::vector<char *> &args) {
   const std::string rival = args[0];
   // A builtin plays inside the referee; there is nothing of it to pull or run.
   const bool builtin = rival.rfind("builtin:", 0) == 0;
-  // Pulled every time: a name stays, what is under it does not. Someone who
-  // is only in this kit -- the starter -- is played as they are.
+  // Pulled every time; one only in this kit (the starter) is played as it is.
   if (!builtin && CmdSource(client, args) != 0 &&
       !std::filesystem::exists(client.DirOf(rival))) {
     return kExitError;
@@ -934,9 +868,7 @@ int CmdSpar(const Client &client, const std::vector<char *> &args) {
   return tally.games > 0 ? 0 : kExitError;
 }
 
-// The commands above as MCP tools on stdio. Each call runs this program again
-// with what this one resolved in its environment, from the kit, so a relative
-// path means what it does in a shell there.
+// Each tool call reruns this binary with what this one resolved, in the kit.
 int CmdMcp(const Client &client) {
   ::setenv("ARENA_SERVER", client.server.c_str(), 1);
   ::setenv("ARENA_TOKEN", client.token.c_str(), 1);
@@ -1001,8 +933,6 @@ int main(int argc, char **argv) {
   const std::string command = positional[1];
   const std::vector<char *> args(positional.begin() + 2, positional.end());
 
-  // The kit's config is the last word on every default, after the flag and
-  // the environment: a participant who exports ARENA_SERVER means it.
   const std::filesystem::path kit_dir = FindKit();
   proto::KitConfig kit = LoadKitConfig(kit_dir);
 
@@ -1033,9 +963,6 @@ int main(int argc, char **argv) {
   if (command == "mcp") {
     return CmdMcp(client);
   }
-  // Yours is a directory like everyone's, named after you. The first time, it
-  // is a copy of the starter's -- or, with $ARENA_RESTORE, of your last
-  // submission, if there is one.
   if (!me.empty() && !client.kit.starter_dir().empty() &&
       !std::filesystem::exists(client.DirOf(me))) {
     if (!EnvOr("ARENA_RESTORE", "").empty() && Restore(client)) {
@@ -1050,7 +977,7 @@ int main(int argc, char **argv) {
                   client.kit.starter_dir().c_str());
     }
   }
-  // What a kit image runs as it starts: the above, and nothing else.
+  // What a kit image runs as it starts.
   if (command == "init") {
     return 0;
   }
