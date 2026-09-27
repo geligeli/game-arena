@@ -45,14 +45,10 @@ class ContainerEngine final : public Engine {
  public:
   explicit ContainerEngine(ContainerEngineConfig config);
 
-  std::string name() const override { return "container"; }
   Capabilities capabilities() const override {
-    return Capabilities{/*isolates=*/true, /*shared_network=*/true,
-                        /*stable_peer_names=*/true};
+    return Capabilities{/*isolates=*/true, /*stable_peer_names=*/true};
   }
 
-  bool Prepare(const proto::Workspace &prototype, int lanes,
-               std::string *error) override;
   proto::JobResult Run(const proto::Job &job, Observer *observer) override;
   void Cancel(const std::string &job_id) override;
 

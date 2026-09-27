@@ -50,9 +50,6 @@ class OrderRunner {
   // thread while a slot thread is inside RunOrder.
   void Cancel(const std::string &order_id);
 
-  // What this worker can run, for the hello. Both engines when it has both.
-  std::string engines() const;
-
  private:
   // Why this worker will not run |order| at all, or empty if it will. Refused
   // rather than attempted: an order run on the wrong kind of host produces a

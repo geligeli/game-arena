@@ -44,9 +44,6 @@ int AwaitPort(const std::filesystem::path &port_file,
 
 }  // namespace
 
-ProcessEngine::ProcessEngine(ProcessEngineConfig config)
-    : config_(std::move(config)) {}
-
 void ProcessEngine::Track(const std::string &job_id, pid_t pgid) {
   std::lock_guard<std::mutex> lock(mutex_);
   running_.emplace(job_id, pgid);
@@ -153,9 +150,6 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   }
 
   for (const proto::Step &step : phase.background()) {
-    if (observer != nullptr) {
-      observer->OnStepStarted(job.id(), phase.name(), step.name());
-    }
     const std::vector<std::string> argv = render(step);
     if (argv.empty()) {
       return Fail(status, proto::Status::INVALID_JOB, "a step needs a command");
@@ -180,7 +174,7 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
       // not connect" and "it connected before anything was there".
       const int timeout_s = step.endpoint().discover_timeout_s() > 0
                                 ? step.endpoint().discover_timeout_s()
-                                : config_.endpoint_timeout_s;
+                                : 60;
       const int port = AwaitPort(port_file, std::chrono::seconds(timeout_s));
       if (port <= 0) {
         return Fail(
@@ -189,16 +183,10 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
                 TailOf(ReadFile(log_dir / (step.name() + ".err")), 1500));
       }
       peers[step.name()] = "localhost:" + std::to_string(port);
-    } else if (step.endpoint().port() > 0) {
-      peers[step.name()] =
-          "localhost:" + std::to_string(step.endpoint().port());
     }
   }
 
   const proto::Step &foreground = phase.foreground();
-  if (observer != nullptr) {
-    observer->OnStepStarted(job.id(), phase.name(), foreground.name());
-  }
   const std::vector<std::string> argv = render(foreground);
   if (argv.empty()) {
     return Fail(status, proto::Status::INVALID_JOB, "a step needs a command");
@@ -250,11 +238,7 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     Untrack(job.id(), step.pid());
   }
   for (const proto::Step &step : phase.background()) {
-    proto::StepResult *background_result =
-        AddStepResult(result, step.name(), log_dir);
-    if (!peers[step.name()].empty()) {
-      background_result->set_peer_address(peers[step.name()]);
-    }
+    AddStepResult(result, step.name(), log_dir);
   }
 
   std::vector<const proto::Step *> all;

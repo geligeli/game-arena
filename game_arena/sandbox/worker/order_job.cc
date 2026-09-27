@@ -252,11 +252,7 @@ void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
   }
   build->set_timeout_s(order.build_timeout_s() > 0 ? order.build_timeout_s()
                                                    : kDefaultTimeoutS);
-  if (container) {
-    *build->add_argv() = Verbatim(config.bazel);
-  } else {
-    *build->add_argv() = Quoted(config.bazel);
-  }
+  *build->add_argv() = Verbatim(config.bazel);
   // --output_base is a startup option and belongs before the command;
   // --disk_cache and the problem's extra flags are command options and belong
   // after it. Getting that wrong is not a style question: bazel aborts with
@@ -328,7 +324,6 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
   if (capabilities.stable_peer_names) {
     // Its own network namespace, so a fixed port cannot collide and the peer
     // resolves by name.
-    referee->mutable_endpoint()->set_port(kMatchPort);
     *referee->add_argv() = Quoted("--port=" + std::to_string(kMatchPort));
     server = sandbox_exec::SandboxName(job->id(), "referee") + ":" +
              std::to_string(kMatchPort);
@@ -447,11 +442,6 @@ void AddGradePhases(const proto::WorkOrder &order,
     step->add_collect_files("report.json");
     for (const std::string &word : grade.argv()) {
       *step->add_argv() = Quoted(word);
-    }
-    if (!container) {
-      // The process engine runs argv[0] directly, so it must resolve in the
-      // checkout rather than through a shell's PATH.
-      step->set_cwd("");
     }
   }
 }

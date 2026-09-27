@@ -279,8 +279,7 @@ int main(int argc, char **argv) {
 
   // No tree named here: it is in the image each order names.
   LOG(INFO) << "Worker '" << worker_id << "' warming up " << slots
-            << " slot(s) under " << work_dir << ", " << runner.engines()
-            << " engine(s)"
+            << " slot(s) under " << work_dir << ", container engine(s)"
             << (machine_class.empty()
                     ? ", no machine class (ARENA_MACHINE_CLASS unset: graded "
                       "problems that require one will refuse this worker)"

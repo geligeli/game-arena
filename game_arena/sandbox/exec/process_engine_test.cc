@@ -66,7 +66,6 @@ TEST_F(ProcessEngineTest, SaysItIsNotABoundary) {
   // A caller whose job must be contained checks this rather than asking which
   // engine it was handed.
   EXPECT_FALSE(engine_.capabilities().isolates);
-  EXPECT_EQ(engine_.name(), "process");
 }
 
 TEST_F(ProcessEngineTest, RunsAStepAndCapturesIt) {

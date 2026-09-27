@@ -22,8 +22,7 @@ std::string WorkDirOf(const proto::Workspace &workspace,
   return sandbox_common::kWorkspace;
 }
 
-}  // namespace
-
+// Verbatim tokens as they are, everything else single-quoted.
 std::string RenderArgv(const proto::Step &step) {
   std::string rendered;
   for (const proto::Token &token : step.argv()) {
@@ -34,6 +33,8 @@ std::string RenderArgv(const proto::Step &step) {
   }
   return rendered;
 }
+
+}  // namespace
 
 std::string EntrypointScript(const proto::Workspace &workspace,
                              const proto::Step &step) {

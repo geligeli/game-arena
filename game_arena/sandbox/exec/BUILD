@@ -80,8 +80,6 @@ cc_library(
     deps = [
         ":engine",
         ":sandbox_job_cc_proto",
-        "//game_arena/common/process",
-        "//game_arena/sandbox/common:docker",
         "//game_arena/sandbox/common:files",
         "//game_arena/sandbox/common:step",
         "//game_arena/sandbox/common:text",

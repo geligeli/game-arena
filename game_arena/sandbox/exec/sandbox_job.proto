@@ -126,10 +126,7 @@ message Workspace {
 // ---------------------------------------------------------------------------
 
 message Endpoint {
-  // The port the other steps of this phase reach this one on. Usable when the
-  // sandbox gives the step its own network namespace, so nothing can collide.
-  int32 port = 1;
-  // Otherwise the step binds a free port and writes it to the file the engine
+  // The step binds a free port and writes it to the file the engine
   // substitutes for {{port_file}} in its argv. The engine waits for a number
   // to appear before starting anything that names this step as a peer.
   bool discover_via_port_file = 2;
@@ -248,7 +245,6 @@ message StepResult {
   string stdout = 6;
   string stderr = 7;
   map<string, bytes> collected = 8;
-  string peer_address = 9;
 }
 
 message PhaseResult {

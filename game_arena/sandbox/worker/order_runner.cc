@@ -82,16 +82,6 @@ bool OrderRunner::Warmup(int slots, std::string *error) {
   return true;
 }
 
-std::string OrderRunner::engines() const {
-  if (process_engine_ != nullptr && container_engine_ != nullptr) {
-    return process_engine_->name() + "+" + container_engine_->name();
-  }
-  if (container_engine_ != nullptr) {
-    return container_engine_->name();
-  }
-  return process_engine_ != nullptr ? process_engine_->name() : "none";
-}
-
 sandbox_exec::Engine *OrderRunner::EngineFor(
     const proto::WorkOrder &order) const {
   // The problem decides, by naming an image or not -- and the coordinator

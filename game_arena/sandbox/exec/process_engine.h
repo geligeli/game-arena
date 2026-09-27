@@ -23,23 +23,13 @@
 
 namespace sandbox_exec {
 
-struct ProcessEngineConfig {
-  // How long to wait for a background step to publish its port before giving
-  // up on the phase.
-  int endpoint_timeout_s = 60;
-};
-
 class ProcessEngine final : public Engine {
  public:
-  explicit ProcessEngine(ProcessEngineConfig config = {});
-
-  std::string name() const override { return "process"; }
   Capabilities capabilities() const override {
     // Steps share the host's network, so they can reach each other -- but
     // only by a port discovered at runtime, because parallel jobs on one host
     // would collide on a fixed one.
-    return Capabilities{/*isolates=*/false, /*shared_network=*/true,
-                        /*stable_peer_names=*/false};
+    return Capabilities{/*isolates=*/false, /*stable_peer_names=*/false};
   }
 
   proto::JobResult Run(const proto::Job &job, Observer *observer) override;
@@ -57,7 +47,6 @@ class ProcessEngine final : public Engine {
   void Track(const std::string &job_id, pid_t pgid);
   void Untrack(const std::string &job_id, pid_t pgid);
 
-  const ProcessEngineConfig config_;
   std::mutex mutex_;
   std::multimap<std::string, pid_t> running_;
   std::set<std::string> cancelled_;

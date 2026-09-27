@@ -29,10 +29,6 @@ namespace sandbox_exec {
 std::string EntrypointScript(const proto::Workspace &workspace,
                              const proto::Step &step);
 
-// |argv| rendered for a shell: verbatim tokens as they are, everything else
-// single-quoted.
-std::string RenderArgv(const proto::Step &step);
-
 }  // namespace sandbox_exec
 
 #endif  // GAME_ARENA_GAME_ARENA_SANDBOX_EXEC_ENTRYPOINT_H

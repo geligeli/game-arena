@@ -124,16 +124,6 @@ bool AppliesStagedFiles(const proto::Job &job, const proto::Step &step) {
 ContainerEngine::ContainerEngine(ContainerEngineConfig config)
     : config_(std::move(config)) {}
 
-bool ContainerEngine::Prepare(const proto::Workspace &prototype, int lanes,
-                              std::string *error) {
-  (void)prototype;
-  (void)lanes;
-  (void)error;
-  // Nothing to do that a job's own PrepareWorkspace does not do. Kept as an
-  // override point so a caller can still warm a lane up front.
-  return true;
-}
-
 proto::JobResult ContainerEngine::Run(const proto::Job &job,
                                       Observer *observer) {
   proto::JobResult result;
@@ -419,9 +409,6 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   // Background steps first, detached, so the foreground one has something to
   // talk to.
   for (const proto::Step &step : phase.background()) {
-    if (observer != nullptr) {
-      observer->OnStepStarted(job.id(), phase.name(), step.name());
-    }
     const StepResult started =
         Docker(config_.docker, container_args(step, /*detached=*/true), log_dir,
                step.name() + "_start", 120);
@@ -435,9 +422,6 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   }
 
   const proto::Step &foreground = phase.foreground();
-  if (observer != nullptr) {
-    observer->OnStepStarted(job.id(), phase.name(), foreground.name());
-  }
   const StepResult ran =
       Docker(config_.docker, container_args(foreground, /*detached=*/false),
              log_dir, foreground.name(), foreground.timeout_s());

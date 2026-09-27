@@ -29,8 +29,6 @@ struct Capabilities {
   // A security boundary, not merely resource limits. A caller that runs
   // submitted code which may execute at build time must require this.
   bool isolates = false;
-  // The steps of a phase can reach each other.
-  bool shared_network = false;
   // A peer is addressable before it starts, so argv can name it up front
   // rather than discovering an address at runtime.
   bool stable_peer_names = false;
@@ -46,13 +44,6 @@ class Observer {
                               const std::string &phase) {
     (void)job_id;
     (void)phase;
-  }
-  virtual void OnStepStarted(const std::string &job_id,
-                             const std::string &phase,
-                             const std::string &step) {
-    (void)job_id;
-    (void)phase;
-    (void)step;
   }
 };
 
@@ -98,20 +89,7 @@ class Engine {
  public:
   virtual ~Engine() = default;
 
-  virtual std::string name() const = 0;
   virtual Capabilities capabilities() const = 0;
-
-  // Prepares what |lanes| concurrent jobs will need, so the first job does
-  // not pay for it: the directories a bind mount would otherwise conjure up
-  // empty. |prototype| carries the paths with
-  // "{lane}" still in them.
-  virtual bool Prepare(const proto::Workspace &prototype, int lanes,
-                       std::string *error) {
-    (void)prototype;
-    (void)lanes;
-    (void)error;
-    return true;
-  }
 
   // Runs |job| to completion. Called from the caller's own thread; safe to
   // call concurrently for jobs with different ids.
