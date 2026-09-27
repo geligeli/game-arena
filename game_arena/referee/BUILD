@@ -113,18 +113,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "broker_service",
-    srcs = ["broker_service.cc"],
-    hdrs = ["broker_service.h"],
-    deps = [
-        ":matchmaker",
-        ":play_reactor",
-        "//game_arena/proto:tournament_broker_cc_grpc",
-        "@grpc//:grpc++",
-    ],
-)
-
 # A match's result from one side, counted from its game records. Shared by the
 # referee, the worker that reads its report and spar.
 cc_library(
@@ -154,10 +142,10 @@ cc_library(
     alwayslink = 1,
     deps = [
         "//game_arena/common/kv_options",
-        ":broker_service",
         ":game_registry",
         ":match_tally",
         ":matchmaker",
+        ":play_reactor",
         "//game_arena/proto:tournament_broker_cc_proto",
         "//game_arena/standings:game_history",
         "@abseil-cpp//absl/flags:flag",

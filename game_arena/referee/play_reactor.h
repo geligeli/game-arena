@@ -29,7 +29,7 @@ class PlayReactor final : public grpc::ServerBidiReactor<proto::ClientMessage,
                                                          proto::ServerMessage>,
                           public Transport {
  public:
-  PlayReactor(Matchmaker *matchmaker, std::chrono::milliseconds hello_timeout);
+  explicit PlayReactor(Matchmaker *matchmaker);
 
   // --- ServerBidiReactor ---
   void OnReadDone(bool ok) override;
@@ -90,6 +90,19 @@ class PlayReactor final : public grpc::ServerBidiReactor<proto::ClientMessage,
   grpc::Alarm hello_alarm_;
 
   proto::ClientMessage read_msg_;
+};
+
+class BrokerService final : public proto::TournamentBroker::CallbackService {
+ public:
+  explicit BrokerService(Matchmaker *matchmaker) : matchmaker_(matchmaker) {}
+
+  grpc::ServerBidiReactor<proto::ClientMessage, proto::ServerMessage> *Play(
+      grpc::CallbackServerContext * /*context*/) override {
+    return new PlayReactor(matchmaker_);  // gRPC owns it; OnDone() deletes it
+  }
+
+ private:
+  Matchmaker *matchmaker_;  // not owned
 };
 
 }  // namespace tournament_broker

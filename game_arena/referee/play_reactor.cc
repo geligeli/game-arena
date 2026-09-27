@@ -20,21 +20,18 @@ void PlayReactor::HelloGuard::Fire() {
   }
 }
 
-PlayReactor::PlayReactor(Matchmaker *matchmaker,
-                         std::chrono::milliseconds hello_timeout)
+PlayReactor::PlayReactor(Matchmaker *matchmaker)
     : matchmaker_(matchmaker),
       hello_guard_(std::make_shared<HelloGuard>(this)) {
   // A peer that opens a stream and then says nothing would otherwise hold a
   // reactor open indefinitely. Keepalive does not cover it: the connection is
   // alive, just silent.
-  if (hello_timeout.count() > 0) {
-    hello_alarm_.Set(std::chrono::system_clock::now() + hello_timeout,
-                     [guard = hello_guard_](bool ok) {
-                       if (ok) {
-                         guard->Fire();
-                       }
-                     });
-  }
+  hello_alarm_.Set(std::chrono::system_clock::now() + std::chrono::seconds(30),
+                   [guard = hello_guard_](bool ok) {
+                     if (ok) {
+                       guard->Fire();
+                     }
+                   });
   // Exactly one operation before Play() returns. Until the stream is bound,
   // gRPC parks requests in a backlog whose write slot is a *single* pointer,
   // so a second queued write would silently overwrite the first.

@@ -43,10 +43,10 @@ bazel run //game_arena/testgame:match_referee -- \
 #include "absl/log/log.h"
 #include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/proto/tournament_broker.pb.h"
-#include "game_arena/referee/broker_service.h"
 #include "game_arena/referee/game_registry.h"
 #include "game_arena/referee/match_tally.h"
 #include "game_arena/referee/matchmaker.h"
+#include "game_arena/referee/play_reactor.h"
 #include "game_arena/standings/game_history.h"
 
 ABSL_FLAG(int, port, 50051, "Port the two sides dial");
