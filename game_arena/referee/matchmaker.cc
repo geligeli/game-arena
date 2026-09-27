@@ -2,12 +2,10 @@
 
 #include <algorithm>
 #include <array>
-#include <cstddef>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
 #include "game_arena/referee/game_registry.h"
 
@@ -39,23 +37,8 @@ Matchmaker::Matchmaker(MatchmakerConfig config, GameHistory *history)
 }
 
 Matchmaker::~Matchmaker() {
-  std::vector<std::shared_ptr<ClientHandle>> stranded;
-  {
-    std::lock_guard lock(mutex_);
-    stopping_ = true;
-    for (auto &[key, entry] : rendezvous_) {
-      stranded.push_back(entry.client);
-    }
-    rendezvous_.clear();
-  }
-  reaper_cv_.notify_all();
-  if (reaper_.joinable()) {
-    reaper_.join();
-  }
-  for (const auto &client : stranded) {
-    client->MarkDisconnected();
-    client->CloseAfterFlush();
-  }
+  Shutdown();
+  reaper_.join();
   // Deadlines first: a pending turn timer would otherwise post onto a strand
   // whose pool is already draining.
   timer_.Stop();
