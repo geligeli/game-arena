@@ -14,6 +14,7 @@ cc_library(
     hdrs = ["metric_report.h"],
     deps = [
         "//game_arena/proto:problem_cc_proto",
+        "@abseil-cpp//absl/strings",
         "@protobuf//:protobuf",
     ],
 )
