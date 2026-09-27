@@ -78,25 +78,20 @@ class ArenaService final : public proto::Arena::Service {
   bool Authenticate(grpc::ServerContext *context, ClientIdentity *identity,
                     grpc::Status *status) const;
 
-  // Who the caller is, for the problem's source policy. Only SOURCE_OWN needs
-  // to know: it fills *client_id from the caller's token, and under every
-  // other policy nobody is asked and *client_id stays empty.
-  //
-  // |strict| is for the calls that serve source and nothing else: a missing
-  // or unknown token fails there, because "you are nobody, so you may read
-  // nothing" is worth saying as UNAUTHENTICATED. The listings are lenient --
-  // a standing is not source, and a leaderboard should stay legible to
-  // someone who has not been given a token at all. They redact instead.
-  bool ResolveReader(grpc::ServerContext *context, bool strict,
-                     std::string *client_id, grpc::Status *status) const;
+  // Who the caller is, for the problem's source policy: under SOURCE_OWN the
+  // client its token names, otherwise nobody is asked and it is empty. The
+  // listings are lenient -- a standing is not source, and a leaderboard should
+  // stay legible to someone with no token at all -- so an anonymous caller is
+  // nobody, who owns nothing and is served nobody's source.
+  std::string Reader(grpc::ServerContext *context) const;
 
-  // Whether |candidate|'s files may be served to |client_id|.
+  // Whether |candidate|'s files may be served to |reader|.
   bool MayReadSource(const proto::Candidate &candidate,
-                     const std::string &client_id) const;
+                     const std::string &reader) const;
 
-  // Drops the source bytes from a manifest the caller may not read, leaving
-  // the names and the standings: who submitted what, without the what.
-  void RedactSource(proto::Candidate *candidate) const;
+  // Drops the source bytes from a manifest |reader| may not read, leaving the
+  // names and the standings: who submitted what, without the what.
+  void Redact(const std::string &reader, proto::Candidate *candidate) const;
 
   CandidateStore *candidates_;  // not owned
   Scheduler *scheduler_;        // not owned

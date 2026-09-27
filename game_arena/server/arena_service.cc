@@ -57,39 +57,34 @@ bool ArenaService::Authenticate(grpc::ServerContext *context,
   return true;
 }
 
-bool ArenaService::ResolveReader(grpc::ServerContext *context, bool strict,
-                                 std::string *client_id,
-                                 grpc::Status *status) const {
-  if (problem_info_.source_visibility() != proto::ProblemInfo::SOURCE_OWN) {
-    return true;
-  }
+std::string ArenaService::Reader(grpc::ServerContext *context) const {
   ClientIdentity identity;
-  if (!Authenticate(context, &identity, status)) {
-    // Lenient: an anonymous caller is nobody, which under this policy means
-    // they own nothing and are served nothing of anyone's source. The rows
-    // themselves are still theirs to read.
-    return !strict;
+  grpc::Status ignored;
+  if (problem_info_.source_visibility() == proto::ProblemInfo::SOURCE_OWN) {
+    Authenticate(context, &identity, &ignored);
   }
-  *client_id = identity.client_id;
-  return true;
+  return identity.client_id;
 }
 
 bool ArenaService::MayReadSource(const proto::Candidate &candidate,
-                                 const std::string &client_id) const {
+                                 const std::string &reader) const {
   switch (problem_info_.source_visibility()) {
     case proto::ProblemInfo::SOURCE_NONE:
       return false;
     case proto::ProblemInfo::SOURCE_OWN:
       // An unauthenticated caller has no own candidates, and neither does a
       // candidate with no recorded author: no token, no match, no read.
-      return !client_id.empty() && candidate.author() == client_id;
+      return !reader.empty() && candidate.author() == reader;
     default:
       return true;
   }
 }
 
-void ArenaService::RedactSource(proto::Candidate *candidate) const {
-  candidate->clear_patch();
+void ArenaService::Redact(const std::string &reader,
+                          proto::Candidate *candidate) const {
+  if (!MayReadSource(*candidate, reader)) {
+    candidate->clear_patch();
+  }
 }
 
 grpc::Status ArenaService::GetProblem(
@@ -177,11 +172,7 @@ grpc::Status ArenaService::Submit(grpc::ServerContext *context,
 grpc::Status ArenaService::GetCandidate(
     grpc::ServerContext *context, const proto::GetCandidateRequest *request,
     proto::Candidate *response) {
-  std::string reader;
-  grpc::Status status;
-  if (!ResolveReader(context, /*strict=*/false, &reader, &status)) {
-    return status;
-  }
+  const std::string reader = Reader(context);
   const auto candidate = candidates_->Get(request->candidate_id());
   if (!candidate.has_value()) {
     return {grpc::StatusCode::NOT_FOUND,
@@ -190,18 +181,19 @@ grpc::Status ArenaService::GetCandidate(
   *response = *candidate;
   // The manifest is public -- who submitted what, and how it scored. The
   // patch on it is source, and follows the same rule GetSource does.
-  if (!MayReadSource(*response, reader)) {
-    RedactSource(response);
-  }
+  Redact(reader, response);
   return grpc::Status::OK;
 }
 
 grpc::Status ArenaService::GetSource(grpc::ServerContext *context,
                                      const proto::GetSourceRequest *request,
                                      proto::SourceFile *response) {
-  std::string reader;
+  // Strict, unlike the listings: this serves source and nothing else, so "you
+  // are nobody, so you may read nothing" is worth saying as UNAUTHENTICATED.
+  ClientIdentity reader;
   grpc::Status status;
-  if (!ResolveReader(context, /*strict=*/true, &reader, &status)) {
+  if (problem_info_.source_visibility() == proto::ProblemInfo::SOURCE_OWN &&
+      !Authenticate(context, &reader, &status)) {
     return status;
   }
   const auto candidate = candidates_->Get(request->candidate_id());
@@ -209,7 +201,7 @@ grpc::Status ArenaService::GetSource(grpc::ServerContext *context,
     return {grpc::StatusCode::NOT_FOUND,
             "unknown candidate '" + request->candidate_id() + "'"};
   }
-  if (!MayReadSource(*candidate, reader)) {
+  if (!MayReadSource(*candidate, reader.client_id)) {
     // Named, not hidden: the candidate is on the leaderboard either way, and
     // "no such candidate" would only send an agent looking for a typo.
     return {grpc::StatusCode::PERMISSION_DENIED,
@@ -231,11 +223,7 @@ grpc::Status ArenaService::GetSource(grpc::ServerContext *context,
 grpc::Status ArenaService::ListCandidates(
     grpc::ServerContext *context, const proto::ListCandidatesRequest *request,
     proto::ListCandidatesResponse *response) {
-  std::string reader;
-  grpc::Status status;
-  if (!ResolveReader(context, /*strict=*/false, &reader, &status)) {
-    return status;
-  }
+  const std::string reader = Reader(context);
   std::vector<proto::CandidateStanding> rows;
   for (const proto::Candidate &candidate : candidates_->List()) {
     if (!request->game().empty() && candidate.game() != request->game()) {
@@ -273,9 +261,7 @@ grpc::Status ArenaService::ListCandidates(
     rows.resize(limit);
   }
   for (auto &row : rows) {
-    if (!MayReadSource(row.candidate(), reader)) {
-      RedactSource(row.mutable_candidate());
-    }
+    Redact(reader, row.mutable_candidate());
     *response->add_candidates() = std::move(row);
   }
   return grpc::Status::OK;
@@ -296,11 +282,7 @@ grpc::Status ArenaService::GetJob(grpc::ServerContext * /*context*/,
 grpc::Status ArenaService::Leaderboard(grpc::ServerContext *context,
                                        const proto::LeaderboardRequest *request,
                                        proto::LeaderboardResponse *response) {
-  std::string reader;
-  grpc::Status status;
-  if (!ResolveReader(context, /*strict=*/false, &reader, &status)) {
-    return status;
-  }
+  const std::string reader = Reader(context);
   const int limit =
       request->limit() > 0 ? request->limit() : default_list_limit_;
   // The ordering is the standings' to decide: lower is better for a runtime,
@@ -313,9 +295,7 @@ grpc::Status ArenaService::Leaderboard(grpc::ServerContext *context,
       continue;  // A leaderboard is for things that actually ran.
     }
     proto::CandidateStanding standing = StandingFor(*candidate);
-    if (!MayReadSource(standing.candidate(), reader)) {
-      RedactSource(standing.mutable_candidate());
-    }
+    Redact(reader, standing.mutable_candidate());
     *response->add_rows() = std::move(standing);
   }
   return grpc::Status::OK;
