@@ -126,7 +126,7 @@ OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
                                    const ProgressSink &progress) {
   OrderOutcome outcome;
   if (const std::string refusal = Refusal(order); !refusal.empty()) {
-    outcome.error = refusal;
+    outcome.result.set_error(refusal);
     return outcome;
   }
 
@@ -135,7 +135,7 @@ OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
   std::string error;
   if (!JobForOrder(slot, order, config_, engine->capabilities(), &job,
                    &error)) {
-    outcome.error = error;
+    outcome.result.set_error(error);
     return outcome;
   }
 

@@ -15,8 +15,6 @@
 // the submitter needs the diagnostics; a missing docker binary is not the
 // submitter's problem.
 
-#include <map>
-#include <string>
 #include <vector>
 
 #include "game_arena/proto/arena.pb.h"
@@ -26,30 +24,8 @@
 namespace tournament_arena {
 
 struct OrderOutcome {
-  bool build_ok = false;
-  // Already compacted: full bazel logs never leave the worker.
-  std::string build_log;
-  // The tail of the build step's raw output, whatever the outcome.
-  std::string build_output;
-  // Whose build broke, when build_ok is false. An order builds both sides of
-  // a match, and the opponent failing to compile is not the submitter's fault
-  // -- without this the coordinator would retire the wrong submission. Empty
-  // means the order's own candidate.
-  std::string build_failed_candidate_id;
-  // Games for a match order, measurement runs for a graded one.
-  int games_played = 0;
-  int wins = 0;
-  int draws = 0;
-  int losses = 0;
-  // What a graded order measured, already aggregated across runs and filtered
-  // to the metrics the problem ranks on. Empty for a match order.
-  std::map<std::string, double> metrics;
-  // Every game a match order played, as its referee recorded it.
+  proto::OrderResult result;  // order_id, worker_id and machine_class unset
   std::vector<tournament_broker::proto::GameRecord> games;
-  // Non-empty when the order could not be completed at all -- checkout
-  // failed, the bot crashed, a step timed out. Distinct from a clean build
-  // that simply lost every game.
-  std::string error;
 };
 
 // Interprets |result| as the outcome of |order|.

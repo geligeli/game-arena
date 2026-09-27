@@ -71,11 +71,12 @@ void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
   tournament_broker::proto::MatchReport report;
   if (referee == nullptr || referee->collected().count(kMatchReport) == 0 ||
       !report.ParseFromString(referee->collected().at(kMatchReport))) {
-    outcome->error = "referee produced no result" +
-                     std::string(bot != nullptr && bot->timed_out()
-                                     ? " (the bot timed out first)"
-                                     : "") +
-                     ": " + TailOf(referee_errors + referee_output, 1500);
+    outcome->result.set_error("referee produced no result" +
+                              std::string(bot != nullptr && bot->timed_out()
+                                              ? " (the bot timed out first)"
+                                              : "") +
+                              ": " +
+                              TailOf(referee_errors + referee_output, 1500));
     return;
   }
   const tournament_broker::MatchTally tally =
@@ -84,14 +85,14 @@ void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
     // Recorded, not fatal: the games that were played are real results, and
     // an agent is better served by a short match plus the reason than by
     // nothing.
-    outcome->error = "match was short: " + std::to_string(tally.games) +
-                     " of " + std::to_string(order.num_games()) +
-                     " games played";
+    outcome->result.set_error(
+        "match was short: " + std::to_string(tally.games) + " of " +
+        std::to_string(order.num_games()) + " games played");
   }
-  outcome->games_played = tally.games;
-  outcome->wins = tally.wins;
-  outcome->draws = tally.draws;
-  outcome->losses = tally.losses;
+  outcome->result.set_games_played(tally.games);
+  outcome->result.set_wins(tally.wins);
+  outcome->result.set_draws(tally.draws);
+  outcome->result.set_losses(tally.losses);
   outcome->games.assign(report.games().begin(), report.games().end());
 }
 
@@ -107,16 +108,16 @@ void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
       continue;
     }
     if (step->timed_out()) {
-      outcome->error = "graded run timed out after " +
-                       std::to_string(step->timeout_s()) + "s";
+      outcome->result.set_error("graded run timed out after " +
+                                std::to_string(step->timeout_s()) + "s");
       return;
     }
     if (step->exit_code() != 0) {
       // A number from a failed run looks like a result, which is worse than
       // no number at all.
-      outcome->error = "graded command exited " +
-                       std::to_string(step->exit_code()) + ": " +
-                       TailOf(step->stderr() + step->stdout(), 1000);
+      outcome->result.set_error("graded command exited " +
+                                std::to_string(step->exit_code()) + ": " +
+                                TailOf(step->stderr() + step->stdout(), 1000));
       return;
     }
     std::map<std::string, double> metrics;
@@ -124,25 +125,25 @@ void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
     const std::string report =
         collected != step->collected().end() ? collected->second : "";
     if (!metric_report::Parse(report, step->stdout(), &metrics)) {
-      outcome->error =
+      outcome->result.set_error(
           "graded run produced no metrics: write JSON to $ARENA_REPORT or "
           "print a RESULT line. Output was: " +
-          TailOf(step->stdout(), 1000);
+          TailOf(step->stdout(), 1000));
       return;
     }
     runs.push_back(std::move(metrics));
   }
 
   for (const auto &[name, value] : ScoreGradedRuns(runs, order.grade())) {
-    outcome->metrics[name] = value;
+    (*outcome->result.mutable_metrics())[name] = value;
   }
-  if (outcome->metrics.empty()) {
-    outcome->error =
-        "the graded command reported none of this problem's metrics";
+  if (outcome->result.metrics().empty()) {
+    outcome->result.set_error(
+        "the graded command reported none of this problem's metrics");
     return;
   }
   // Runs, for a graded order: the same field a match fills with games.
-  outcome->games_played = static_cast<int>(runs.size());
+  outcome->result.set_games_played(static_cast<int>(runs.size()));
 }
 
 }  // namespace
@@ -150,49 +151,50 @@ void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
 OrderOutcome OutcomeFor(const proto::WorkOrder &order,
                         const sx::JobResult &result) {
   OrderOutcome outcome;
+  proto::OrderResult &out = outcome.result;
 
   const sx::PhaseResult *build = PhaseNamed(result, "build");
   const sx::StepResult *build_step =
       build != nullptr ? StepNamed(*build, "build") : nullptr;
   if (build_step != nullptr) {
-    outcome.build_output = sandbox_common::TailOf(
-        build_step->stdout() + build_step->stderr(), 64 << 10);
+    out.set_build_output(sandbox_common::TailOf(
+        build_step->stdout() + build_step->stderr(), 64 << 10));
   }
 
   // Whatever the engine says it could not do, before looking at any step: a
   // job that never ran has no result to read.
   if (result.status().code() != sx::Status::OK) {
     if (build_step != nullptr && !build_step->stdout().empty()) {
-      outcome.build_log =
-          CompactBuildLog(build_step->stdout() + build_step->stderr());
+      out.set_build_log(
+          CompactBuildLog(build_step->stdout() + build_step->stderr()));
     }
-    outcome.error = result.status().message();
+    out.set_error(result.status().message());
     return outcome;
   }
 
   if (build_step == nullptr) {
-    outcome.error = "the job reported no build";
+    out.set_error("the job reported no build");
     return outcome;
   }
   const std::string build_output = build_step->stdout() + build_step->stderr();
   if (build_step->timed_out()) {
-    outcome.build_log = CompactBuildLog(build_output);
+    out.set_build_log(CompactBuildLog(build_output));
     // The timeout the engine actually enforced, not the one the order asked
     // for: an order that leaves build_timeout_s unset used to report "build
     // timed out after 0s".
-    outcome.error = "build timed out after " +
-                    std::to_string(build_step->timeout_s()) + "s";
+    out.set_error("build timed out after " +
+                  std::to_string(build_step->timeout_s()) + "s");
     return outcome;
   }
   if (build_step->exit_code() != 0) {
     // A build failure is the candidate's fault, not the order's: report it as
     // a completed order with build_ok false so the agent gets the
     // diagnostics.
-    outcome.build_log = CompactBuildLog(build_output);
-    outcome.build_failed_candidate_id = BlameForBuild(order, build_output);
+    out.set_build_log(CompactBuildLog(build_output));
+    out.set_build_failed_candidate_id(BlameForBuild(order, build_output));
     return outcome;
   }
-  outcome.build_ok = true;
+  out.set_build_ok(true);
 
   if (order.has_grade()) {
     ReadGrade(order, result, &outcome);
@@ -201,20 +203,20 @@ OrderOutcome OutcomeFor(const proto::WorkOrder &order,
 
   const sx::PhaseResult *match = PhaseNamed(result, "match");
   if (match == nullptr) {
-    outcome.error = "the job reported no match";
+    out.set_error("the job reported no match");
     return outcome;
   }
   const sx::StepResult *bot = StepNamed(*match, "bot");
   if (bot != nullptr && !bot->started()) {
-    outcome.error = "the bot could not be started";
+    out.set_error("the bot could not be started");
     return outcome;
   }
   if (bot != nullptr && bot->timed_out()) {
     // Named rather than reported as a missing referee result: the two
     // backends disagreed about this, and "games timed out after 2s" says what
     // happened while "referee produced no result" describes a symptom.
-    outcome.error =
-        "games timed out after " + std::to_string(bot->timeout_s()) + "s";
+    out.set_error("games timed out after " + std::to_string(bot->timeout_s()) +
+                  "s");
     return outcome;
   }
   ReadMatch(order, *match, &outcome);

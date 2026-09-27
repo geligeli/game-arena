@@ -196,29 +196,15 @@ class WorkerSession {
 
       proto::WorkerMessage message;
       auto *result = message.mutable_result();
+      *result = outcome.result;
       result->set_order_id(order.order_id());
-      result->set_build_ok(outcome.build_ok);
-      result->set_build_log(outcome.build_log);
-      result->set_build_output(outcome.build_output);
-      result->set_games_played(outcome.games_played);
-      result->set_wins(outcome.wins);
-      result->set_draws(outcome.draws);
-      result->set_losses(outcome.losses);
-      result->set_error(outcome.error);
-      // Whose build broke, when one did. An order builds both sides of a
-      // match, and the opponent failing to compile is not the submitter's
-      // fault -- without this the arena retires the wrong submission.
-      result->set_build_failed_candidate_id(outcome.build_failed_candidate_id);
       result->set_worker_id(worker_id_);
       result->set_machine_class(machine_class_);
-      for (const auto &[name, value] : outcome.metrics) {
-        (*result->mutable_metrics())[name] = value;
-      }
 
       LOG(INFO) << "slot " << slot << ": order " << order.order_id()
-                << " done, build_ok=" << outcome.build_ok
-                << " games=" << outcome.games_played
-                << (outcome.error.empty() ? "" : " error=" + outcome.error);
+                << " done, build_ok=" << result->build_ok()
+                << " games=" << result->games_played()
+                << (result->error().empty() ? "" : " error=" + result->error());
       Write(message);
     }
   }

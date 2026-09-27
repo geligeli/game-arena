@@ -77,12 +77,12 @@ TEST(OutcomeForTest, AGoodMatchCarriesTheRefereesTally) {
   Report(AddStep(match, "referee", 0), "wd");
 
   const OrderOutcome outcome = OutcomeFor(MatchOrder(), result);
-  EXPECT_TRUE(outcome.build_ok);
-  EXPECT_EQ(outcome.error, "");
-  EXPECT_EQ(outcome.games_played, 2);
-  EXPECT_EQ(outcome.wins, 1);
-  EXPECT_EQ(outcome.draws, 1);
-  EXPECT_EQ(outcome.losses, 0);
+  EXPECT_TRUE(outcome.result.build_ok());
+  EXPECT_EQ(outcome.result.error(), "");
+  EXPECT_EQ(outcome.result.games_played(), 2);
+  EXPECT_EQ(outcome.result.wins(), 1);
+  EXPECT_EQ(outcome.result.draws(), 1);
+  EXPECT_EQ(outcome.result.losses(), 0);
   // The games themselves, for the coordinator to keep.
   ASSERT_EQ(outcome.games.size(), 2u);
   EXPECT_EQ(outcome.games[1].result(),
@@ -100,9 +100,10 @@ TEST(OutcomeForTest, APrintedTallyIsNotAResult) {
   AddStep(match, "referee", 0, "RESULT games=2 wins=2 draws=0 losses=0\n");
 
   const OrderOutcome outcome = OutcomeFor(MatchOrder(), result);
-  EXPECT_EQ(outcome.games_played, 0);
-  EXPECT_NE(outcome.error.find("referee produced no result"), std::string::npos)
-      << outcome.error;
+  EXPECT_EQ(outcome.result.games_played(), 0);
+  EXPECT_NE(outcome.result.error().find("referee produced no result"),
+            std::string::npos)
+      << outcome.result.error();
 }
 
 TEST(OutcomeForTest, ABuildFailureIsACompletedOrderWithDiagnostics) {
@@ -114,10 +115,10 @@ TEST(OutcomeForTest, ABuildFailureIsACompletedOrderWithDiagnostics) {
   const OrderOutcome outcome = OutcomeFor(MatchOrder(), result);
   // Not an error: the submitter needs the compiler output, and the order did
   // complete.
-  EXPECT_FALSE(outcome.build_ok);
-  EXPECT_EQ(outcome.error, "");
-  EXPECT_NE(outcome.build_log.find("expected ';'"), std::string::npos)
-      << outcome.build_log;
+  EXPECT_FALSE(outcome.result.build_ok());
+  EXPECT_EQ(outcome.result.error(), "");
+  EXPECT_NE(outcome.result.build_log().find("expected ';'"), std::string::npos)
+      << outcome.result.build_log();
 }
 
 TEST(OutcomeForTest, AnOpponentsBuildFailureIsNotTheSubmittersFault) {
@@ -129,7 +130,8 @@ TEST(OutcomeForTest, AnOpponentsBuildFailureIsNotTheSubmittersFault) {
             "solutions/c-rival/strategy.h:9:1: error: no member named 'x'\n");
 
   // Without this the coordinator would retire the wrong submission.
-  EXPECT_EQ(OutcomeFor(order, result).build_failed_candidate_id, "c-rival");
+  EXPECT_EQ(OutcomeFor(order, result).result.build_failed_candidate_id(),
+            "c-rival");
 }
 
 TEST(OutcomeForTest, ABuildTimeoutNamesTheTimeoutThatActuallyApplied) {
@@ -141,32 +143,34 @@ TEST(OutcomeForTest, ABuildTimeoutNamesTheTimeoutThatActuallyApplied) {
   // The effective timeout, not the requested one. An order that left
   // build_timeout_s unset used to report "build timed out after 0s" after
   // half an hour.
-  EXPECT_EQ(OutcomeFor(MatchOrder(), result).error,
+  EXPECT_EQ(OutcomeFor(MatchOrder(), result).result.error(),
             "build timed out after 1800s");
 }
 
 TEST(OutcomeForTest, EveryBuildCarriesItsRawOutput) {
   sx::JobResult ok;
   WithBuild(&ok, 0, "INFO: Build completed successfully\n");
-  EXPECT_EQ(OutcomeFor(MatchOrder(), ok).build_output,
+  EXPECT_EQ(OutcomeFor(MatchOrder(), ok).result.build_output(),
             "INFO: Build completed successfully\n");
 
   sx::JobResult failed;
   WithBuild(&failed, 1, "x.cc:1:1: error: nope\n")
       ->set_stderr("ERROR: build failed\n");
-  EXPECT_EQ(OutcomeFor(MatchOrder(), failed).build_output,
+  EXPECT_EQ(OutcomeFor(MatchOrder(), failed).result.build_output(),
             "x.cc:1:1: error: nope\nERROR: build failed\n");
 
   sx::JobResult cancelled;
   cancelled.mutable_status()->set_code(sx::Status::CANCELLED);
   WithBuild(&cancelled, 1, "compiling...\n");
-  EXPECT_EQ(OutcomeFor(MatchOrder(), cancelled).build_output, "compiling...\n");
+  EXPECT_EQ(OutcomeFor(MatchOrder(), cancelled).result.build_output(),
+            "compiling...\n");
 }
 
 TEST(OutcomeForTest, TheRawOutputKeepsItsTail) {
   sx::JobResult result;
   WithBuild(&result, 0, std::string(70 << 10, 'x') + "the end\n");
-  const std::string output = OutcomeFor(MatchOrder(), result).build_output;
+  const std::string output =
+      OutcomeFor(MatchOrder(), result).result.build_output();
   EXPECT_LT(output.size(), (64 << 10) + 100u);
   EXPECT_TRUE(output.ends_with("the end\n"));
 }
@@ -177,9 +181,9 @@ TEST(OutcomeForTest, AJobTheEngineCouldNotRunIsAnErrorNotAResult) {
   result.mutable_status()->set_message("cannot mount the workspace overlay");
 
   const OrderOutcome outcome = OutcomeFor(MatchOrder(), result);
-  EXPECT_FALSE(outcome.build_ok);
-  EXPECT_EQ(outcome.error, "cannot mount the workspace overlay");
-  EXPECT_EQ(outcome.games_played, 0);
+  EXPECT_FALSE(outcome.result.build_ok());
+  EXPECT_EQ(outcome.result.error(), "cannot mount the workspace overlay");
+  EXPECT_EQ(outcome.result.games_played(), 0);
 }
 
 TEST(OutcomeForTest, ACancelledJobSaysSoRatherThanLookingLikeAFailure) {
@@ -187,7 +191,7 @@ TEST(OutcomeForTest, ACancelledJobSaysSoRatherThanLookingLikeAFailure) {
   result.mutable_status()->set_code(sx::Status::CANCELLED);
   result.mutable_status()->set_message("cancelled");
 
-  EXPECT_EQ(OutcomeFor(MatchOrder(), result).error, "cancelled");
+  EXPECT_EQ(OutcomeFor(MatchOrder(), result).result.error(), "cancelled");
 }
 
 TEST(OutcomeForTest, ARefereeThatSaidNothingIsAnErrorWithItsOutput) {
@@ -200,9 +204,10 @@ TEST(OutcomeForTest, ARefereeThatSaidNothingIsAnErrorWithItsOutput) {
   referee->set_stderr("could not bind\n");
 
   const OrderOutcome outcome = OutcomeFor(MatchOrder(), result);
-  EXPECT_NE(outcome.error.find("referee produced no result"), std::string::npos)
-      << outcome.error;
-  EXPECT_NE(outcome.error.find("could not bind"), std::string::npos);
+  EXPECT_NE(outcome.result.error().find("referee produced no result"),
+            std::string::npos)
+      << outcome.result.error();
+  EXPECT_NE(outcome.result.error().find("could not bind"), std::string::npos);
 }
 
 TEST(OutcomeForTest, ABotThatTimedOutNamesTheTimeout) {
@@ -217,7 +222,8 @@ TEST(OutcomeForTest, ABotThatTimedOutNamesTheTimeout) {
 
   // The two backends disagreed here: one named the timeout, the other
   // reported a missing referee result, which describes a symptom.
-  EXPECT_EQ(OutcomeFor(MatchOrder(), result).error, "games timed out after 2s");
+  EXPECT_EQ(OutcomeFor(MatchOrder(), result).result.error(),
+            "games timed out after 2s");
 }
 
 TEST(OutcomeForTest, AShortMatchIsRecordedNotDiscarded) {
@@ -231,10 +237,11 @@ TEST(OutcomeForTest, AShortMatchIsRecordedNotDiscarded) {
   // The games that were played are real results: an agent is better served by
   // a short match plus the reason than by nothing.
   const OrderOutcome outcome = OutcomeFor(MatchOrder(4), result);
-  EXPECT_EQ(outcome.games_played, 1);
-  EXPECT_EQ(outcome.wins, 1);
-  EXPECT_NE(outcome.error.find("match was short: 1 of 4"), std::string::npos)
-      << outcome.error;
+  EXPECT_EQ(outcome.result.games_played(), 1);
+  EXPECT_EQ(outcome.result.wins(), 1);
+  EXPECT_NE(outcome.result.error().find("match was short: 1 of 4"),
+            std::string::npos)
+      << outcome.result.error();
 }
 
 TEST(OutcomeForTest, AGradedOrderAggregatesEveryRunsReport) {
@@ -249,11 +256,11 @@ TEST(OutcomeForTest, AGradedOrderAggregatesEveryRunsReport) {
   }
 
   const OrderOutcome outcome = OutcomeFor(GradedOrder(), result);
-  EXPECT_EQ(outcome.error, "");
-  ASSERT_TRUE(outcome.metrics.contains("wall_ms"));
-  EXPECT_DOUBLE_EQ(outcome.metrics.at("wall_ms"), 100.0);
+  EXPECT_EQ(outcome.result.error(), "");
+  ASSERT_TRUE(outcome.result.metrics().contains("wall_ms"));
+  EXPECT_DOUBLE_EQ(outcome.result.metrics().at("wall_ms"), 100.0);
   // Runs, for a graded order: the same field a match fills with games.
-  EXPECT_EQ(outcome.games_played, 3);
+  EXPECT_EQ(outcome.result.games_played(), 3);
 }
 
 TEST(OutcomeForTest, ANonzeroExitIsNeverScoredWhateverItPrinted) {
@@ -268,8 +275,9 @@ TEST(OutcomeForTest, ANonzeroExitIsNeverScoredWhateverItPrinted) {
   // A number from a failed run looks like a result, which is worse than no
   // number at all.
   const OrderOutcome outcome = OutcomeFor(GradedOrder(), result);
-  EXPECT_TRUE(outcome.metrics.empty());
-  EXPECT_NE(outcome.error.find("exited 3"), std::string::npos) << outcome.error;
+  EXPECT_TRUE(outcome.result.metrics().empty());
+  EXPECT_NE(outcome.result.error().find("exited 3"), std::string::npos)
+      << outcome.result.error();
 }
 
 TEST(OutcomeForTest, MetricsTheProblemDoesNotRankOnAreDropped) {
@@ -282,8 +290,8 @@ TEST(OutcomeForTest, MetricsTheProblemDoesNotRankOnAreDropped) {
       "{\"metrics\": {\"wall_ms\": 12, \"peak_rss_mb\": 40}}";
 
   const OrderOutcome outcome = OutcomeFor(GradedOrder(), result);
-  EXPECT_TRUE(outcome.metrics.contains("wall_ms"));
-  EXPECT_FALSE(outcome.metrics.contains("peak_rss_mb"));
+  EXPECT_TRUE(outcome.result.metrics().contains("wall_ms"));
+  EXPECT_FALSE(outcome.result.metrics().contains("peak_rss_mb"));
 }
 
 TEST(OutcomeForTest, SaysSoWhenNoneOfTheProblemsMetricsWereReported) {
@@ -296,7 +304,8 @@ TEST(OutcomeForTest, SaysSoWhenNoneOfTheProblemsMetricsWereReported) {
       "{\"metrics\": {\"something_else\": 1}}";
 
   EXPECT_NE(OutcomeFor(GradedOrder(), result)
-                .error.find("none of this problem's metrics"),
+                .result.error()
+                .find("none of this problem's metrics"),
             std::string::npos);
 }
 
@@ -309,8 +318,8 @@ TEST(OutcomeForTest, AResultLineIsAcceptedInsteadOfAReport) {
 
   // So a benchmark that only knows how to print a line is not shut out.
   const OrderOutcome outcome = OutcomeFor(GradedOrder(), result);
-  ASSERT_TRUE(outcome.metrics.contains("wall_ms"));
-  EXPECT_DOUBLE_EQ(outcome.metrics.at("wall_ms"), 37.5);
+  ASSERT_TRUE(outcome.result.metrics().contains("wall_ms"));
+  EXPECT_DOUBLE_EQ(outcome.result.metrics().at("wall_ms"), 37.5);
 }
 
 }  // namespace
