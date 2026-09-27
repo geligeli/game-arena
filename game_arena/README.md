@@ -109,11 +109,12 @@ calls a strategy, and serializes the action back — the mirror image of the
 `GameSession` adapter on the referee side.
 
 That wrapper belongs with the problem, not here, for the same reason the
-registry does: it is written against the problem's types. The
-[game-mcts](https://github.com/geligeli/game-mcts) repo's
-`game_mcts/arena/client/remote_client.h` is a worked example — it joins any
-`mcts::tournament::TournamentPolicy<G>` to a broker and owns the whole
-`Play`-stream protocol, including drain-before-`Finish`.
+registry does: it is written against the problem's types. The `Play`-stream
+protocol itself, including drain-before-`Finish`, is
+`game_arena/client:play_loop`'s: a harness only turns state bytes into action
+bytes. The [game-mcts](https://github.com/geligeli/game-mcts) repo's
+`bots/bot.cc` is a worked example, lifting any
+`mcts::tournament::TournamentPolicy<G>` onto it.
 
 ## Writing a candidate
 
@@ -150,7 +151,8 @@ prebuilt library.
 A problem that leaves `harness` unset accepts only hand-written patches, which
 bring their own BUILD. `game_arena/problems/nim.textproto` is that form; the
 [game-mcts](https://github.com/geligeli/game-mcts) repo's
-`game_mcts/arena/candidate_api` is a worked example of the structured one.
+`bots/` (`bot_api.h`, `bot.cc`, `bots/reference/`) is a worked example of the
+structured one.
 
 Whatever the harness is, the referee leaves a `MatchReport` that the sandbox
 worker collects and counts (`referee/match_tally.h`); the coordinator rates
@@ -201,6 +203,6 @@ to the serialized state; override it when that is not readable as it is
 
 If your games already exist in some framework, write the adapter once as a
 template over that framework's game concept and register instances of it;
-`game_mcts/arena/game_session_impl.h` in the
+`problem/session.h` in the
 [game-mcts](https://github.com/geligeli/game-mcts) repo does this for
 `mcts::SerializableGame`.

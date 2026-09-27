@@ -180,6 +180,6 @@ arena_cli spar builtin:greedy      # or played here, against a builtin
 ## Relationship to game-mcts
 
 The arena grew inside [game-mcts](https://github.com/geligeli/game-mcts) and was
-extracted from it with history. game-mcts is now a consumer: it supplies its own
-registry for Risk and TicTacToe under `game_mcts/arena/`. Nothing here depends
-on it.
+extracted from it with history. game-mcts is now a problem repo in the
+`examples/connect4` layout, hosting Risk as `risk2`: its registry is
+`problem/registry.cc` and its harness `bots/`. Nothing here depends on it.
