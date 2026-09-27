@@ -73,6 +73,7 @@ bazel run @game_arena//game_arena/tools:arena_tournament -- \
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "absl/flags/flag.h"
@@ -206,6 +207,13 @@ auto Resolve(const std::string &path) -> std::filesystem::path {
   return p.is_absolute() ? p : WorkspaceRoot() / p;
 }
 
+// |flag| resolved, or |fallback| when it is empty.
+std::filesystem::path PathFlag(const absl::Flag<std::string> &flag,
+                               const std::filesystem::path &fallback) {
+  const std::string value = absl::GetFlag(flag);
+  return value.empty() ? fallback : Resolve(value);
+}
+
 std::filesystem::path StateDir(std::string_view problem_id) {
   const std::filesystem::path base =
       EnvOr("ARENA_STATE_DIR", EnvOr("HOME", "/tmp") + "/.arena");
@@ -234,17 +242,7 @@ bool WriteFile(const std::filesystem::path &path, std::string_view text) {
 int RunInherit(const std::string &executable,
                const std::vector<std::string> &arguments,
                const std::filesystem::path &cwd) {
-  auto child = process::Child::Start(executable, arguments, {.cwd = cwd});
-  if (!child) {
-    return -1;
-  }
-  while (!child->Poll()) {
-    if (g_stop_requested) {
-      return child->Stop(std::chrono::seconds(5));
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
-  return *child->Poll();
+  return process::RunCommand(executable, arguments, {.cwd = cwd}).exit_code;
 }
 
 // Runs a command and returns its stdout, or nullopt on failure to start or a
@@ -546,7 +544,6 @@ bool DeliverImage(const ImageTools &tools, const std::filesystem::path &stage,
 
   if (absl::GetFlag(FLAGS_push)) {
     std::printf("Pushing %s...\n", image.c_str());
-    std::fflush(stdout);
     if (RunInherit(regctl, {"image", "copy", layered, image}, stage) != 0) {
       LOG(ERROR) << "cannot push " << image
                  << "; regctl reads the registry logins docker keeps "
@@ -626,9 +623,7 @@ int RunUp(const ArenaRunfiles &runfiles) {
   }
 
   const std::filesystem::path data_dir =
-      absl::GetFlag(FLAGS_data_dir).empty()
-          ? StateDir(config->problem_id())
-          : Resolve(absl::GetFlag(FLAGS_data_dir));
+      PathFlag(FLAGS_data_dir, StateDir(config->problem_id()));
   std::error_code ec;
   std::filesystem::create_directories(data_dir, ec);
   if (ec) {
@@ -653,9 +648,8 @@ int RunUp(const ArenaRunfiles &runfiles) {
   // `kit --mint` adds a client to it. A coordinator with no registry
   // takes any token from anyone on the port, which is never what a deployed
   // one should do, and on a dev host costs one `kit --mint` to avoid.
-  std::filesystem::path clients = absl::GetFlag(FLAGS_clients).empty()
-                                      ? data_dir / "clients.textproto"
-                                      : Resolve(absl::GetFlag(FLAGS_clients));
+  const std::filesystem::path clients =
+      PathFlag(FLAGS_clients, data_dir / "clients.textproto");
   if (!std::filesystem::exists(clients) &&
       !WriteFile(clients,
                  "# Client registry: one `client { ... }` per participant.\n"
@@ -715,7 +709,6 @@ int RunUp(const ArenaRunfiles &runfiles) {
                                      : config->display_name().c_str(),
       http_port, grpc_port, clients.c_str(), data_dir.c_str(),
       config->sandbox().image().c_str(), grpc_port, grpc_port);
-  std::fflush(stdout);
 
   int status = 0;
   while (!g_stop_requested) {
@@ -941,14 +934,12 @@ std::string KitMcpJson(const std::filesystem::path &kit,
                        const std::string &server, const std::string &token,
                        const std::string &client_id) {
   boost::json::object env{{"ARENA_KIT", kit.string()}};
-  if (!server.empty()) {
-    env["ARENA_SERVER"] = server;
-  }
-  if (!token.empty()) {
-    env["ARENA_TOKEN"] = token;
-  }
-  if (!client_id.empty()) {
-    env["ARENA_NAME"] = client_id;
+  for (const auto &[key, value] :
+       {std::pair{"ARENA_SERVER", server}, std::pair{"ARENA_TOKEN", token},
+        std::pair{"ARENA_NAME", client_id}}) {
+    if (!value.empty()) {
+      env[key] = value;
+    }
   }
   const boost::json::object arena{
       {"command", (kit / ".arena" / "bin" / "arena_cli").string()},
@@ -1154,17 +1145,13 @@ std::string KitConfigText(const proto::ProblemConfig &config,
     kit.set_game(match.game());
     // What sandbox/worker/order_job.cc gives the fleet's referee, so a game
     // played in a kit is bounded like a rated one.
-    if (match.turn_timeout_ms() > 0) {
-      kit.add_referee_flags(
-          absl::StrCat("--turn_timeout_ms=", match.turn_timeout_ms()));
-    }
-    if (match.game_time_budget_ms() > 0) {
-      kit.add_referee_flags(
-          absl::StrCat("--game_time_budget_ms=", match.game_time_budget_ms()));
-    }
-    if (match.max_moves_per_game() > 0) {
-      kit.add_referee_flags(
-          absl::StrCat("--max_moves_per_game=", match.max_moves_per_game()));
+    for (const auto &[flag, value] :
+         {std::pair{"--turn_timeout_ms=", match.turn_timeout_ms()},
+          std::pair{"--game_time_budget_ms=", match.game_time_budget_ms()},
+          std::pair{"--max_moves_per_game=", match.max_moves_per_game()}}) {
+      if (value > 0) {
+        kit.add_referee_flags(absl::StrCat(flag, value));
+      }
     }
     if (!match.registry_options().empty()) {
       kit.add_referee_flags(
@@ -1230,7 +1217,6 @@ int LayerKitImage(const ImageTools &tools, std::filesystem::path kit,
 
   std::printf("\nAdding to %s, as %s...\n", tools.base.filename().c_str(),
               image.c_str());
-  std::fflush(stdout);
   // uid 1000 is "ubuntu" in the arena's base, and the user the image runs
   // as: the vendored tree and the cache are theirs to write to.
   // vendor/bazel-external is a symlink into this host's output base; bazel
@@ -1349,10 +1335,9 @@ int RunKit(const ArenaRunfiles &runfiles) {
   const bool staged = layered && absl::GetFlag(FLAGS_out).empty();
   const std::filesystem::path out =
       staged ? StateDir(config->problem_id()) / "images" / "kit"
-      : absl::GetFlag(FLAGS_out).empty()
-          ? StateDir(config->problem_id()) / "kits" /
-                (client_id.empty() ? "participant" : client_id)
-          : Resolve(absl::GetFlag(FLAGS_out));
+             : PathFlag(FLAGS_out,
+                        StateDir(config->problem_id()) / "kits" /
+                            (client_id.empty() ? "participant" : client_id));
   std::error_code ec;
   if (staged) {
     for (const auto &entry : std::filesystem::directory_iterator(out, ec)) {
@@ -1380,10 +1365,8 @@ int RunKit(const ArenaRunfiles &runfiles) {
       LOG(ERROR) << "--mint and --token are exclusive";
       return 1;
     }
-    const std::filesystem::path clients =
-        absl::GetFlag(FLAGS_clients).empty()
-            ? StateDir(config->problem_id()) / "clients.textproto"
-            : Resolve(absl::GetFlag(FLAGS_clients));
+    const std::filesystem::path clients = PathFlag(
+        FLAGS_clients, StateDir(config->problem_id()) / "clients.textproto");
     std::filesystem::create_directories(clients.parent_path(), ec);
     token = tournament_arena::MintToken();
     std::string error;
@@ -1473,14 +1456,12 @@ int RunKit(const ArenaRunfiles &runfiles) {
       "ARENA_KIT=\"$(cd \"$(dirname \"${BASH_SOURCE[0]:-$0}\")\" && pwd)\"\n"
       "export ARENA_KIT\n"
       "export PATH=\"$ARENA_KIT/.arena/bin:$PATH\"\n");
-  if (!server.empty()) {
-    absl::StrAppend(&env, "export ARENA_SERVER=", server, "\n");
-  }
-  if (!token.empty()) {
-    absl::StrAppend(&env, "export ARENA_TOKEN=", token, "\n");
-  }
-  if (!client_id.empty()) {
-    absl::StrAppend(&env, "export ARENA_NAME=", client_id, "\n");
+  for (const auto &[key, value] :
+       {std::pair{"ARENA_SERVER", server}, std::pair{"ARENA_TOKEN", token},
+        std::pair{"ARENA_NAME", client_id}}) {
+    if (!value.empty()) {
+      absl::StrAppend(&env, "export ", key, "=", value, "\n");
+    }
   }
   WriteFile(out / "arena.env", env);
   WriteFile(out / "arena.textproto", KitConfigText(*config, server, client_id));
@@ -1584,7 +1565,6 @@ int RunKit(const ArenaRunfiles &runfiles) {
     if (vendored) {
       std::printf("\nVendoring the kit's dependencies into %s...\n",
                   vendor.c_str());
-      std::fflush(stdout);
       if (bazel({"vendor", "//..."}) != 0) {
         LOG(ERROR) << "cannot vendor the kit's dependencies";
         return 1;
@@ -1594,7 +1574,6 @@ int RunKit(const ArenaRunfiles &runfiles) {
         "\nBuilding the kit once, into %s (the first time takes a while; "
         "--prime_cache=false skips it)...\n",
         cache.c_str());
-    std::fflush(stdout);
     const int code = bazel({"build", "//..."});
     if (layered) {
       // One server per kit otherwise, each holding this build in memory.
@@ -1743,7 +1722,6 @@ int RunSandbox(const ArenaRunfiles &runfiles) {
 
   std::printf("\nVendoring what %s builds into %s...\n",
               absl::StrJoin(targets, " ").c_str(), vendor.c_str());
-  std::fflush(stdout);
   if (bazel("vendor", {}) != 0) {
     LOG(ERROR) << "cannot vendor the sandbox's dependencies";
     return 1;
@@ -1752,7 +1730,6 @@ int RunSandbox(const ArenaRunfiles &runfiles) {
     std::printf(
         "\nBuilding it once, into a fresh cache (--prime_cache=false "
         "skips it)...\n");
-    std::fflush(stdout);
     // Clean first: an output already up to date is never put in a cache.
     // The remote cache a --prime_bazelrc names has to land in this one.
     if (Bazel(startup, {"clean"}, workspace) != 0 ||
@@ -1806,7 +1783,6 @@ int RunSandbox(const ArenaRunfiles &runfiles) {
   }
   std::printf("\nAdding to %s, as %s...\n", tools->base.filename().c_str(),
               image.c_str());
-  std::fflush(stdout);
   if (!DeliverImage(*tools, scratch, layers, image,
                     stage.parent_path() / "sandbox.image.tar")) {
     return 1;
@@ -1822,16 +1798,12 @@ int RunSandbox(const ArenaRunfiles &runfiles) {
 // play
 // ---------------------------------------------------------------------------
 
-// The value of KEY=... in a shell-style env file (`export KEY=value` lines).
-std::string EnvFileValue(const std::filesystem::path &file,
-                         std::string_view key) {
-  const auto text = ReadFile(file);
-  if (!text) {
-    return "";
-  }
-  for (std::string_view line : absl::StrSplit(*text, '\n')) {
+// The token |kit|'s arena.env exports, or "".
+std::string KitToken(const std::filesystem::path &kit) {
+  for (std::string_view line :
+       absl::StrSplit(ReadFile(kit / "arena.env").value_or(""), '\n')) {
     line = absl::StripPrefix(line, "export ");
-    if (absl::ConsumePrefix(&line, key) && absl::ConsumePrefix(&line, "=")) {
+    if (absl::ConsumePrefix(&line, "ARENA_TOKEN=")) {
       return std::string(absl::StripAsciiWhitespace(line));
     }
   }
@@ -1867,25 +1839,20 @@ int RunPlay(const ArenaRunfiles &runfiles) {
     return 1;
   }
   const std::filesystem::path data_dir =
-      absl::GetFlag(FLAGS_data_dir).empty()
-          ? StateDir(config->problem_id())
-          : Resolve(absl::GetFlag(FLAGS_data_dir));
+      PathFlag(FLAGS_data_dir, StateDir(config->problem_id()));
   const std::filesystem::path clients =
-      absl::GetFlag(FLAGS_clients).empty()
-          ? data_dir / "clients.textproto"
-          : Resolve(absl::GetFlag(FLAGS_clients));
+      PathFlag(FLAGS_clients, data_dir / "clients.textproto");
   const std::string client_id = absl::GetFlag(FLAGS_mint).empty()
                                     ? EnvOr("USER", "player")
                                     : absl::GetFlag(FLAGS_mint);
-  const std::filesystem::path kit_dir = absl::GetFlag(FLAGS_out).empty()
-                                            ? data_dir / "kits" / client_id
-                                            : Resolve(absl::GetFlag(FLAGS_out));
+  const std::filesystem::path kit_dir =
+      PathFlag(FLAGS_out, data_dir / "kits" / client_id);
   const int grpc_port = absl::GetFlag(FLAGS_grpc_port);
   const int http_port = absl::GetFlag(FLAGS_http_port);
 
   // Your token, if a kit of yours is here already: minting again would be
   // refused (one client id, one entry) and would orphan the old one anyway.
-  std::string token = EnvFileValue(kit_dir / "arena.env", "ARENA_TOKEN");
+  std::string token = KitToken(kit_dir);
   if (token.empty()) {
     const auto registry = ReadFile(clients);
     if (registry && registry->find(absl::StrCat("client_id: \"", client_id,
@@ -1923,7 +1890,6 @@ int RunPlay(const ArenaRunfiles &runfiles) {
     return 1;
   }
   std::printf("Starting the tournament (log: %s).\n", log.c_str());
-  std::fflush(stdout);
   while (!std::filesystem::exists(pid_file)) {
     if (const auto code = up->Poll()) {
       LOG(ERROR) << "the tournament did not start (exit " << *code << "):\n"
@@ -1989,7 +1955,7 @@ int RunPlay(const ArenaRunfiles &runfiles) {
     return 1;
   }
   if (token.empty()) {
-    token = EnvFileValue(kit_dir / "arena.env", "ARENA_TOKEN");
+    token = KitToken(kit_dir);
   }
 
   struct sigaction action{};
@@ -2009,7 +1975,6 @@ int RunPlay(const ArenaRunfiles &runfiles) {
       "  tournament log: %s\n"
       "Leaving this shell stops the tournament.\n\n",
       client_id.c_str(), kit_dir.c_str(), http_port, log.c_str());
-  std::fflush(stdout);
 
   const std::string shell = absl::GetFlag(FLAGS_shell).empty()
                                 ? EnvOr("SHELL", "bash")
@@ -2058,7 +2023,6 @@ int RunPlay(const ArenaRunfiles &runfiles) {
     ::tcsetpgrp(STDIN_FILENO, ::getpgrp());
   }
   std::printf("Stopping the tournament...\n");
-  std::fflush(stdout);
   // The worker first: an order in flight is cancelled rather than orphaned.
   worker->Stop(std::chrono::seconds(10));
   const int status = up->Stop(std::chrono::seconds(20));
@@ -2080,6 +2044,8 @@ void PrintUsage() {
 }  // namespace
 
 int main(int argc, char **argv) {
+  // Line by line, so what this prints lands before what its children do.
+  std::setvbuf(stdout, nullptr, _IOLBF, 0);
   const std::vector<char *> positional = absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
