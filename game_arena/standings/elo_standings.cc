@@ -79,13 +79,9 @@ std::vector<Standing> EloStandings::Rank(int limit) const {
     }
     rows.push_back(Get(candidate.candidate_id()));
   }
-  std::sort(rows.begin(), rows.end(), [](const Standing &a, const Standing &b) {
-    if (a.score != b.score) {
-      return a.score > b.score;
-    }
-    // A stable tiebreak, so two equally rated rows do not swap
-    // places between requests.
-    return a.candidate_id < b.candidate_id;
+  // Ties go by id, so equal rows do not swap places between requests.
+  std::ranges::sort(rows, {}, [](const Standing &row) {
+    return std::pair<double, const std::string &>(-row.score, row.candidate_id);
   });
   if (limit > 0 && rows.size() > static_cast<std::size_t>(limit)) {
     rows.resize(limit);

@@ -141,14 +141,10 @@ std::vector<Standing> MetricStandings::Rank(int limit) const {
     return !row.metrics.contains(metric_name_);
   });
 
-  const bool lower_is_better = lower_is_better_;
-  std::sort(rows.begin(), rows.end(),
-            [&](const Standing &a, const Standing &b) {
-              if (a.score != b.score) {
-                return lower_is_better ? a.score < b.score : a.score > b.score;
-              }
-              return a.candidate_id < b.candidate_id;
-            });
+  std::ranges::sort(rows, {}, [&](const Standing &row) {
+    return std::pair<double, const std::string &>(
+        lower_is_better_ ? row.score : -row.score, row.candidate_id);
+  });
   if (limit > 0 && rows.size() > static_cast<std::size_t>(limit)) {
     rows.resize(limit);
   }

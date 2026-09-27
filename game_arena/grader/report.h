@@ -22,15 +22,8 @@
 
 namespace grader {
 
-// Writes the report to |path|. Returns false (with *error set) if it cannot be
-// written -- the caller should exit non-zero, because a graded run that reports
-// nothing is not a zero score, it is a failed run.
-bool WriteReport(const std::string &path,
-                 const std::map<std::string, double> &metrics,
-                 std::string *error);
-
-// The same, to the path in $ARENA_REPORT. Returns false if the variable is
-// unset, which means the command is not running under the arena.
+// Writes the report to $ARENA_REPORT. False, with *error set, when that is
+// unset or unwritable. Exit non-zero then: a run that reports nothing failed.
 bool WriteReportToArenaPath(const std::map<std::string, double> &metrics,
                             std::string *error);
 

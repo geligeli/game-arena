@@ -39,7 +39,6 @@ class Child {
                                     const Options& options);
 
   Child(Child&& other) noexcept;
-  Child& operator=(Child&& other) noexcept;
   ~Child();
   Child(const Child&) = delete;
   Child& operator=(const Child&) = delete;
