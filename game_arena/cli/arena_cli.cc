@@ -36,6 +36,7 @@ ARENA_RESTORE=1 arena_cli init       # your directory, from your last submission
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -240,53 +241,16 @@ int RpcError(const grpc::Status &status, const std::string &server) {
   }
 }
 
-const char *StatusName(proto::Candidate::Status status) {
-  switch (status) {
-    case proto::Candidate::PENDING:
-      return "pending";
-    case proto::Candidate::BUILDING:
-      return "building";
-    case proto::Candidate::READY:
-      return "ready";
-    case proto::Candidate::BUILD_FAILED:
-      return "build-failed";
-    case proto::Candidate::DISABLED:
-      return "disabled";
-    default:
-      return "?";
+// As printed: BUILD_FAILED is "build-failed", and a value with no name "?".
+template <typename Enum>
+std::string NameOf(Enum value) {
+  const auto *named =
+      google::protobuf::GetEnumDescriptor<Enum>()->FindValueByNumber(value);
+  std::string name = named == nullptr ? "?" : std::string(named->name());
+  for (char &c : name) {
+    c = c == '_' ? '-' : static_cast<char>(std::tolower(c));
   }
-}
-
-const char *JobStateName(proto::Job::State state) {
-  switch (state) {
-    case proto::Job::QUEUED:
-      return "queued";
-    case proto::Job::RUNNING:
-      return "running";
-    case proto::Job::DONE:
-      return "done";
-    case proto::Job::FAILED:
-      return "failed";
-    case proto::Job::CANCELLED:
-      return "cancelled";
-    default:
-      return "?";
-  }
-}
-
-// How far a running job has got. Worth showing because a build can take half
-// an hour: "running" on its own does not tell you whether to keep waiting.
-const char *PhaseName(proto::OrderProgress::Phase phase) {
-  switch (phase) {
-    case proto::OrderProgress::PREPARING:
-      return "preparing";
-    case proto::OrderProgress::BUILDING:
-      return "building";
-    case proto::OrderProgress::RUNNING:
-      return "running";
-    default:
-      return "?";
-  }
+  return name;
 }
 
 bool IsTerminal(proto::Job::State state) {
@@ -323,7 +287,7 @@ void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
     std::printf("%3d/%3d/%3d %4dg ", standing.wins(), standing.draws(),
                 standing.losses(), played);
   }
-  std::printf("%-12s %-12s %s", StatusName(candidate.status()),
+  std::printf("%-12s %-12s %s", NameOf(candidate.status()).c_str(),
               candidate.author().empty() ? "-" : candidate.author().c_str(),
               candidate.display_name().c_str());
   if (!candidate.parent_id().empty()) {
@@ -335,10 +299,10 @@ void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
 void PrintJob(const proto::Job &job) {
   // The phase only means anything while the job is still going; once it is
   // done, the last phase it reached is noise.
-  const std::string state = job.state() == proto::Job::RUNNING
-                                ? std::string(JobStateName(job.state())) +
-                                      ", " + PhaseName(job.phase())
-                                : JobStateName(job.state());
+  std::string state = NameOf(job.state());
+  if (job.state() == proto::Job::RUNNING) {
+    state += ", " + NameOf(job.phase());
+  }
   std::printf("job %s [%s] candidate %s\n", job.job_id().c_str(), state.c_str(),
               job.candidate_id().c_str());
   std::printf("games %d/%d  W/D/L %d/%d/%d  score %.3f\n", job.games_played(),
@@ -791,7 +755,7 @@ int CmdSource(const Client &client, const std::string &server,
   std::printf("author %s  game %s  status %s\n",
               candidate.author().empty() ? "-" : candidate.author().c_str(),
               candidate.game().empty() ? "-" : candidate.game().c_str(),
-              StatusName(candidate.status()));
+              NameOf(candidate.status()).c_str());
   std::printf("parent %s\n", candidate.parent_id().empty()
                                  ? "-"
                                  : candidate.parent_id().c_str());
