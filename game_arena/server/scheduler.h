@@ -64,21 +64,21 @@ class Scheduler {
   // disk that the quota then rejects.
   class Reservation {
    public:
-    Reservation() = default;
-    ~Reservation();
-    Reservation(Reservation &&other) noexcept;
-    Reservation &operator=(Reservation &&other) noexcept;
-    Reservation(const Reservation &) = delete;
-    Reservation &operator=(const Reservation &) = delete;
-
-    const std::string &client_id() const { return client_id_; }
+    const std::string &client_id() const {
+      return held_.get_deleter().client_id;
+    }
     // Job ids aborted to make room, when the caller asked to replace.
     const std::vector<std::string> &superseded() const { return superseded_; }
 
    private:
     friend class Scheduler;
-    Scheduler *scheduler_ = nullptr;
-    std::string client_id_;
+    // Hands the slot back: the submission was rejected or failed to store.
+    struct Release {
+      std::string client_id;
+      void operator()(Scheduler *scheduler) const;
+    };
+    // Null when there is nothing to release: no registry, or consumed.
+    std::unique_ptr<Scheduler, Release> held_;
     std::vector<std::string> superseded_;
   };
 
@@ -159,7 +159,7 @@ class Scheduler {
                             int games, const std::string &client_id);
   // Aborts |job|, cancelling whatever it has in flight. Caller holds mutex_.
   void AbortJobLocked(Job *job, const std::string &reason);
-  // Drops a reservation that was never consumed. Called by ~Reservation.
+  // Drops a reservation that was never consumed.
   void ReleaseReservationLocked(const std::string &client_id);
   void DispatchLocked();
   void ConcludeJobLocked(Job *job);

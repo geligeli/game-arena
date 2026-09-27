@@ -36,32 +36,9 @@ JobRecord::Order *OrderIn(JobRecord *record, const std::string &order_id) {
 
 }  // namespace
 
-Scheduler::Reservation::~Reservation() {
-  if (scheduler_ == nullptr) {
-    return;
-  }
-  // Never consumed -- the submission was rejected or failed to store -- so the
-  // slot goes back rather than being held until restart.
-  std::lock_guard lock(scheduler_->mutex_);
-  scheduler_->ReleaseReservationLocked(client_id_);
-}
-
-Scheduler::Reservation::Reservation(Reservation &&other) noexcept
-    : scheduler_(other.scheduler_),
-      client_id_(std::move(other.client_id_)),
-      superseded_(std::move(other.superseded_)) {
-  other.scheduler_ = nullptr;
-}
-
-auto Scheduler::Reservation::operator=(Reservation &&other) noexcept
-    -> Reservation & {
-  if (this != &other) {
-    scheduler_ = other.scheduler_;
-    client_id_ = std::move(other.client_id_);
-    superseded_ = std::move(other.superseded_);
-    other.scheduler_ = nullptr;
-  }
-  return *this;
+void Scheduler::Reservation::Release::operator()(Scheduler *scheduler) const {
+  std::lock_guard lock(scheduler->mutex_);
+  scheduler->ReleaseReservationLocked(client_id);
 }
 
 Scheduler::Scheduler(SchedulerConfig config, CandidateStore *candidates,
@@ -110,7 +87,7 @@ auto Scheduler::TryReserve(const std::string &client_id,
                            const proto::ClientQuota &quota, bool cancel_running,
                            std::string *error) -> std::optional<Reservation> {
   Reservation reservation;
-  reservation.client_id_ = client_id;
+  reservation.held_.get_deleter().client_id = client_id;
   if (client_id.empty()) {
     // No registry configured: nobody to meter. The reservation is inert, and
     // its destructor has nothing to release.
@@ -169,7 +146,7 @@ auto Scheduler::TryReserve(const std::string &client_id,
   }
 
   ++reserved_[client_id];
-  reservation.scheduler_ = this;
+  reservation.held_.reset(this);
   return reservation;
 }
 
@@ -297,9 +274,8 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
   // Consumed: the slot it held becomes the job below, so the destructor must
   // not hand it back.
   const std::string client_id = reservation.client_id();
-  if (reservation.scheduler_ != nullptr) {
+  if (reservation.held_.release() != nullptr) {
     ReleaseReservationLocked(client_id);
-    reservation.scheduler_ = nullptr;
   }
   // A participant's older work is for code this submission replaces, and its
   // result would be taken for this one's.
