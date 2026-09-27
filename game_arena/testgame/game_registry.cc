@@ -1,9 +1,4 @@
 // The arena's own registry: one game, no framework.
-//
-// This is the reference for what a downstream repo has to supply in order to
-// turn the referee core into a working referee -- a definition of
-// GameRegistry(), and nothing else. The game-mcts repo has the same file for
-// its own games.
 
 #include "game_arena/referee/game_registry.h"
 
@@ -16,7 +11,7 @@ namespace tournament_broker {
 
 void SetRegistryOptions(
     const std::map<std::string, std::string> & /*options*/) {
-  // Nim has nothing to tune. Registries that do read their keys here.
+  // Nim has nothing to tune.
 }
 
 const std::map<std::string, GameDescriptor> &GameRegistry() {

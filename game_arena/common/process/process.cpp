@@ -118,8 +118,7 @@ std::optional<Child> Child::Start(const std::string& executable,
     ::execve(argv[0], argv.data(), envp.data());
     _exit(127);
   }
-  // Also set from the parent: whichever runs first wins, and neither side may
-  // assume the other has been scheduled yet.
+  // Also from the parent: neither side may assume the other has run yet.
   ::setpgid(pid, pid);
   return Child(pid);
 }

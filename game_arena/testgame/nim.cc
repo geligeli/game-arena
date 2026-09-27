@@ -37,8 +37,6 @@ std::string NimSession::SerializeState() const {
 }
 
 void NimSession::ApplyChanceAction(std::mt19937 & /*gen*/) {
-  // Unreachable: IsChanceNode() is always false. Loud rather than silent,
-  // because reaching it would mean the broker ignored IsChanceNode().
   CHECK(false) << "Nim has no chance nodes";
 }
 
@@ -90,8 +88,7 @@ std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec,
     if (!ParseState(state_bytes, &remaining, &player) || remaining <= 0) {
       return "1";  // let the referee reject it
     }
-    // Leave a multiple of (kMaxTake + 1) behind and the opponent is lost.
-    // From such a position there is no winning move, so play uniformly.
+    // Leaving a multiple of kMaxTake + 1 wins; from one, no move does.
     const int winning = remaining % (kMaxTake + 1);
     if (optimal && winning != 0) {
       return std::to_string(winning);

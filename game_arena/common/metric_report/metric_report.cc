@@ -17,8 +17,7 @@ namespace metric_report {
 
 namespace {
 
-// "RESULT a=1 b=2.5" -> {a: 1, b: 2.5}. The last RESULT line wins, so a
-// command that prints progress lines before its final one is fine.
+// "RESULT a=1 b=2.5" -> {a: 1, b: 2.5}; the last RESULT line wins.
 bool ParseResultLineMetrics(std::string_view text,
                             std::map<std::string, double> *metrics) {
   bool found = false;
@@ -59,8 +58,7 @@ bool Parse(std::string_view json, std::string_view stdout_text,
   metrics->clear();
   if (!json.empty()) {
     tournament_arena::proto::MetricReport report;
-    // Unknown fields are tolerated: a command that reports more than the schema
-    // knows about is being helpful, not wrong.
+    // A command reporting more than the schema knows is being helpful.
     google::protobuf::json::ParseOptions options;
     options.ignore_unknown_fields = true;
     if (google::protobuf::json::JsonStringToMessage(

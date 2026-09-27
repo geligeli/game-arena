@@ -1,13 +1,4 @@
-# The arena's own problem, on the arena's own game.
-#
-# It ships for two reasons: shipped_problems_test needs a config to prove the
-# parser still works, and a new problem needs a worked example that does not
-# assume a game framework. Everything here is arena-local -- no label in this
-# file points outside this repo.
-#
-#   bazel run //game_arena/server:problem_server -- \
-#       --problem_config=$PWD/game_arena/problems/nim.textproto \
-#       --data_dir=$PWD/tournament_data --clients=$PWD/clients.textproto
+# The arena's own problem, on its own game; no label here leaves this repo.
 
 problem_id: "nim"
 display_name: "Nim (21 stones)"
@@ -21,8 +12,7 @@ description:
 submission {
   max_patch_bytes: 262144
   max_files: 32
-  # Patch-only: the reference problem has no candidate harness to compile
-  # submissions against, which is exactly what an unset `harness` means.
+  # No harness: submissions are patch-only.
   allow_paths: "game_arena/candidates/**"
 }
 
@@ -32,12 +22,7 @@ build {
 }
 
 sandbox {
-  # A tag of this problem's own, and a local one: `bazel run //:sandbox_image`
-  # makes it on this host, and `play` does that for you the first time. To
-  # deploy, name it where the arena host can pull it from
-  # (registry.example.com/nim-sandbox:1) and commit that -- this name, not a
-  # flag, is what a worker asks its daemon for. Never a tag something else
-  # already owns: `sandbox_image` writes to whatever this names.
+  # What a worker asks its daemon for; a deployment names a tag it can pull.
   image: "nim-sandbox:1"
   memory_limit_mb: 2048
 }

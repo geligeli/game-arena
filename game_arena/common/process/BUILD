@@ -17,8 +17,7 @@ cc_test(
     ],
 )
 
-# Every file of this package, for the arena a sandbox builds against: a C++
-# grader runs the solution with it (see //:sandbox_surface).
+# A sandbox vendors this package whole (//:sandbox_surface).
 filegroup(
     name = "sandbox_surface_files",
     srcs = glob(["**"]),

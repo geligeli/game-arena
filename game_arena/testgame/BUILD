@@ -2,16 +2,9 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
-package(
-    default_visibility = ["//visibility:public"],
-)
+package(default_visibility = ["//visibility:public"])
 
-# The arena's own game, and the reference assembly of a referee.
-#
-# Nim is here so the broker core can be tested end to end with no game
-# framework in the build. It is also worked example: :game_registry is the
-# entire obligation a downstream repo takes on to host its own problems, and
-# the binaries below show the "registry + entry-point library" pattern.
+# Nim, the arena's own game, and the reference assembly of a referee.
 
 cc_library(
     name = "nim",
@@ -23,10 +16,7 @@ cc_library(
     ],
 )
 
-# The definition of GameRegistry() that //game_arena/referee
-# only declares. Linking this into a binary decides which games it can run.
-# alwayslink because nothing depends on it by label -- it exists to satisfy an
-# undefined symbol, and the linker would otherwise skip the archive member.
+# Defines GameRegistry(); alwayslink, as nothing depends on it by label.
 cc_library(
     name = "game_registry",
     srcs = ["game_registry.cc"],
@@ -37,8 +27,6 @@ cc_library(
     ],
 )
 
-# A referee that knows one game. Any downstream repo assembles its own the
-# same way.
 cc_binary(
     name = "match_referee",
     deps = [
