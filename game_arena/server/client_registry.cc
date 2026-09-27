@@ -230,14 +230,8 @@ std::optional<ClientIdentity> ClientRegistry::Resolve(
     identity.display_name = client.display_name().empty()
                                 ? client.client_id()
                                 : client.display_name();
-    identity.quota = client.quota();
-    if (identity.quota.max_active_evaluations() == 0) {
-      identity.quota.set_max_active_evaluations(
-          defaults_.max_active_evaluations());
-    }
-    if (identity.quota.max_queued_jobs() == 0) {
-      identity.quota.set_max_queued_jobs(defaults_.max_queued_jobs());
-    }
+    identity.quota = defaults_;
+    identity.quota.MergeFrom(client.quota());
     return identity;
   }
   return std::nullopt;

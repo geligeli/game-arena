@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/str_cat.h"
@@ -106,65 +107,31 @@ std::optional<proto::ProblemConfig> ParseProblemConfigText(
 void ApplyProblemDefaults(proto::ProblemConfig *config) {
   // Unset and "explicitly zero" are the same thing for a proto3 scalar, which
   // is exactly right here: every field defaulted below is a limit where zero
-  // would be nonsense anyway.
-  proto::SubmissionPolicy *submission = config->mutable_submission();
-  if (submission->max_patch_bytes() == 0) {
-    submission->set_max_patch_bytes(2ULL * 1024 * 1024);
-  }
-  if (submission->max_files() == 0) {
-    submission->set_max_files(64);
-  }
-  if (submission->max_hunks() == 0) {
-    submission->set_max_hunks(512);
-  }
-
-  if (config->build().timeout_s() == 0) {
-    config->mutable_build()->set_timeout_s(1800);
-  }
-
-  proto::SandboxSpec *sandbox = config->mutable_sandbox();
-  if (sandbox->memory_limit_mb() == 0) {
-    sandbox->set_memory_limit_mb(4096);
-  }
-  if (sandbox->pids_limit() == 0) {
-    sandbox->set_pids_limit(512);
-  }
-
+  // would be nonsense anyway. So the config is merged onto the defaults.
+  proto::ProblemConfig defaults;
+  google::protobuf::TextFormat::ParseFromString(
+      R"pb(
+        submission { max_patch_bytes: 2097152 max_files: 64 max_hunks: 512 }
+        build { timeout_s: 1800 }
+        sandbox { memory_limit_mb: 4096 pids_limit: 512 }
+        # No sentinel for "unlimited", deliberately: a quota that can be
+        # switched off is a quota nobody notices is off.
+        clients {
+          default_quota { max_active_evaluations: 1 max_queued_jobs: 8 }
+        }
+      )pb",
+      &defaults);
   if (config->has_grade()) {
-    proto::GradeSpec *grade = config->mutable_grade();
-    if (grade->repeats() == 0) {
-      grade->set_repeats(3);
-    }
-    if (grade->timeout_s() == 0) {
-      grade->set_timeout_s(1800);
-    }
+    google::protobuf::TextFormat::MergeFromString(
+        "grade { repeats: 3 timeout_s: 1800 }", &defaults);
+  } else if (config->has_match()) {
+    google::protobuf::TextFormat::MergeFromString(
+        "match { games_per_order: 10 turn_timeout_ms: 10000 "
+        "max_moves_per_game: 50000 timeout_s: 1800 }",
+        &defaults);
   }
-  if (config->has_match()) {
-    proto::MatchSpec *match = config->mutable_match();
-    if (match->games_per_order() == 0) {
-      match->set_games_per_order(10);
-    }
-    if (match->turn_timeout_ms() == 0) {
-      match->set_turn_timeout_ms(10000);
-    }
-    if (match->max_moves_per_game() == 0) {
-      match->set_max_moves_per_game(50000);
-    }
-    if (match->timeout_s() == 0) {
-      match->set_timeout_s(1800);
-    }
-  }
-
-  proto::ClientQuota *quota =
-      config->mutable_clients()->mutable_default_quota();
-  // No sentinel for "unlimited", deliberately: a quota that can be switched off
-  // is a quota nobody notices is off.
-  if (quota->max_active_evaluations() == 0) {
-    quota->set_max_active_evaluations(1);
-  }
-  if (quota->max_queued_jobs() == 0) {
-    quota->set_max_queued_jobs(8);
-  }
+  defaults.MergeFrom(*config);
+  *config = std::move(defaults);
 }
 
 bool ValidateProblemConfig(const proto::ProblemConfig &config,
