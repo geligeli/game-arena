@@ -1,7 +1,5 @@
 """A problem repository becomes a tournament with one macro call.
 
-    load("@game_arena//game_arena/rules:problem.bzl", "arena_problem")
-
     arena_problem(
         name = "connect4",
         config = "problem.textproto",
@@ -9,62 +7,24 @@
         kit_files = ["//game:kit", "//bots:kit"],  # what a participant gets
     )
 
-That call defines, in the calling package:
+defines, in the calling package:
 
-  :match_referee   the registry linked with the arena's referee (only with
-                   `registry`): one match, as a worker or `arena_cli spar` runs it
-  :config_test     `bazel test` -- the config parses and is consistent
-  :tournament      `bazel run //:tournament` -- the coordinator, and nothing
-                   else: it builds and runs nothing. A worker is a process of
-                   its own (`sandbox_worker --server=HOST:PORT`), on any host
-                   with docker and the sandbox image
-  :kit             `bazel run //:kit -- --out=DIR --server=HOST:PORT --mint=ID`
-                   -- a participant's workspace: kit_files, the arena's kit
-                   surface vendored as ./arena, arena_cli as a program and MCP
-                   server, a README and a token. Their own environment, with
-                   whatever access they give it; only what they submit runs
-                   sandboxed
-  :kit_image       `bazel build //:kit_image` -- the same kit as an image: the
-                   kit's tree at /kit, stacked on `kit_base` by rules_oci. A
-                   build output like any other, so making one needs no docker
-                   -- only, the first time, the registry the base is pulled
-                   from. It is anyone's: there is no token or address in it,
-                   and nothing is built in it yet. `docker run -e
-                   ARENA_SERVER=... -e ARENA_TOKEN=...` hands them over
-  :kit_image_load  `bazel run //:kit_image_load` -- that image, into the local
-                   docker daemon, tagged `<name>-kit:latest`
-  :kit_image_push  `bazel run //:kit_image_push -- --repository=REG/NAME` --
-                   that image, to a registry
-  :kit_image_issue `bazel run //:kit_image_issue -- --image=TAG [--push]` --
-                   what a build cannot add to that image, added outside one:
-                   the kit's dependencies vendored and its cache primed
-                   (bazel, run on the kit), as a layer on the built image. The
-                   token and the address go in at `docker run -e
-                   ARENA_TOKEN=... -e ARENA_SERVER=...`
-  :play            `bazel run //:play` -- the tournament in
-                   the background, a kit minted for you, and a shell in it with
-                   ARENA_SERVER and ARENA_TOKEN set. Leaving the shell stops
-                   everything. The dev loop
-  :sandbox_image   `bazel build //:sandbox_image` -- the problem's sandbox
-                   image: the arena's sandbox base, the arena's sources, and
-                   the problem's tree (the root package's files and `tree`) at
-                   /workspace. `:sandbox_image_load` and `:sandbox_image_push`
-                   deliver it as sandbox.image in the config names it. Nothing
-                   is vendored into it: a build in it fetches what the problem
-                   resolves, so it needs sandbox.allow_build_network
-  :sandbox_image_issue `bazel run //:sandbox_image_issue -- [--push]` -- what
-                   a build cannot add to that image, added outside one: the
-                   dependencies its builds resolve, vendored, and a disk cache
-                   of building them, which fills a worker's empty cache volume
-                   (`--prime_cache=false` for the dependencies alone). Its
-                   builds need no network. Delivered as sandbox.image names it;
-                   `play` issues it when the problem builds offline
-  :<name>          a filegroup of every binary a tournament needs, so
-                   `bazel build //:<name>` builds all of them
+  :match_referee        the registry linked with the arena's referee (with `registry`)
+  :config_test          the config parses and is consistent
+  :tournament           the coordinator; a worker is a process of its own
+  :kit                  `-- --out=DIR --server=HOST:PORT --mint=ID`: a participant's workspace
+  :kit_image            that kit on kit_base; no token, no address, nothing built
+  :kit_image_load       into the local daemon as <name>-kit:latest
+  :kit_image_push       `-- --repository=REG/NAME`
+  :kit_image_issue      `-- --image=TAG [--push]`: the kit image, vendored and primed
+  :play                 the tournament, a minted kit and a shell in it
+  :sandbox_image        the sandbox base, the arena's sources and this tree at /workspace
+  :sandbox_image_load   into the local daemon as sandbox.image names it
+  :sandbox_image_push   to where sandbox.image names
+  :sandbox_image_issue  `-- [--push]`: the sandbox image, vendored and primed
+  :<name>               every binary a tournament needs
 
-Every target is thin sugar over `@game_arena//game_arena/tools:arena_tournament`;
-the tool takes the same flags without the macro. Nothing here names a problem:
-the labels come from the caller.
+Each runnable target is arena_tournament with the same flags.
 """
 
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
@@ -74,8 +34,7 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(":kit_tree.bzl", "kit_tree")
 load(":sandbox_tree.bzl", "sandbox_tree")
 
-# Label() resolves against this file's repository, so a consumer loading this
-# macro gets @game_arena's targets whatever it called the module.
+# Label() resolves in @game_arena, whatever a consumer calls the module.
 _TOOL = Label("//game_arena/tools:arena_tournament")
 _RUN = Label("//game_arena/rules:run_tool.sh")
 _REFEREE_MAIN = Label("//game_arena/referee:referee_main")
@@ -111,25 +70,10 @@ def arena_problem(
     """Defines the tournament targets for one problem. See the module docstring.
 
     Args:
-      name: the problem's name; also the filegroup of every tournament binary.
-      config: the problem's .textproto (see @game_arena//game_arena/proto:problem.proto).
-      registry: label of the cc_library (alwayslink) defining GameRegistry(), for
-        a match problem. None for a graded problem.
-      kit_files: labels of the files a participant receives -- the API a
-        solution is written against, the harness, a reference solution, and the
-        BUILD files that build them. Nothing else leaves the repo. Filegroups
-        and globs work; every file must be a source file of this repository.
-      tree: labels of the problem's files outside the root package, which a
-        glob here cannot reach: one `filegroup(srcs = glob(["**"]))` per
-        package. With the root package's own files they are the tree a
-        submission is built on, in the sandbox image.
-      kit_base: label of the OCI image layout a kit image is layered onto.
-        Default: the arena's, which is bazel, git and python3 and nothing of a
-        problem. A problem whose participants need more builds its own
-        `oci_image` with `base = "@game_arena//game_arena/image:kit_base"`
-        and names it here; it has to keep that base's user (uid 1000), who
-        owns /kit.
-      visibility: applied to every generated target.
+      registry: the alwayslink cc_library defining GameRegistry(); None for a graded problem.
+      kit_files: every file a participant receives, all source files of this repository.
+      tree: one `filegroup(srcs = glob(["**"]))` per package outside the root one.
+      kit_base: in place of the arena's kit_base; build it on that one and keep its uid 1000.
     """
     if registry:
         cc_binary(
@@ -139,18 +83,15 @@ def arena_problem(
         )
 
     _tool(sh_test, "config_test", "check", config, visibility = visibility)
-    # The kit's file list travels in the environment rather than in args, so a
-    # participant's own `-- --out=...` arguments are not mixed in with it.
+
+    # In the environment, not args, so a participant's own `-- --out=...` is not mixed in.
     kit_env = {
         "ARENA_KIT_FILES": " ".join(["$(rootpaths %s)" % f for f in kit_files]),
         "ARENA_KIT_REGISTRY": registry or "",
     }
     _tool(sh_binary, "tournament", "up", config, visibility = visibility)
 
-    # The sandbox image, built: the problem's tree where a job's volume is
-    # mounted, and the arena's sources where the image's bazelrc overrides
-    # game_arena to -- a path on this host means nothing in a sandbox. manual,
-    # like every target that carries a base: `//...` must not need a registry.
+    # manual, like every target that carries a base: `//...` must not need a registry.
     sandbox_tree(
         name = "sandbox_tree",
         srcs = native.glob(["**"], exclude = [".arena/**", ".bazelrc.local", "bazel-*/**"]) + tree,
@@ -173,9 +114,7 @@ def arena_problem(
         visibility = visibility,
     )
 
-    # Delivered under the name the config gives it, which is the one a worker
-    # asks its daemon for. A name with no registry in it is a local tag, and
-    # pushing one would go to Docker Hub.
+    # A name with no registry is a local tag, and pushing one would go to Docker Hub.
     image_ref = "ref=$$(sed -n '/^sandbox {/,/^}/s/^ *image: \"\\(.*\\)\"/\\1/p' $<); "
     native.genrule(
         name = "sandbox_image_tags",
@@ -215,13 +154,8 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
     )
 
     _tool(sh_binary, "kit", "kit", config, kit_files, env = kit_env, visibility = visibility)
-    # The kit as an image, built. manual, all of it: these are the targets
-    # that need a registry -- the base is pulled the first time -- and `//...`
-    # must not. That covers `bazel test //...` here, and the `bazel vendor
-    # //...` a kit image is primed with, which would otherwise carry the
-    # base's layers into every kit.
-    # MODULE.bazel and what goes with it: what the tool reads from the
-    # workspace root, which in an action is only what was declared.
+
+    # What the tool reads from the workspace root, which in an action is only what was declared.
     workspace_files = native.glob(
         ["MODULE.bazel", "MODULE.bazel.lock", ".bazelversion", ".bazelrc"],
         allow_empty = True,
@@ -236,6 +170,7 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         tags = ["manual"],
         visibility = visibility,
     )
+
     # The entrypoint here, not on the base: a problem may replace the base.
     oci_image(
         name = "kit_image",
@@ -262,7 +197,6 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         visibility = visibility,
     )
 
-    # What a build cannot add to :kit_image, added to it outside one.
     _tool(
         sh_binary,
         "kit_image_issue",
@@ -276,8 +210,6 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         tags = ["manual"],
         visibility = visibility,
     )
-    # What a build cannot add to :sandbox_image, added to it outside one:
-    # primed in a copy of the image's own tree and arena, its two layers.
     _tool(
         sh_binary,
         "sandbox_image_issue",
@@ -298,8 +230,7 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         "play",
         config,
         kit_files,
-        # `play` makes its worker's sandbox image by running the target that
-        # does, rather than carrying that target's base itself.
+        # Run, not carried: carrying the base would put it in `//...`.
         env = kit_env | {
             "ARENA_SANDBOX_LOAD_TARGET": "//%s:sandbox_image_load" % native.package_name(),
             "ARENA_SANDBOX_ISSUE_TARGET": "//%s:sandbox_image_issue" % native.package_name(),

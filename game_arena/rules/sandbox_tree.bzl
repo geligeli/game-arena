@@ -1,12 +1,4 @@
-"""Source files as a tar: the layers a sandbox image is a base plus.
-
-    bazel build //:sandbox_image
-
-The problem's tree at /workspace -- where every job's fresh volume is mounted,
-and what docker fills that volume from -- and the arena's sources where the
-image's bazelrc overrides game_arena to. Each file at its path in its own
-repository, under |prefix|.
-"""
+"""Source files as a tar layer, each at its path in its own repository under `prefix`."""
 
 def _sandbox_tree_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".tar")
@@ -16,9 +8,7 @@ def _sandbox_tree_impl(ctx):
     ctx.actions.run_shell(
         outputs = [out],
         inputs = files + [listing],
-        # root's and readable by anyone: the loader hands the copy to whoever
-        # the sandbox runs as. Dated at the epoch so the layer is the same
-        # bytes for the same files.
+        # Readable by anyone: the worker hands the copy to whoever the sandbox runs as.
         command = "tar --create --file \"$2\" --dereference --mtime=@0 " +
                   "--owner=0 --group=0 --numeric-owner --mode=a+rX " +
                   "--transform='s,^external/[^/]*/,,S' " +
