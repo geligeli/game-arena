@@ -224,6 +224,7 @@ TEST_F(DashboardTest, AReplayShowsCaptionsAndKeepsTheLastView) {
   EXPECT_THAT(html, HasSubstr("data-v=\"1\" data-p=\"0\"><p>Move 2:"));
   EXPECT_THAT(html, HasSubstr("data-v=\"1\" data-p=\"0\"><p>Move 3:"));
   EXPECT_THAT(html, HasSubstr("id=\"speed\""));
+  EXPECT_THAT(html, HasSubstr("location.hash")) << "#<move> links a frame";
   EXPECT_THAT(html, HasSubstr("seek(1)"));
 }
 

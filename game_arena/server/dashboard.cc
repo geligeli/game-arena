@@ -294,6 +294,7 @@ std::string ResultText(int64_t result, int64_t winner,
 }
 
 // A frame is one step; it shows its own view, or the last one before it.
+// The URL's #<frame> is the one shown, so a move can be linked to.
 constexpr std::string_view kReplayScript = R"(<script>
 var frames=document.querySelectorAll('.f'),views=document.querySelectorAll('.v'),
 at=0,timer=null;
@@ -301,7 +302,7 @@ function go(i){at=Math.max(0,Math.min(frames.length-1,i));
 frames.forEach(function(f,j){f.hidden=j!=at});
 var v=+frames[at].dataset.v;views.forEach(function(e,k){e.hidden=k!=v});
 if(window.showView)showView(at,v);
-document.getElementById('slider').value=at}
+document.getElementById('slider').value=at;history.replaceState(null,'','#'+at)}
 function seek(d){for(var i=at+d;i>=0&&i<frames.length;i+=d){
 if(frames[i].dataset.own){go(i);return}}go(d<0?0:frames.length-1)}
 function play(){if(timer){clearTimeout(timer);timer=null;return}
@@ -311,7 +312,7 @@ document.onkeydown=function(e){var k={ArrowLeft:function(){go(at-1)},
 ArrowRight:function(){go(at+1)},ArrowUp:function(){seek(-1)},
 ArrowDown:function(){seek(1)},' ':play,Home:function(){go(0)},
 End:function(){go(frames.length-1)}}[e.key];if(k){e.preventDefault();k()}};
-go(0);
+go(+location.hash.slice(1)||0);
 </script>)";
 
 // With a replay module: it draws each view (bytes, base64 in #views) into
