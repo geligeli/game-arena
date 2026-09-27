@@ -4,12 +4,6 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# The sandbox fleet: hosts that check out the repo, patch a submitted candidate
-# in, build it and play its games. Workers dial the arena, so a fleet can be
-# attached from anywhere.
-
-# Reading what a graded command measured, and folding several runs into one
-# number per metric.
 cc_library(
     name = "grade_policy",
     srcs = ["grade_policy.cc"],
@@ -26,8 +20,6 @@ cc_test(
     ],
 )
 
-# Compacts bazel output before it crosses the wire: the system's biggest token
-# lever.
 cc_library(
     name = "build_log",
     srcs = ["build_log.cc"],
@@ -38,7 +30,6 @@ cc_library(
     ],
 )
 
-# The arena's own layer: what an order means, written once for both engines.
 cc_library(
     name = "order_job",
     srcs = ["order_job.cc"],
@@ -104,9 +95,7 @@ cc_library(
 
 
 
-# A worker links the container engine and nothing else: there is no
-# unsandboxed backend for an order to land on, by construction rather than by
-# configuration.
+# The container engine and no other: there is no unsandboxed backend.
 cc_binary(
     name = "sandbox_worker",
     srcs = ["sandbox_worker.cc"],
@@ -133,9 +122,7 @@ cc_test(
     ],
 )
 
-# End-to-end against fake `docker` and `git` scripts -- no daemon needed.
-# Covers the mounts, the entrypoint scripts, host-side checkout, build failure
-# reporting, run timeouts and patch-path validation.
+# Against fake `docker` and `git` scripts; no daemon needed.
 cc_test(
     name = "order_runner_container_test",
     size = "medium",
@@ -147,8 +134,7 @@ cc_test(
     ],
 )
 
-# The graded path end to end: fake git and bazel, but a real command writing a
-# real report through $ARENA_REPORT.
+# Fake git and bazel, and a real command writing a real $ARENA_REPORT.
 cc_test(
     name = "order_runner_process_test",
     size = "medium",

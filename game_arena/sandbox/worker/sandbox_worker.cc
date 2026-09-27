@@ -1,16 +1,4 @@
-// A sandbox fleet worker: builds submitted candidates and plays their games.
-//
-//   bazel run //game_arena/sandbox/worker:sandbox_worker --
-//       --server=localhost:50051 --slots=2
-//
-// The worker dials the arena, so a fleet can be attached from any host that
-// has a docker socket and a route to the broker -- no inbound port, no
-// registration, nothing to configure on the server. Adding capacity is
-// starting another one of these.
-//
-// Orders are pulled off the Attach stream onto a fixed set of slot threads.
-// Each slot owns a bazel output base, so builds run in parallel without
-// sharing a workspace lock.
+// A fleet worker: dials the arena and runs its orders on slot threads.
 
 #include <grpcpp/grpcpp.h>
 #include <unistd.h>
@@ -44,31 +32,8 @@ ABSL_FLAG(std::string, server, "localhost:50051",
 
 namespace {
 
-// The three things a coordinator cannot know, because they are facts about
-// this host rather than about the problem. Environment rather than flags, so
-// the flag surface stays at one and so a systemd unit or a container spec is
-// the natural place to state them.
-//
-//   ARENA_MACHINE_CLASS   what kind of host this is, e.g. "bench-c7i". A
-//                         graded problem can require one, and nothing can
-//                         derive a semantic label -- without it that gate is
-//                         unenforceable.
-//   ARENA_SLOTS           how many orders to run at once: how much of this
-//                         box to lend the arena.
-//   ARENA_WORK_DIR        where the per-slot logs and staged patches live.
-//   ARENA_WORKER_ID       stable across reconnects; defaults to
-//                         <hostname>-<pid>.
-//   ARENA_VOLUME_PREFIX   names the docker volumes a container's bazel
-//                         output bases and disk cache live in; defaults to
-//                         arena-<hostname>. Two workers sharing one daemon
-//                         must differ here or share caches by accident.
-//   ARENA_BIND_OUTPUT_BASE, ARENA_BIND_DISK_CACHE
-//                         optional. Host directories, as the docker daemon
-//                         resolves them, to bind-mount for those caches
-//                         instead of volumes: a local disk you can inspect
-//                         or share with your own builds. Nothing needs them.
-// How long to wait before re-attaching. Not configurable: nothing about a
-// problem or a host makes a different number right.
+// Host facts come from ARENA_* variables (ARENA.md), keeping one flag. Also
+// ARENA_WORKER_ID, stable across reconnects; default <hostname>-<pid>.
 constexpr std::chrono::seconds kReconnectDelay{5};
 
 std::string Hostname(const std::string &fallback) {
@@ -89,9 +54,7 @@ namespace proto = tournament_arena::proto;
 using Stream =
     grpc::ClientReaderWriter<proto::WorkerMessage, proto::FleetMessage>;
 
-// Runs orders on a fixed pool of slot threads and reports results back on the
-// stream. One instance per attached session: when the stream drops, the
-// session is torn down and a fresh one is built on reconnect.
+// One per attached session: a dropped stream tears it down.
 class WorkerSession {
  public:
   WorkerSession(OrderRunner *runner, Stream *stream, int slots,
@@ -122,12 +85,7 @@ class WorkerSession {
     cv_.notify_one();
   }
 
-  // Drops the order if it is still queued, and stops it if it is already
-  // running -- the engine kills the process group or the containers by name.
-  //
-  // The two halves are deliberately not one atomic step. An order that finishes
-  // between them just reports its result, which the arena already tolerates:
-  // it asked for the slot back, and it gets the slot back either way.
+  // Not atomic: an order finishing in between just reports its result.
   void Cancel(const std::string &order_id) {
     {
       std::lock_guard lock(mutex_);
@@ -164,9 +122,6 @@ class WorkerSession {
                 << " candidate " << order.candidate().candidate_id() << " vs "
                 << order.opponent_spec() << " (" << order.num_games()
                 << " games)";
-      // Progress now comes from the engine, phase by phase, rather than one
-      // BUILDING guess before anything started: PREPARING and RUNNING were dead
-      // enum values until the engine reported its phases.
       const OrderOutcome outcome =
           runner_->RunOrder(slot, order,
                             [this](const std::string &order_id,
@@ -205,8 +160,7 @@ class WorkerSession {
     Write(message);
   }
 
-  // gRPC's sync streams allow one writer at a time, and slot threads finish
-  // whenever they finish.
+  // gRPC's sync streams allow one writer at a time.
   void Write(const proto::WorkerMessage &message) {
     std::lock_guard lock(write_mutex_);
     stream_->Write(message);
@@ -240,7 +194,6 @@ int main(int argc, char **argv) {
       EnvOr("ARENA_WORKER_ID", (host.empty() ? "worker" : host) + "-" +
                                    std::to_string(::getpid()));
 
-  // This host's own layout, and nothing about any problem.
   const std::filesystem::path work_dir =
       EnvOr("ARENA_WORK_DIR", "/tmp/arena_sandbox");
   OrderJobConfig job_config;
@@ -250,11 +203,7 @@ int main(int argc, char **argv) {
   job_config.bind_output_base_dir = EnvOr("ARENA_BIND_OUTPUT_BASE", "");
   job_config.bind_disk_cache_dir = EnvOr("ARENA_BIND_DISK_CACHE", "");
 
-  // One engine, and it is a boundary. A worker has no unsandboxed backend to
-  // fall onto: submitted code is arbitrary code, a build of it doubly so, and
-  // an order this worker cannot isolate is an order it hands back. That is
-  // also why there is no flag here -- the choice it would express is not one
-  // an operator should be able to make by accident.
+  // No unsandboxed backend, and no flag for one: submitted code is arbitrary.
   if (process::ResolveExecutable("docker").empty()) {
     LOG(ERROR) << "no docker on PATH: a worker builds and runs every order in "
                   "a container, so this one would refuse all of them";
@@ -264,7 +213,6 @@ int main(int argc, char **argv) {
   OrderRunner runner(/*process_engine=*/nullptr, &container_engine,
                      std::move(job_config), machine_class);
 
-  // No tree named here: it is in the image each order names.
   LOG(INFO) << "Worker '" << worker_id << "' warming up " << slots
             << " slot(s) under " << work_dir << ", container engine(s)"
             << (machine_class.empty()
@@ -277,8 +225,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Reconnects forever: the arena restarting, or a network blip, must not take
-  // a fleet host out of service permanently.
+  // Forever: an arena restart must not retire a fleet host.
   for (;;) {
     auto channel = grpc::CreateChannel(absl::GetFlag(FLAGS_server),
                                        grpc::InsecureChannelCredentials());
@@ -289,8 +236,7 @@ int main(int argc, char **argv) {
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id(worker_id);
     hello.mutable_hello()->set_slots(slots);
-    // The class of host this is. Stamped on every result too, but the
-    // arena cannot schedule on what it is never told up front.
+    // Up front too, so the arena can schedule on it.
     hello.mutable_hello()->set_machine_class(machine_class);
     if (!stream->Write(hello)) {
       LOG(WARNING) << "Cannot reach the arena at "

@@ -35,8 +35,6 @@ std::map<std::string, double> AggregateMetrics(
       default: {
         std::sort(values.begin(), values.end());
         const std::size_t mid = values.size() / 2;
-        // An even number of runs takes the mean of the middle two, so the
-        // median of two runs is their average rather than an arbitrary one.
         out[name] = values.size() % 2 == 1
                         ? values[mid]
                         : (values[mid - 1] + values[mid]) / 2.0;

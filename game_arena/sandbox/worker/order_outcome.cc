@@ -40,8 +40,7 @@ const sx::PhaseResult *PhaseNamed(const sx::JobResult &result,
   return nullptr;
 }
 
-// The order's own candidate is the one being evaluated; the opponent's build
-// breaking is somebody else's problem and must not retire this submission.
+// The opponent's broken build must not retire this submission.
 std::string BlameForBuild(const proto::WorkOrder &order,
                           const std::string &log) {
   if (!order.has_opponent()) {
@@ -64,10 +63,8 @@ void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
   const std::string referee_errors =
       referee != nullptr ? referee->stderr() : "";
 
-  // From the referee's report, not from anything a side printed: the referee
-  // applied every move, and its private scratch is out of either side's reach.
-  // An empty report is no report: the engine collects nothing for an empty
-  // file, and a match with no games has nothing to say either.
+  // From the referee's report, not what a side printed: the referee applied
+  // every move, and its private scratch is out of either side's reach.
   tournament_broker::proto::MatchReport report;
   if (referee == nullptr || referee->collected().count(kMatchReport) == 0 ||
       !report.ParseFromString(referee->collected().at(kMatchReport))) {
@@ -82,9 +79,7 @@ void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
   const tournament_broker::MatchTally tally =
       tournament_broker::TallyOf(report, order.candidate().candidate_id());
   if (tally.games < order.num_games()) {
-    // Recorded, not fatal: the games that were played are real results, and
-    // an agent is better served by a short match plus the reason than by
-    // nothing.
+    // Recorded, not fatal: the games that were played are real results.
     outcome->result.set_error(
         "match was short: " + std::to_string(tally.games) + " of " +
         std::to_string(order.num_games()) + " games played");
@@ -113,8 +108,7 @@ void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
       return;
     }
     if (step->exit_code() != 0) {
-      // A number from a failed run looks like a result, which is worse than
-      // no number at all.
+      // A number from a failed run would look like a result.
       outcome->result.set_error("graded command exited " +
                                 std::to_string(step->exit_code()) + ": " +
                                 TailOf(step->stderr() + step->stdout(), 1000));
@@ -161,8 +155,7 @@ OrderOutcome OutcomeFor(const proto::WorkOrder &order,
         build_step->stdout() + build_step->stderr(), 64 << 10));
   }
 
-  // Whatever the engine says it could not do, before looking at any step: a
-  // job that never ran has no result to read.
+  // A job the engine could not run has no step result to read.
   if (result.status().code() != sx::Status::OK) {
     if (build_step != nullptr && !build_step->stdout().empty()) {
       out.set_build_log(
@@ -179,17 +172,13 @@ OrderOutcome OutcomeFor(const proto::WorkOrder &order,
   const std::string build_output = build_step->stdout() + build_step->stderr();
   if (build_step->timed_out()) {
     out.set_build_log(CompactBuildLog(build_output));
-    // The timeout the engine actually enforced, not the one the order asked
-    // for: an order that leaves build_timeout_s unset used to report "build
-    // timed out after 0s".
+    // The timeout the engine enforced, not the order's, which may be unset.
     out.set_error("build timed out after " +
                   std::to_string(build_step->timeout_s()) + "s");
     return outcome;
   }
   if (build_step->exit_code() != 0) {
-    // A build failure is the candidate's fault, not the order's: report it as
-    // a completed order with build_ok false so the agent gets the
-    // diagnostics.
+    // The candidate's fault, not the order's: completed, with diagnostics.
     out.set_build_log(CompactBuildLog(build_output));
     out.set_build_failed_candidate_id(BlameForBuild(order, build_output));
     return outcome;
@@ -212,9 +201,7 @@ OrderOutcome OutcomeFor(const proto::WorkOrder &order,
     return outcome;
   }
   if (bot != nullptr && bot->timed_out()) {
-    // Named rather than reported as a missing referee result: the two
-    // backends disagreed about this, and "games timed out after 2s" says what
-    // happened while "referee produced no result" describes a symptom.
+    // The cause, rather than the symptom "referee produced no result".
     out.set_error("games timed out after " + std::to_string(bot->timeout_s()) +
                   "s");
     return outcome;

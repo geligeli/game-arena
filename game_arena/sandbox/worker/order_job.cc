@@ -18,9 +18,7 @@ namespace sx = sandbox_exec::proto;
 namespace {
 
 constexpr int kDefaultTimeoutS = 1800;
-// The port a refereed match uses inside its own network namespace. Fixed
-// rather than discovered because the namespace is private: nothing else is
-// there to collide with.
+// Fixed: a match's network namespace is private, so nothing can collide.
 constexpr int kMatchPort = 50051;
 
 sx::Token Verbatim(const std::string &text) {
@@ -36,8 +34,7 @@ sx::Token Quoted(const std::string &text) {
   return token;
 }
 
-// "//a/b:c" -> "a/b/c": where bazel writes a target's binary under bazel-bin.
-// "//a/b" is read as "//a/b:b", the same shorthand bazel uses.
+// "//a/b:c" -> "a/b/c" and "//a/b" -> "a/b/b": its binary under bazel-bin.
 std::string BinaryPathForTarget(const std::string &target) {
   std::string label(target);
   if (label.rfind("//", 0) == 0) {
@@ -59,11 +56,8 @@ std::filesystem::path SlotDir(const OrderJobConfig &config, int slot) {
 sx::Isolation Isolation(const proto::SandboxOrder &sandbox, bool container) {
   sx::Isolation isolation;
   if (!container) {
-    // No image and no cgroups. The one limit this engine can apply is an
-    // address-space cap, and it goes on the steps that run submitted code
-    // rather than here -- see SolutionIsolation. A cap on the build would be
-    // a cap on bazel, whose JVM reserves far more address space than any
-    // limit a problem means for a solution, and it dies at startup.
+    // No cgroups; RLIMIT_AS goes on the solution's steps only, since bazel's
+    // JVM dies at startup under any cap a problem means for a solution.
     return isolation;
   }
   isolation.set_image(sandbox.image());
@@ -71,18 +65,13 @@ sx::Isolation Isolation(const proto::SandboxOrder &sandbox, bool container) {
   isolation.set_cpus(sandbox.cpus());
   isolation.set_pids_limit(sandbox.pids_limit());
   isolation.set_run_as_user(sandbox.run_as_user());
-  // Nothing to mount and nothing to be privileged for: the defaults (drop
-  // every capability, no new privileges, a read-only root) stand, and /tmp
-  // is the one writable place besides the tree and the scratch volume.
   sx::Tmpfs *tmpfs = isolation.add_tmpfs();
   tmpfs->set_target("/tmp");
   tmpfs->set_options("exec");
   return isolation;
 }
 
-// The isolation for a step that runs the submission itself: the problem's
-// memory limit, as an address-space cap the process engine can enforce. Not
-// applied to the build, for the reason in Isolation() above.
+// For the steps that run the submission: the memory limit as RLIMIT_AS.
 sx::Isolation SolutionIsolation(const proto::SandboxOrder &sandbox,
                                 bool container, const sx::Isolation &base) {
   sx::Isolation isolation = base;
@@ -93,8 +82,7 @@ sx::Isolation SolutionIsolation(const proto::SandboxOrder &sandbox,
   return isolation;
 }
 
-// The output base and disk cache as the sandbox sees them, or as host paths
-// when there is no sandbox.
+// As a container sees them, or host paths for the process engine.
 struct BuildPaths {
   std::string output_base;
   std::string disk_cache;
@@ -116,8 +104,6 @@ BuildPaths PathsFor(const OrderJobConfig &config, int slot, bool container) {
   return paths;
 }
 
-// A persistent directory for a container: a docker volume unless this host
-// opted into a bind mount for it.
 sx::Mount PersistentMount(const std::filesystem::path &bind_dir,
                           const std::string &volume,
                           const std::string &target) {
@@ -139,10 +125,8 @@ std::string OwnerSuffix(const proto::WorkOrder &order) {
   return user.empty() ? "" : "-u" + sandbox_common::SanitizeContainerName(user);
 }
 
-// The slot's output base, the build's to write. Everything after the build
-// gets it read-only: it only runs what the build left there, and the volume
-// outlives the order, so a bot that could write it could change what the
-// next order on this slot is built from.
+// Read-only after the build: it outlives the order, and a bot that could
+// write it could change what the slot's next order is built from.
 std::optional<sx::Mount> OutputBaseMount(const proto::WorkOrder &order,
                                          const OrderJobConfig &config, int slot,
                                          bool container) {
@@ -190,7 +174,6 @@ std::optional<sx::Workspace> WorkspaceFor(const proto::WorkOrder &order,
       return std::nullopt;
     }
     sx::StagedFile *file = ws.add_staged_files();
-    // Named from the candidate so a slot's staging dir reads as what it is.
     file->set_path(sandbox_common::SanitizeContainerName(side->candidate_id()) +
                    ".diff");
     file->set_content(side->patch());
@@ -198,18 +181,13 @@ std::optional<sx::Workspace> WorkspaceFor(const proto::WorkOrder &order,
   }
 
   if (container) {
-    // The tree is the image's: no tree_dir, so the job's fresh volume is
-    // filled from what the order's image has at the workspace. git applies
-    // the patches inside the sandbox, so the workspace the build sees is the
-    // one the patch was checked against.
+    // The tree is the image's; git applies the patches inside the sandbox.
     ws.set_patch(sx::Workspace::PATCH_IN_ENTRYPOINT);
     ws.set_sandbox_work_dir(sandbox_common::kWorkspace);
     return ws;
   }
 
-  // No sandbox: the step runs in the slot's tree itself, which is its
-  // caller's to fill, and git applies the patches on the host before anything
-  // builds.
+  // The slot's own tree, which its caller fills, patched on the host.
   ws.set_tree_dir((slot_dir / "repo").string());
   ws.set_scratch_dir((slot_dir / "scratch").string());
   ws.set_patch(sx::Workspace::PATCH_HOST);
@@ -222,18 +200,14 @@ void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
                    sx::Job *job) {
   sx::Phase *phase = job->add_phases();
   phase->set_name("build");
-  // A build reaches nothing by default: a build that can fetch can also
-  // exfiltrate, and a submitted genrule is arbitrary code.
+  // A build that can fetch can exfiltrate: a submitted genrule is any code.
   sx::Isolation *isolation = phase->mutable_isolation();
   *isolation = job->isolation();
   isolation->set_network(order.sandbox().allow_build_network()
                              ? sx::Isolation::NETWORK_EGRESS
                              : sx::Isolation::NETWORK_NONE);
-  // The problem's memory and pid caps are for the solution's run, as the
-  // process engine already treats them (SolutionIsolation): a build is the
-  // problem's own toolchain, and bazel's JVM plus a few dozen compilers is
-  // more than any limit a problem means for a bot. The build keeps every
-  // other part of the sandbox and its own timeout.
+  // The memory and pid caps are the solution's: bazel's JVM and a few dozen
+  // compilers exceed any limit a problem means for a bot.
   isolation->set_memory_limit_mb(0);
   isolation->set_pids_limit(0);
 
@@ -242,9 +216,7 @@ void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
   build->set_applies_patches(true);
   MountOutputBase(output_base, /*readonly=*/false, build);
   if (container) {
-    // The shared cache reaches the build and nothing after it: the thing it
-    // built has no business seeing it. (The staged patches reach the build
-    // the same way, arranged by the engine for the step that applies them.)
+    // The shared cache reaches the build and nothing it built.
     *build->add_mounts() = PersistentMount(
         config.bind_disk_cache_dir,
         config.volume_prefix + "-disk_cache" + OwnerSuffix(order),
@@ -253,22 +225,12 @@ void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
   build->set_timeout_s(order.build_timeout_s() > 0 ? order.build_timeout_s()
                                                    : kDefaultTimeoutS);
   *build->add_argv() = Verbatim(config.bazel);
-  // --output_base is a startup option and belongs before the command;
-  // --disk_cache and the problem's extra flags are command options and belong
-  // after it. Getting that wrong is not a style question: bazel aborts with
-  // "Unknown startup option", which is how the container path turned out
-  // never to have built anything.
+  // Startup options before `build`, the rest after, or bazel aborts with
+  // "Unknown startup option".
   *build->add_argv() = Verbatim("--output_base=" + paths.output_base);
   if (container) {
-    // Bazel's own installation, unpacked once per slot into the persistent
-    // volume beside the output base rather than into the image: the install
-    // base wants a lock file next to itself, and the image is read-only.
-    // Given as an output_user_root, not an --install_base: under one, bazel
-    // names the install directory after the hash of its own binary. The
-    // volume outlives the image, and a fixed install base unpacked by one
-    // bazel is "corrupt installation" to the next -- every build failing, on
-    // the first sandbox image that moves to another release, until someone
-    // works out which volume to delete.
+    // Bazel unpacks itself into the slot's volume, as the image is read-only.
+    // A user root, not --install_base: a fixed one breaks on the next bazel.
     *build->add_argv() =
         Verbatim("--output_user_root=" + paths.output_base + "/_user_root");
   }
@@ -279,8 +241,7 @@ void AddBuildPhase(const proto::WorkOrder &order, const OrderJobConfig &config,
   for (const std::string &flag : order.bazel_flags()) {
     *build->add_argv() = Quoted(flag);
   }
-  // One build, every target: both sides of a match and the referee share an
-  // analysis pass and, more importantly, one consistent tree.
+  // One build for every target, so both sides and the referee share a tree.
   for (const proto::Side *side : SidesOf(order)) {
     for (const std::string &target : side->build_targets()) {
       *build->add_argv() = Quoted(target);
@@ -305,8 +266,7 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
   phase->set_name("match");
   sx::Isolation *isolation = phase->mutable_isolation();
   *isolation = job->isolation();
-  // The bots reach their referee and nothing else. There is no broker outside
-  // the sandbox to dial, which is what let this stop being --network=host.
+  // The bots reach their referee and nothing else.
   isolation->set_network(sx::Isolation::NETWORK_PHASE_BRIDGE);
   phase->set_drain_timeout_s(match_deadline_s + 60);
 
@@ -322,16 +282,11 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
 
   std::string server;
   if (capabilities.stable_peer_names) {
-    // Its own network namespace, so a fixed port cannot collide and the peer
-    // resolves by name.
     *referee->add_argv() = Quoted("--port=" + std::to_string(kMatchPort));
     server = sandbox_exec::SandboxName(job->id(), "referee") + ":" +
              std::to_string(kMatchPort);
   } else {
-    // Parallel slots share one host, so the referee binds a free port and
-    // publishes the number. Waiting for that file is the difference between
-    // "the bot could not connect" and "the bot connected before anything was
-    // there".
+    // Parallel slots share the host: a free port, published in a file.
     referee->mutable_endpoint()->set_discover_via_port_file(true);
     *referee->add_argv() = Quoted("--port=0");
     *referee->add_argv() = Quoted("--port_file={{port_file}}");
@@ -347,8 +302,7 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
       Quoted("--report={{scratch}}/" + std::string(kMatchReport));
   *referee->add_argv() =
       Quoted("--deadline_s=" + std::to_string(match_deadline_s));
-  // Omitted when the problem said nothing, so the referee keeps its own
-  // default rather than being handed a zero that means something else.
+  // Omitted when unset, so the referee keeps its own defaults.
   if (order.turn_timeout_ms() > 0) {
     *referee->add_argv() =
         Quoted("--turn_timeout_ms=" + std::to_string(order.turn_timeout_ms()));
@@ -361,9 +315,7 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
     *referee->add_argv() = Quoted("--max_moves_per_game=" +
                                   std::to_string(order.max_moves_per_game()));
   }
-  // Opaque to the worker: whatever the problem set, handed to the registry
-  // linked into the referee. Omitted entirely when empty so an order that
-  // sets nothing produces the argv it always did.
+  // Opaque to the worker: for the registry linked into the referee.
   if (!order.registry_options().empty()) {
     *referee->add_argv() =
         Quoted("--registry_options=" +
@@ -393,8 +345,7 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
   };
 
   if (order.has_opponent()) {
-    // The opponent plays for the whole match while the primary bot runs in
-    // the foreground. Both stop when the referee closes their streams.
+    // Plays the whole match; the referee ends both bots' streams.
     sx::Step *opponent = phase->add_background();
     opponent->set_name("opponent");
     add_bot(opponent, order.opponent(),
@@ -417,15 +368,13 @@ void AddGradePhases(const proto::WorkOrder &order,
   const int timeout_s =
       grade.timeout_s() > 0 ? grade.timeout_s() : kDefaultTimeoutS;
 
-  // One phase per run rather than one phase with N steps: each run is
-  // independent, and a run that hangs should not be waited on by the next.
+  // A phase per run, so a run that hangs does not hold up the next.
   for (int run = 0; run < repeats; ++run) {
     sx::Phase *phase = job->add_phases();
     phase->set_name("grade");
     sx::Isolation *isolation = phase->mutable_isolation();
     *isolation = job->isolation();
-    // A solution timed against a stopwatch has no business reaching the
-    // network.
+    // A solution timed against a stopwatch has no business on the network.
     isolation->set_network(sx::Isolation::NETWORK_NONE);
 
     sx::Step *step = phase->mutable_foreground();
@@ -434,10 +383,7 @@ void AddGradePhases(const proto::WorkOrder &order,
     MountOutputBase(output_base, /*readonly=*/true, step);
     *step->mutable_isolation() =
         SolutionIsolation(order.sandbox(), container, *isolation);
-    // Exported rather than fixed, so the command needs no knowledge of the
-    // sandbox's directory layout.
-    // The engine resolves {{scratch}} to wherever the step can write: a
-    // mount point inside a container, a host path without one.
+    // The engine resolves {{scratch}}: the command knows no layout.
     (*step->mutable_env())["ARENA_REPORT"] = "{{scratch}}/report.json";
     step->add_collect_files("report.json");
     for (const std::string &word : grade.argv()) {
