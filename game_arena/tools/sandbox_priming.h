@@ -1,10 +1,7 @@
 #ifndef GAME_ARENA_GAME_ARENA_TOOLS_SANDBOX_PRIMING_H
 #define GAME_ARENA_GAME_ARENA_TOOLS_SANDBOX_PRIMING_H
 
-// What `arena_tournament sandbox` needs to prime a build on this host that a
-// sandbox then repeats: the targets, the rc and the owner of what it ships.
-// A disk cache hits only for the build that filled it, so each of these is the
-// sandbox's own, not a lookalike.
+// A disk cache hits only for the build that filled it: these are the sandbox's.
 
 #include <filesystem>
 #include <string>
@@ -15,19 +12,15 @@
 
 namespace tournament_arena {
 
-// build.targets and match.referee_target as a sandbox builds them for
-// |submission|. Empty: the targets that name a submission are left out.
+// The targets a sandbox builds for |submission|; empty drops those naming one.
 std::vector<std::string> PrimeTargets(const proto::ProblemConfig &config,
                                       std::string_view submission);
 
-// The image's system rc (|image_rc|) for a build on this host: its paths under
-// |root| rather than /, then the workspace's own rc -- with --noworkspace_rc,
-// the order a sandbox reads the two in.
+// |image_rc| rooted at |root|, then the workspace's rc: a sandbox's order.
 std::string PrimeBazelrc(std::string_view image_rc,
                          const std::filesystem::path &root);
 
-// tar's --owner and --group for a sandbox's run_as_user: "" is root, and a
-// user alone is its own group.
+// tar's --owner/--group for run_as_user: "" is root; a lone user is its group.
 std::vector<std::string> TarOwner(std::string_view run_as_user);
 
 }  // namespace tournament_arena
