@@ -183,19 +183,19 @@ void Matchmaker::StartGame(const GameDescriptor &descriptor, Seat seat0,
 
   const uint64_t id = ++game_counter_;
   ++running_games_;
-  auto run =
-      GameRun::Create(descriptor, run_config,
-                      std::array<Seat, 2>{std::move(seat0), std::move(seat1)},
-                      id, history_, &pool_, &timer_, [this, id] {
-                        {
-                          std::lock_guard lock(mutex_);
-                          running_.erase(id);
-                        }
-                        if (--running_games_ == 0) {
-                          std::lock_guard lock(drain_mutex_);
-                          drain_cv_.notify_all();
-                        }
-                      });
+  auto run = std::make_shared<GameRun>(
+      descriptor, run_config,
+      std::array<Seat, 2>{std::move(seat0), std::move(seat1)}, id, history_,
+      &pool_, &timer_, [this, id] {
+        {
+          std::lock_guard lock(mutex_);
+          running_.erase(id);
+        }
+        if (--running_games_ == 0) {
+          std::lock_guard lock(drain_mutex_);
+          drain_cv_.notify_all();
+        }
+      });
   {
     std::lock_guard lock(mutex_);
     running_.emplace(id, run);

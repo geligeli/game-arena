@@ -116,9 +116,6 @@ auto Timer::After(std::chrono::milliseconds delay, Task fn) -> Id {
 }
 
 void Timer::Cancel(Id id) {
-  if (id == 0) {
-    return;
-  }
   std::lock_guard lock(mu_);
   const auto found = deadlines_.find(id);
   if (found == deadlines_.end()) {

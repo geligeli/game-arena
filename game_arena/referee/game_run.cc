@@ -32,17 +32,6 @@ GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
       session_(descriptor.new_session()),
       gen_(std::random_device{}() ^ static_cast<uint32_t>(game_counter)) {}
 
-std::shared_ptr<GameRun> GameRun::Create(const GameDescriptor &descriptor,
-                                         GameRunConfig config,
-                                         std::array<Seat, 2> seats,
-                                         uint64_t game_counter,
-                                         GameHistory *history, WorkerPool *pool,
-                                         Timer *timer, Task on_finished) {
-  return std::shared_ptr<GameRun>(
-      new GameRun(descriptor, config, std::move(seats), game_counter, history,
-                  pool, timer, std::move(on_finished)));
-}
-
 void GameRun::Start() {
   self_ = shared_from_this();
   strand_->Post([self = shared_from_this()] { self->Begin(); });
@@ -84,13 +73,6 @@ void GameRun::Begin() {
         self->WakeStrand();
       }
     });
-  }
-
-  // Tell remote clients the game started.
-  for (int seat = 0; seat < 2; ++seat) {
-    if (!seats_[seat].client) {
-      continue;
-    }
     proto::ServerMessage msg;
     auto *start = msg.mutable_game_start();
     start->set_game_id(game_id_);
@@ -139,10 +121,8 @@ void GameRun::ArmTurnTimer(std::chrono::milliseconds delay) {
 }
 
 void GameRun::CancelTurnTimer() {
-  if (turn_timer_ != 0) {
-    timer_->Cancel(turn_timer_);
-    turn_timer_ = 0;
-  }
+  timer_->Cancel(turn_timer_);
+  turn_timer_ = 0;
   ++turn_epoch_;  // invalidate anything already in flight
 }
 

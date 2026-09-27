@@ -61,25 +61,19 @@ struct Seat {
 
 class GameRun : public std::enable_shared_from_this<GameRun> {
  public:
-  static std::shared_ptr<GameRun> Create(const GameDescriptor &descriptor,
-                                         GameRunConfig config,
-                                         std::array<Seat, 2> seats,
-                                         uint64_t game_counter,
-                                         GameHistory *history, WorkerPool *pool,
-                                         Timer *timer, Task on_finished);
+  // Construct through std::make_shared: Start() needs shared_from_this().
+  GameRun(const GameDescriptor &descriptor, GameRunConfig config,
+          std::array<Seat, 2> seats, uint64_t game_counter,
+          GameHistory *history, WorkerPool *pool, Timer *timer,
+          Task on_finished);
 
-  // Posts the opening work. Call exactly once, after Create().
+  // Posts the opening work. Call exactly once.
   void Start();
 
   // Ends the game early (server shutdown). Safe from any thread.
   void Abort(std::string reason);
 
  private:
-  GameRun(const GameDescriptor &descriptor, GameRunConfig config,
-          std::array<Seat, 2> seats, uint64_t game_counter,
-          GameHistory *history, WorkerPool *pool, Timer *timer,
-          Task on_finished);
-
   // --- strand only ---
   void Begin();
   void Step();
