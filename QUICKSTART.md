@@ -63,6 +63,7 @@ docker run \
  -e ARENA_SERVER=localhost:50051 \
  -e ARENA_NAME=${NAME} \
  -e ARENA_TOKEN=${TOKEN} \
+ -e ARENA_RESTORE=1 \
  ${REGISTRY}:${TAG}
 
 ```

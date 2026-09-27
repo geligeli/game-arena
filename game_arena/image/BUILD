@@ -68,6 +68,21 @@ oci_image(
     workdir = "/kit",
 )
 
+# What a kit container runs before its command, on every kit image whatever
+# its base (arena_problem's kit_image sets it as the entrypoint).
+genrule(
+    name = "kit_entrypoint_layer",
+    srcs = ["kit_entrypoint.sh"],
+    outs = ["kit_entrypoint_layer.tar"],
+    cmd = """
+mkdir -p $(@D)/kit_entrypoint/usr/local/bin
+cp $< $(@D)/kit_entrypoint/usr/local/bin/kit_entrypoint
+tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --mode=0755 \
+    --create --file $@ --directory $(@D)/kit_entrypoint usr/local/bin/kit_entrypoint
+""",
+    tags = ["manual"],
+)
+
 # What adds to a built kit image at run time, and pushes it. See defs.bzl.
 regctl(
     name = "regctl",

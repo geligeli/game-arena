@@ -11,12 +11,13 @@ arena_cli source <name> [path]   # pulls their directory in beside yours
 arena_cli spar <name> [--games=10]   # and plays yours against it, here
 arena_cli spar builtin:greedy        # or against a builtin
 arena_cli mcp                        # all of the above as MCP tools, on stdio
+ARENA_RESTORE=1 arena_cli init       # your directory, from your last submission
 */
 //
 // Same RPCs, same compact output, for a shell and -- as `mcp` -- for an
-// agent, whose tool calls are this program run again. Submit is the write
-// path and carries the --token as x-arena-token metadata; the reads are open
-// unless the problem says otherwise (ProblemInfo.source_visibility).
+// agent, whose tool calls are this program run again. Every call carries the
+// --token as x-arena-token metadata: Submit needs it, and so does reading
+// source a problem shows only to its author (ProblemInfo.source_visibility).
 //
 // It ships inside a kit as a binary, not as a bazel target: submitting should
 // not need a toolchain, and a participant should not have to know what the
@@ -193,11 +194,10 @@ proto::KitConfig LoadKitConfig(const std::filesystem::path &kit) {
   return config;
 }
 
-void ConfigureContext(const Client &client, bool write,
-                      grpc::ClientContext *context) {
+void ConfigureContext(const Client &client, grpc::ClientContext *context) {
   context->set_deadline(std::chrono::system_clock::now() +
                         std::chrono::seconds(client.timeout_s));
-  if (write && !client.token.empty()) {
+  if (!client.token.empty()) {
     context->AddMetadata("x-arena-token", client.token);
   }
 }
@@ -362,7 +362,7 @@ int WaitForJob(const Client &client, const std::string &server,
     request.set_job_id(job_id);
     proto::Job job;
     grpc::ClientContext context;
-    ConfigureContext(client, /*write=*/false, &context);
+    ConfigureContext(client, &context);
     const grpc::Status status = client.stub->GetJob(&context, request, &job);
     if (!status.ok()) {
       return RpcError(status, server);
@@ -381,7 +381,7 @@ int WaitForJob(const Client &client, const std::string &server,
 
 int CmdRules(const Client &client, const std::string &server) {
   grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/false, &context);
+  ConfigureContext(client, &context);
   proto::ProblemInfo problem;
   const grpc::Status status =
       client.stub->GetProblem(&context, proto::GetProblemRequest(), &problem);
@@ -592,7 +592,7 @@ int CmdSubmit(const Client &client, const std::string &server) {
   }
 
   grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/true, &context);
+  ConfigureContext(client, &context);
   proto::SubmitResponse response;
   const grpc::Status status = client.stub->Submit(&context, request, &response);
   if (!status.ok()) {
@@ -624,7 +624,7 @@ int CmdJob(const Client &client, const std::string &server,
   request.set_job_id(args[0]);
   proto::Job job;
   grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/false, &context);
+  ConfigureContext(client, &context);
   const grpc::Status status = client.stub->GetJob(&context, request, &job);
   if (!status.ok()) {
     return RpcError(status, server);
@@ -651,7 +651,7 @@ int CmdCandidates(const Client &client, const std::string &server) {
   }
 
   grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/false, &context);
+  ConfigureContext(client, &context);
   proto::ListCandidatesResponse response;
   const grpc::Status status =
       client.stub->ListCandidates(&context, request, &response);
@@ -680,7 +680,7 @@ int CmdLeaderboard(const Client &client, const std::string &server) {
   proto::LeaderboardRequest request;
   request.set_limit(absl::GetFlag(FLAGS_limit));
   grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/false, &context);
+  ConfigureContext(client, &context);
   proto::LeaderboardResponse response;
   const grpc::Status status =
       client.stub->Leaderboard(&context, request, &response);
@@ -713,7 +713,7 @@ int PullSourceFile(const Client &client, const std::string &server,
   request.set_candidate_id(candidate_id);
   request.set_path(path);
   grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/false, &context);
+  ConfigureContext(client, &context);
   proto::SourceFile source;
   const grpc::Status status =
       client.stub->GetSource(&context, request, &source);
@@ -744,6 +744,27 @@ int PullSourceFile(const Client &client, const std::string &server,
   return 0;
 }
 
+// Your last submission, into your directory: what $ARENA_RESTORE puts there
+// in place of the starter. False when there are no files of yours to pull.
+bool Restore(const Client &client, const std::string &server) {
+  proto::GetCandidateRequest request;
+  request.set_candidate_id(client.me);
+  grpc::ClientContext context;
+  ConfigureContext(client, &context);
+  proto::Candidate candidate;
+  if (!client.stub->GetCandidate(&context, request, &candidate).ok() ||
+      candidate.file_paths().empty()) {
+    return false;
+  }
+  for (const std::string &path : candidate.file_paths()) {
+    if (PullSourceFile(client, server, client.me, path,
+                       client.DirOf(client.me)) != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 int CmdSource(const Client &client, const std::string &server,
               const std::vector<char *> &args) {
   if (args.empty()) {
@@ -758,7 +779,7 @@ int CmdSource(const Client &client, const std::string &server,
   proto::GetCandidateRequest request;
   request.set_candidate_id(candidate_id);
   grpc::ClientContext context;
-  ConfigureContext(client, /*write=*/false, &context);
+  ConfigureContext(client, &context);
   proto::Candidate candidate;
   const grpc::Status status =
       client.stub->GetCandidate(&context, request, &candidate);
@@ -1027,7 +1048,10 @@ void PrintUsage() {
       "here\n"
       "  spar builtin:<name>            yours against one of the problem's "
       "builtins\n"
-      "  mcp                            all of these as MCP tools, on stdio\n");
+      "  mcp                            all of these as MCP tools, on stdio\n"
+      "  init                           make your directory: the starter, or\n"
+      "                                 with ARENA_RESTORE=1 your last "
+      "submission\n");
 }
 
 }  // namespace
@@ -1076,14 +1100,25 @@ int main(int argc, char **argv) {
     return CmdMcp(client, server);
   }
   // Yours is a directory like everyone's, named after you. The first time, it
-  // is a copy of the starter's.
+  // is a copy of the starter's -- or, with $ARENA_RESTORE, of your last
+  // submission, if there is one.
   if (!me.empty() && !client.kit.starter_dir().empty() &&
       !std::filesystem::exists(client.DirOf(me))) {
-    std::error_code ec;
-    std::filesystem::copy(kit_dir / client.kit.starter_dir(), client.DirOf(me),
-                          std::filesystem::copy_options::recursive, ec);
-    std::printf("%s is yours, started from %s\n\n", client.DirOf(me).c_str(),
-                client.kit.starter_dir().c_str());
+    if (!EnvOr("ARENA_RESTORE", "").empty() && Restore(client, server)) {
+      std::printf("%s is yours, restored from your last submission\n\n",
+                  client.DirOf(me).c_str());
+    } else {
+      std::error_code ec;
+      std::filesystem::copy(kit_dir / client.kit.starter_dir(),
+                            client.DirOf(me),
+                            std::filesystem::copy_options::recursive, ec);
+      std::printf("%s is yours, started from %s\n\n", client.DirOf(me).c_str(),
+                  client.kit.starter_dir().c_str());
+    }
+  }
+  // What a kit image runs as it starts: the above, and nothing else.
+  if (command == "init") {
+    return 0;
   }
 
   if (command == "rules") {

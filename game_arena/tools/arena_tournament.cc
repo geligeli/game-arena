@@ -856,7 +856,8 @@ std::string KitReadme(const proto::ProblemConfig &config,
 
   const std::string own = config.submission().files_submit_dir() + "/<you>";
   md << "\nYours is `" << own << "/`, made from `" << config.kit().starter_dir()
-     << "/` the first time you run `arena_cli`. Every participant's "
+     << "/` the first time you run `arena_cli` -- or, with `ARENA_RESTORE=1`, "
+        "from your last submission. Every participant's "
         "implementation is a directory like it, named after them.\n";
 
   md << "\n## Iterating locally\n\n```sh\n";

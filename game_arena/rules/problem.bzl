@@ -80,6 +80,7 @@ _TOOL = Label("//game_arena/tools:arena_tournament")
 _RUN = Label("//game_arena/rules:run_tool.sh")
 _REFEREE_MAIN = Label("//game_arena/referee:referee_main")
 _KIT_BASE = Label("//game_arena/image:kit_base")
+_KIT_ENTRYPOINT = Label("//game_arena/image:kit_entrypoint_layer")
 _SANDBOX_BASE = Label("//game_arena/image:sandbox_base")
 _KIT_SURFACE = Label("//:kit_surface")
 _SANDBOX_SURFACE = Label("//:sandbox_surface")
@@ -262,10 +263,13 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         tags = ["manual"],
         visibility = visibility,
     )
+    # The entrypoint here, not on the base: a problem may replace the base.
     oci_image(
         name = "kit_image",
         base = kit_base or str(_KIT_BASE),
-        tars = [":kit_tree"],
+        tars = [str(_KIT_ENTRYPOINT), ":kit_tree"],
+        entrypoint = ["/usr/local/bin/kit_entrypoint"],
+        cmd = ["bash"],
         tags = ["manual"],
         visibility = visibility,
     )
