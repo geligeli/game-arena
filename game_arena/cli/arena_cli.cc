@@ -115,6 +115,7 @@ ABSL_FLAG(int, games, 10, "spar: games to play");
 namespace {
 
 namespace proto = tournament_arena::proto;
+using Stub = proto::Arena::Stub;
 
 constexpr int kPollIntervalS = 2;
 constexpr int kExitError = 1;
@@ -129,6 +130,7 @@ std::string EnvOr(const char *name, std::string fallback) {
 
 struct Client {
   std::unique_ptr<proto::Arena::Stub> stub;
+  std::string server;
   std::string token;
   int timeout_s;
   // The kit this was run from, and its config. Both empty outside a kit,
@@ -203,8 +205,8 @@ void ConfigureContext(const Client &client, grpc::ClientContext *context) {
   }
 }
 
-// Prints a mapped error to stderr and returns the process exit code.
-int RpcError(const grpc::Status &status, const std::string &server) {
+// Prints a mapped error to stderr.
+void RpcError(const grpc::Status &status, const std::string &server) {
   switch (status.error_code()) {
     case grpc::StatusCode::UNAUTHENTICATED:
       std::fprintf(stderr,
@@ -213,32 +215,46 @@ int RpcError(const grpc::Status &status, const std::string &server) {
                    "and bakes it into its image). The tournament's operator "
                    "issues it.\n",
                    status.error_message().c_str());
-      return kExitError;
+      return;
     case grpc::StatusCode::RESOURCE_EXHAUSTED:
       std::fprintf(stderr,
                    "ERROR: over quota. %s\n"
                    "Poll `job` until the running one finishes, or pass "
                    "--cancel_running to replace it.\n",
                    status.error_message().c_str());
-      return kExitError;
+      return;
     case grpc::StatusCode::UNAVAILABLE:
       std::fprintf(stderr,
                    "ERROR: no arena at %s. That address comes from --server, "
                    "else $ARENA_SERVER, else the kit's arena.textproto; the "
                    "tournament has to be running and reachable from here.\n",
                    server.c_str());
-      return kExitError;
+      return;
     case grpc::StatusCode::PERMISSION_DENIED:
       std::fprintf(stderr,
                    "ERROR: %s\n"
                    "That is this tournament's rule, not this tool's: `rules` "
                    "prints it.\n",
                    status.error_message().c_str());
-      return kExitError;
+      return;
     default:
       std::fprintf(stderr, "ERROR: %s\n", status.error_message().c_str());
-      return kExitError;
   }
+}
+
+// |method| with the token and the deadline. False, the error printed, when it
+// fails.
+template <typename Method, typename Request, typename Response>
+bool Call(const Client &client, Method method, const Request &request,
+          Response *response) {
+  grpc::ClientContext context;
+  ConfigureContext(client, &context);
+  const grpc::Status status =
+      (client.stub.get()->*method)(&context, request, response);
+  if (!status.ok()) {
+    RpcError(status, client.server);
+  }
+  return status.ok();
 }
 
 // As printed: BUILD_FAILED is "build-failed", and a value with no name "?".
@@ -315,8 +331,7 @@ void PrintJob(const proto::Job &job) {
 
 // Polls until the job reaches a terminal state, printing state transitions.
 // Returns the exit code: 0 on DONE, 1 on FAILED/CANCELLED or an RPC error.
-int WaitForJob(const Client &client, const std::string &server,
-               const std::string &job_id) {
+int WaitForJob(const Client &client, const std::string &job_id) {
   proto::Job::State last = proto::Job::QUEUED;
   // Tracked alongside the state so a long build reports preparing, then
   // building, then running, instead of one "running" line for half an hour.
@@ -325,11 +340,8 @@ int WaitForJob(const Client &client, const std::string &server,
     proto::GetJobRequest request;
     request.set_job_id(job_id);
     proto::Job job;
-    grpc::ClientContext context;
-    ConfigureContext(client, &context);
-    const grpc::Status status = client.stub->GetJob(&context, request, &job);
-    if (!status.ok()) {
-      return RpcError(status, server);
+    if (!Call(client, &Stub::GetJob, request, &job)) {
+      return kExitError;
     }
     if (job.state() != last || last_phase != job.phase()) {
       PrintJob(job);
@@ -343,14 +355,10 @@ int WaitForJob(const Client &client, const std::string &server,
   }
 }
 
-int CmdRules(const Client &client, const std::string &server) {
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
+int CmdRules(const Client &client) {
   proto::ProblemInfo problem;
-  const grpc::Status status =
-      client.stub->GetProblem(&context, proto::GetProblemRequest(), &problem);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::GetProblem, proto::GetProblemRequest(), &problem)) {
+    return kExitError;
   }
 
   std::printf("PROBLEM  %s  [%s]\n",
@@ -458,7 +466,7 @@ std::vector<std::string> SourcesIn(const std::filesystem::path &dir) {
   return found;
 }
 
-int CmdSubmit(const Client &client, const std::string &server) {
+int CmdSubmit(const Client &client) {
   std::vector<std::string> files = absl::GetFlag(FLAGS_file);
   const std::string patch_path = absl::GetFlag(FLAGS_patch);
   const std::string name =
@@ -555,12 +563,9 @@ int CmdSubmit(const Client &client, const std::string &server) {
     }
   }
 
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::SubmitResponse response;
-  const grpc::Status status = client.stub->Submit(&context, request, &response);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::Submit, request, &response)) {
+    return kExitError;
   }
 
   std::printf("candidate %s\njob %s queued (build + placement)\n",
@@ -572,33 +577,29 @@ int CmdSubmit(const Client &client, const std::string &server) {
     std::printf("poll: job %s [--wait]\n", response.job_id().c_str());
     return 0;
   }
-  return WaitForJob(client, server, response.job_id());
+  return WaitForJob(client, response.job_id());
 }
 
-int CmdJob(const Client &client, const std::string &server,
-           const std::vector<char *> &args) {
+int CmdJob(const Client &client, const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "job: a job id is required\n");
     return kExitUsage;
   }
   if (absl::GetFlag(FLAGS_wait)) {
-    return WaitForJob(client, server, args[0]);
+    return WaitForJob(client, args[0]);
   }
   proto::GetJobRequest request;
   request.set_job_id(args[0]);
   proto::Job job;
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
-  const grpc::Status status = client.stub->GetJob(&context, request, &job);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::GetJob, request, &job)) {
+    return kExitError;
   }
   PrintJob(job);
   return IsTerminal(job.state()) && job.state() != proto::Job::DONE ? kExitError
                                                                     : 0;
 }
 
-int CmdCandidates(const Client &client, const std::string &server) {
+int CmdCandidates(const Client &client) {
   proto::ListCandidatesRequest request;
   request.set_game(absl::GetFlag(FLAGS_game));
   request.set_author(absl::GetFlag(FLAGS_author));
@@ -614,13 +615,9 @@ int CmdCandidates(const Client &client, const std::string &server) {
     return kExitUsage;
   }
 
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::ListCandidatesResponse response;
-  const grpc::Status status =
-      client.stub->ListCandidates(&context, request, &response);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::ListCandidates, request, &response)) {
+    return kExitError;
   }
   if (response.candidates().empty()) {
     std::printf("no candidates yet\n");
@@ -640,16 +637,12 @@ int CmdCandidates(const Client &client, const std::string &server) {
   return 0;
 }
 
-int CmdLeaderboard(const Client &client, const std::string &server) {
+int CmdLeaderboard(const Client &client) {
   proto::LeaderboardRequest request;
   request.set_limit(absl::GetFlag(FLAGS_limit));
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::LeaderboardResponse response;
-  const grpc::Status status =
-      client.stub->Leaderboard(&context, request, &response);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::Leaderboard, request, &response)) {
+    return kExitError;
   }
   if (response.rows().empty()) {
     std::printf("nothing has been scored yet\n");
@@ -670,19 +663,14 @@ int CmdLeaderboard(const Client &client, const std::string &server) {
 // are repo-relative, which in a kit is where they belong -- but only below
 // the candidate's own directory: one that lands anywhere else is refused
 // rather than written.
-int PullSourceFile(const Client &client, const std::string &server,
-                   const std::string &candidate_id, const std::string &path,
-                   const std::filesystem::path &into) {
+int PullSourceFile(const Client &client, const std::string &candidate_id,
+                   const std::string &path, const std::filesystem::path &into) {
   proto::GetSourceRequest request;
   request.set_candidate_id(candidate_id);
   request.set_path(path);
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::SourceFile source;
-  const grpc::Status status =
-      client.stub->GetSource(&context, request, &source);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::GetSource, request, &source)) {
+    return kExitError;
   }
   if (into.empty()) {
     std::fwrite(source.content().data(), 1, source.content().size(), stdout);
@@ -710,7 +698,7 @@ int PullSourceFile(const Client &client, const std::string &server,
 
 // Your last submission, into your directory: what $ARENA_RESTORE puts there
 // in place of the starter. False when there are no files of yours to pull.
-bool Restore(const Client &client, const std::string &server) {
+bool Restore(const Client &client) {
   proto::GetCandidateRequest request;
   request.set_candidate_id(client.me);
   grpc::ClientContext context;
@@ -721,34 +709,28 @@ bool Restore(const Client &client, const std::string &server) {
     return false;
   }
   for (const std::string &path : candidate.file_paths()) {
-    if (PullSourceFile(client, server, client.me, path,
-                       client.DirOf(client.me)) != 0) {
+    if (PullSourceFile(client, client.me, path, client.DirOf(client.me)) != 0) {
       return false;
     }
   }
   return true;
 }
 
-int CmdSource(const Client &client, const std::string &server,
-              const std::vector<char *> &args) {
+int CmdSource(const Client &client, const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "source: a candidate id is required\n");
     return kExitUsage;
   }
   const std::string candidate_id = args[0];
   if (args.size() > 1) {
-    return PullSourceFile(client, server, candidate_id, args[1], {});
+    return PullSourceFile(client, candidate_id, args[1], {});
   }
 
   proto::GetCandidateRequest request;
   request.set_candidate_id(candidate_id);
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::Candidate candidate;
-  const grpc::Status status =
-      client.stub->GetCandidate(&context, request, &candidate);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::GetCandidate, request, &candidate)) {
+    return kExitError;
   }
   std::printf("%s  \"%s\"\n", candidate.candidate_id().c_str(),
               candidate.display_name().c_str());
@@ -807,8 +789,8 @@ int CmdSource(const Client &client, const std::string &server,
   if (to_stdout) {
     for (const std::string &path : candidate.file_paths()) {
       std::printf("----- %s -----\n", path.c_str());
-      if (const int code = PullSourceFile(client, server,
-                                          candidate.candidate_id(), path, {});
+      if (const int code =
+              PullSourceFile(client, candidate.candidate_id(), path, {});
           code != 0) {
         return code;
       }
@@ -826,8 +808,8 @@ int CmdSource(const Client &client, const std::string &server,
   }
   std::printf("pulled into %s:\n", into.c_str());
   for (const std::string &path : candidate.file_paths()) {
-    if (const int code = PullSourceFile(client, server,
-                                        candidate.candidate_id(), path, into);
+    if (const int code =
+            PullSourceFile(client, candidate.candidate_id(), path, into);
         code != 0) {
       return code;
     }
@@ -878,8 +860,7 @@ int Wait(pid_t pid) {
 // Yours against |name|'s, here: their directory pulled in beside yours, both
 // built, and the games refereed the way the tournament's workers do it -- the
 // same referee, the same bounds on a game, two bots naming each other.
-int CmdSpar(const Client &client, const std::string &server,
-            const std::vector<char *> &args) {
+int CmdSpar(const Client &client, const std::vector<char *> &args) {
   if (args.empty() || client.me.empty() || client.kit.game().empty()) {
     std::fprintf(stderr,
                  "spar <name>: from the kit of a problem played as matches, "
@@ -892,7 +873,7 @@ int CmdSpar(const Client &client, const std::string &server,
   const bool builtin = rival.rfind("builtin:", 0) == 0;
   // Pulled every time: a name stays, what is under it does not. Someone who
   // is only in this kit -- the starter -- is played as they are.
-  if (!builtin && CmdSource(client, server, args) != 0 &&
+  if (!builtin && CmdSource(client, args) != 0 &&
       !std::filesystem::exists(client.DirOf(rival))) {
     return kExitError;
   }
@@ -968,8 +949,8 @@ int CmdSpar(const Client &client, const std::string &server,
 // The commands above as MCP tools on stdio. Each call runs this program again
 // with what this one resolved in its environment, from the kit, so a relative
 // path means what it does in a shell there.
-int CmdMcp(const Client &client, const std::string &server) {
-  ::setenv("ARENA_SERVER", server.c_str(), 1);
+int CmdMcp(const Client &client) {
+  ::setenv("ARENA_SERVER", client.server.c_str(), 1);
   ::setenv("ARENA_TOKEN", client.token.c_str(), 1);
   ::setenv("ARENA_NAME", client.me.c_str(), 1);
   if (!client.kit_dir.empty()) {
@@ -1054,6 +1035,7 @@ int main(int argc, char **argv) {
   const std::string me = EnvOr("ARENA_NAME", kit.client_id());
   const Client client{proto::Arena::NewStub(grpc::CreateChannel(
                           server, grpc::InsecureChannelCredentials())),
+                      server,
                       token,
                       absl::GetFlag(FLAGS_timeout_s),
                       kit_dir,
@@ -1061,14 +1043,14 @@ int main(int argc, char **argv) {
                       me};
   // Before anything is printed: stdout is the protocol's.
   if (command == "mcp") {
-    return CmdMcp(client, server);
+    return CmdMcp(client);
   }
   // Yours is a directory like everyone's, named after you. The first time, it
   // is a copy of the starter's -- or, with $ARENA_RESTORE, of your last
   // submission, if there is one.
   if (!me.empty() && !client.kit.starter_dir().empty() &&
       !std::filesystem::exists(client.DirOf(me))) {
-    if (!EnvOr("ARENA_RESTORE", "").empty() && Restore(client, server)) {
+    if (!EnvOr("ARENA_RESTORE", "").empty() && Restore(client)) {
       std::printf("%s is yours, restored from your last submission\n\n",
                   client.DirOf(me).c_str());
     } else {
@@ -1086,25 +1068,25 @@ int main(int argc, char **argv) {
   }
 
   if (command == "rules") {
-    return CmdRules(client, server);
+    return CmdRules(client);
   }
   if (command == "submit") {
-    return CmdSubmit(client, server);
+    return CmdSubmit(client);
   }
   if (command == "job") {
-    return CmdJob(client, server, args);
+    return CmdJob(client, args);
   }
   if (command == "candidates") {
-    return CmdCandidates(client, server);
+    return CmdCandidates(client);
   }
   if (command == "leaderboard") {
-    return CmdLeaderboard(client, server);
+    return CmdLeaderboard(client);
   }
   if (command == "source") {
-    return CmdSource(client, server, args);
+    return CmdSource(client, args);
   }
   if (command == "spar") {
-    return CmdSpar(client, server, args);
+    return CmdSpar(client, args);
   }
   PrintUsage();
   return kExitUsage;
