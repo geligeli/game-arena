@@ -3,13 +3,13 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/sandbox/common/docker.h"
-#include "game_arena/sandbox/worker/bot_launch.h"
 
 namespace tournament_arena {
 
@@ -34,6 +34,22 @@ sx::Token Quoted(const std::string &text) {
   sx::Token token;
   token.set_text(text);
   return token;
+}
+
+// "//a/b:c" -> "a/b/c": where bazel writes a target's binary under bazel-bin.
+// "//a/b" is read as "//a/b:b", the same shorthand bazel uses.
+std::string BinaryPathForTarget(const std::string &target) {
+  std::string label(target);
+  if (label.rfind("//", 0) == 0) {
+    label = label.substr(2);
+  }
+  const auto colon = label.rfind(':');
+  if (colon != std::string::npos) {
+    return label.substr(0, colon) + "/" + label.substr(colon + 1);
+  }
+  const auto slash = label.rfind('/');
+  return slash == std::string::npos ? label + "/" + label
+                                    : label + "/" + label.substr(slash + 1);
 }
 
 std::filesystem::path SlotDir(const OrderJobConfig &config, int slot) {
@@ -366,10 +382,18 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
     MountOutputBase(output_base, /*readonly=*/true, step);
     *step->add_argv() =
         Quoted(paths.bazel_bin + BinaryPathForTarget(side.bot_target()));
-    for (const std::string &arg :
-         BotArgs(side.candidate_id(), server, opponent, order.num_games(),
-                 FormatParams(side.params()))) {
-      *step->add_argv() = Quoted(arg);
+    *step->add_argv() = Quoted("--name=" + side.candidate_id());
+    *step->add_argv() = Quoted("--server=" + server);
+    *step->add_argv() = Quoted("--opponent=" + opponent);
+    *step->add_argv() = Quoted("--games=" + std::to_string(order.num_games()));
+    // Sorted, so a rebuilt candidate gets a byte-identical command line.
+    std::string params;
+    for (const auto &[key, value] : std::map<std::string, std::string>(
+             side.params().begin(), side.params().end())) {
+      params += (params.empty() ? "" : ",") + key + "=" + value;
+    }
+    if (!params.empty()) {
+      *step->add_argv() = Quoted("--params=" + params);
     }
   };
 
@@ -379,7 +403,7 @@ void AddMatchPhase(const proto::WorkOrder &order, const BuildPaths &paths,
     sx::Step *opponent = phase->add_background();
     opponent->set_name("opponent");
     add_bot(opponent, order.opponent(),
-            std::string(kPlayerPrefix) + order.candidate().candidate_id());
+            "player:" + order.candidate().candidate_id());
   }
 
   sx::Step *bot = phase->mutable_foreground();

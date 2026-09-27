@@ -8,15 +8,6 @@ package(default_visibility = ["//visibility:public"])
 # in, build it and play its games. Workers dial the arena, so a fleet can be
 # attached from anywhere.
 
-# Turning an order's bazel labels and params into something to exec. Shared by
-# both backends so they cannot drift into launching the same order differently.
-cc_library(
-    name = "bot_launch",
-    srcs = ["bot_launch.cc"],
-    hdrs = ["bot_launch.h"],
-    deps = ["@protobuf//:protobuf"],
-)
-
 # Reading what a graded command measured, and folding several runs into one
 # number per metric.
 cc_library(
@@ -53,7 +44,6 @@ cc_library(
     srcs = ["order_job.cc"],
     hdrs = ["order_job.h"],
     deps = [
-        ":bot_launch",
         "//game_arena/common/kv_options",
         "//game_arena/proto:arena_cc_proto",
         "//game_arena/sandbox/common:docker",
