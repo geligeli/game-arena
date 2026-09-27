@@ -53,8 +53,7 @@ bool ApplyHostPatches(const proto::Workspace &ws,
   for (const std::string &name : ws.patch_files()) {
     const std::filesystem::path diff =
         std::filesystem::path(ws.staging_dir()) / name;
-    // --check first, so a patch that does not apply says so before half of it
-    // has landed.
+    // --check first, to tell "does not apply" from a failed apply.
     const sandbox_common::StepResult check = sandbox_common::RunStep(
         GitOf(ws), {"apply", "--check", diff.string()}, tree, log_dir,
         "apply_check_" + name, std::chrono::seconds(120));
@@ -102,8 +101,6 @@ bool PrepareWorkspace(const proto::Workspace &ws,
   if (!ws.tree_dir().empty()) {
     std::filesystem::create_directories(ws.tree_dir(), ec);
   }
-  // Where a process engine's steps collect files from; a container engine
-  // keeps its scratch in a volume and leaves this empty.
   if (!ws.scratch_dir().empty()) {
     std::filesystem::create_directories(ws.scratch_dir(), ec);
   }

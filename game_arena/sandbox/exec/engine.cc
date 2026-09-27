@@ -53,10 +53,6 @@ proto::StepResult *AddStepResult(proto::PhaseResult *phase,
 
 std::string SandboxName(const std::string &job_id,
                         const std::string &step_name) {
-  // A one-step job names its sandbox exactly after itself, which is what the
-  // standalone runner has always done. A multi-step one suffixes, which is
-  // what lets Cancel find every sandbox of a job it holds without keeping a
-  // list of what it started.
   const std::string base = sandbox_common::SanitizeContainerName(job_id);
   if (step_name.empty()) {
     return base;

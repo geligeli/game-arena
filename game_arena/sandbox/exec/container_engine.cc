@@ -42,7 +42,6 @@ void Quiet(const std::string &docker, const std::vector<std::string> &args) {
                       std::chrono::seconds(60));
 }
 
-// The job's own volumes: the tree, the staged files, and scratch.
 std::string WorkspaceVolume(const proto::Job &job) {
   return SandboxName(job.id(), "ws");
 }
@@ -56,8 +55,6 @@ std::string LoaderName(const proto::Job &job) {
   return SandboxName(job.id(), "load");
 }
 
-// The steps with a scratch volume of their own, and where the loader mounts
-// each to hand it to the sandbox's user.
 std::vector<const proto::Step *> PrivateScratchSteps(const proto::Job &job) {
   std::vector<const proto::Step *> steps;
   for (const proto::Phase &phase : job.phases()) {
@@ -98,8 +95,6 @@ std::string MountArg(const proto::Mount &mount) {
                                          mount.readonly());
 }
 
-// The `--mount` arguments every step of |job| gets, in order: the tree, the
-// scratch dir, then whatever the job asked for.
 std::vector<std::string> WorkspaceMounts(const proto::Job &job,
                                          const proto::Step &step) {
   std::vector<std::string> mounts = {
@@ -113,7 +108,6 @@ std::vector<std::string> WorkspaceMounts(const proto::Job &job,
   return mounts;
 }
 
-// True when a step needs the staged files at /patches.
 bool AppliesStagedFiles(const proto::Job &job, const proto::Step &step) {
   return step.applies_patches() &&
          job.workspace().patch() != proto::Workspace::PATCH_NONE &&
@@ -171,11 +165,7 @@ proto::JobResult ContainerEngine::Run(const proto::Job &job,
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (cancelled_.erase(job.id()) > 0) {
-      // Unconditionally, including over an OK status: a killed step merely
-      // exits nonzero, which on its own is indistinguishable from a step that
-      // failed on its own merits. A caller polling needs to tell "you
-      // replaced it" from "it broke", and only one of those is worth
-      // investigating.
+      // Even over OK: a killed step just exits nonzero, like a failed one.
       status->set_code(proto::Status::CANCELLED);
       status->set_message("cancelled");
     }
@@ -189,9 +179,7 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
   const std::filesystem::path log_dir(job.log_dir());
   const proto::Workspace &ws = job.workspace();
 
-  // A job killed mid-flight leaves its volumes behind under these names;
-  // clear them so a redelivered job starts from the tree, not from whatever
-  // the last attempt left in it.
+  // Clears a killed attempt's volumes, so a redelivered job starts clean.
   RemoveVolumes(job);
   for (const std::string &volume : JobVolumes(job)) {
     const StepResult made = Docker(config_.docker, {"volume", "create", volume},
@@ -207,14 +195,8 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
     }
   }
 
-  // The loader: a container that exists so the daemon has somewhere to copy
-  // into, and that runs once to hand the copied tree to the sandbox's user.
-  // Always, root included: the tar keeps the worker's ownership, and a
-  // sandbox drops every capability, so even root cannot write into someone
-  // else's directory there -- git apply then reports success and lands
-  // nothing. Its mounts are the job's volumes -- the persistent ones too, so
-  // a fresh one is owned by that user before a step tries to write to it --
-  // and never a bind mount, whose ownership is the host's business.
+  // Chowned to the sandbox's user even for root: without capabilities, root
+  // cannot write others' files, and git apply succeeds and lands nothing.
   const std::string user = job.isolation().run_as_user().empty()
                                ? "0:0"
                                : job.isolation().run_as_user();
@@ -247,8 +229,7 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
       own(mount.source(), mount.target(), mount.readonly());
     }
   }
-  // A read-only mount is not the sandbox's to write, and is usually another
-  // step's writable one again.
+  // A read-only mount is usually another step's writable one.
   for (const proto::Phase &phase : job.phases()) {
     for (const proto::Mount &mount : phase.foreground().mounts()) {
       if (mount.kind() == proto::Mount::VOLUME && !mount.readonly()) {
@@ -304,8 +285,6 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   const proto::Isolation phase_isolation =
       Merge(job.isolation(), phase.isolation());
 
-  // Every container this phase will start, so one list drives both the
-  // pre-start reap and the teardown.
   std::vector<const proto::Step *> steps;
   for (const proto::Step &step : phase.background()) {
     steps.push_back(&step);
@@ -317,8 +296,7 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     wants_network |=
         NeedsPhaseNetwork(Merge(phase_isolation, step->isolation()));
   }
-  // One bridge per job, not per phase: a job has at most one phase that needs
-  // one, and the name is what a Cancel derives.
+  // Named per job, not phase: at most one phase of a job needs a bridge.
   const std::string network = wants_network ? SandboxName(job.id(), "net") : "";
 
   const auto teardown = [&] {
@@ -329,8 +307,7 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
       Quiet(config_.docker, {"network", "rm", network});
     }
   };
-  // A worker killed mid-job leaves containers behind under these exact names;
-  // clear them so a redelivered job starts fresh.
+  // Reaps what a killed attempt left under these names.
   teardown();
 
   {
@@ -371,16 +348,13 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   const auto container_args = [&](const proto::Step &step,
                                   bool detached) -> std::vector<std::string> {
     const proto::Isolation isolation = Merge(phase_isolation, step.isolation());
-    // Inside a container the scratch dir is always at the same mount point,
-    // wherever it came from on the host.
     const proto::Step resolved =
         Substituted(step, {{kScratchPlaceholder, sandbox_common::kScratch}});
     sandbox_common::DockerRunSpec spec;
     spec.name = SandboxName(job.id(), step.name());
     spec.image = isolation.image();
     spec.script = EntrypointScript(job.workspace(), resolved);
-    // Kept when something has to be asked of it afterwards: its logs, or a
-    // file it was told to leave in scratch. Teardown removes it either way.
+    // Kept for `docker logs` or `docker cp`; teardown removes it.
     spec.rm = !step.keep_after_exit() && step.collect_files().empty();
     spec.detached = detached;
     spec.network = NetworkArg(isolation, network);
@@ -396,8 +370,7 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     return sandbox_common::DockerRunArgs(spec);
   };
 
-  // Background steps first, detached, so the foreground one has something to
-  // talk to.
+  // Detached and first, so the foreground step has something to talk to.
   for (const proto::Step &step : phase.background()) {
     const StepResult started =
         Docker(config_.docker, container_args(step, /*detached=*/true), log_dir,
@@ -427,20 +400,16 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
                 "cannot run docker ('" + config_.docker + "' not found)");
   }
   if (ran.run.timed_out) {
-    // The timeout killed the docker *client*; the container belongs to the
-    // daemon and has to be stopped by name.
+    // The timeout killed the docker client, not the daemon's container.
     Quiet(config_.docker, {"kill", SandboxName(job.id(), foreground.name())});
     foreground_result->set_timed_out(true);
-    // 124, as timeout(1) reports it, so a numeric-only consumer is not lied
-    // to about why this ended.
+    // As timeout(1) reports it.
     foreground_result->set_exit_code(124);
   } else {
     foreground_result->set_exit_code(ran.run.exit_code);
   }
 
-  // Drain the background steps: wait for them to finish counting, then ask
-  // for what they printed. They were started with nobody attached to their
-  // output, so it has to be asked for.
+  // Detached, so their output has to be asked for once they exit.
   const int drain_timeout_s = phase.drain_timeout_s() > 0
                                   ? phase.drain_timeout_s()
                                   : kDefaultDrainTimeoutS;
@@ -452,8 +421,7 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     AddStepResult(result, step.name(), log_dir);
   }
 
-  // Whatever the steps were asked to bring home, copied out of the exited
-  // container's scratch through the daemon. The container was kept for this.
+  // collect_files, copied out of each exited container through the daemon.
   for (proto::StepResult &step_result : *result->mutable_steps()) {
     const auto it = std::ranges::find_if(steps, [&](const proto::Step *step) {
       return step->name() == step_result.name();
@@ -498,14 +466,9 @@ void ContainerEngine::Cancel(const std::string &job_id) {
     containers = it->second.container_names;
     networks = it->second.network_names;
   }
-  // Killing something that has already exited is a no-op, and that is the
-  // race worth designing for rather than locking against: the job's own
-  // thread may be finishing while this runs.
   for (const std::string &container : containers) {
     Quiet(config_.docker, {"kill", container});
   }
-  // The network too. Before this engine, a cancelled match left one behind
-  // per order: teardown only ran on Run's own exit paths.
   for (const std::string &network : networks) {
     Quiet(config_.docker, {"network", "rm", network});
   }

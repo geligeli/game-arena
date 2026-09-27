@@ -26,8 +26,7 @@ namespace {
 using sandbox_common::ReadFile;
 using sandbox_common::TailOf;
 
-// Polls for a step's port file. Polling rather than a pipe because a
-// background step is started detached and its stdout is a log, not a channel.
+// Polls: a background step's stdout is a log file, not a channel.
 int AwaitPort(const std::filesystem::path &port_file,
               std::chrono::seconds limit) {
   const auto deadline = std::chrono::steady_clock::now() + limit;
@@ -94,9 +93,7 @@ proto::JobResult ProcessEngine::Run(const proto::Job &job, Observer *observer) {
     // A phase that failed early stopped its background steps untracked.
     running_.erase(job.id());
     if (cancelled_.erase(job.id()) > 0) {
-      // Unconditionally, including over an OK status: a killed step merely
-      // exits nonzero, which on its own is indistinguishable from a step that
-      // failed on its own merits.
+      // Even over OK: a killed step just exits nonzero, like a failed one.
       status->set_code(proto::Status::CANCELLED);
       status->set_message("cancelled");
     }
@@ -119,13 +116,10 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     return shared / step.name();
   };
 
-  // Resolved addresses of the background steps, for {{peer:<name>}}.
   std::map<std::string, std::string> peers;
   std::vector<process::Child> background;
 
-  // Every placeholder this engine can resolve, rebuilt per step because
-  // {{port_file}} is per step and the peer addresses are only known once the
-  // background steps have published them.
+  // Per step: {{port_file}} is, and a peer is known only once it published.
   const auto resolve = [&](const proto::Step &step) -> proto::Step {
     std::map<std::string, std::string> replacements = {
         {kScratchPlaceholder, scratch(step).string()},
@@ -169,9 +163,7 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     background.push_back(std::move(*child));
 
     if (step.endpoint().discover_via_port_file()) {
-      // The port is only knowable once the step is listening. Waiting for the
-      // file it writes after bind() is the difference between "the peer could
-      // not connect" and "it connected before anything was there".
+      // Written after bind(), so nothing dials before the peer listens.
       const int timeout_s = step.endpoint().discover_timeout_s() > 0
                                 ? step.endpoint().discover_timeout_s()
                                 : 60;
@@ -231,8 +223,6 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
                 "cannot run " + argv.front());
   }
 
-  // The background steps are done being talked to; let them finish writing
-  // their own verdicts.
   for (process::Child &step : background) {
     step.Wait();
     Untrack(job.id(), step.pid());
@@ -276,9 +266,7 @@ void ProcessEngine::Cancel(const std::string &job_id) {
       groups.push_back(it->second);
     }
   }
-  // The group, not the process: build tools spawn trees, and killing only the
-  // parent leaves the workers building. Signalling one that has already
-  // exited is a no-op, which is the race worth designing for.
+  // The group: build tools spawn trees that outlive a killed parent.
   for (const pid_t pgid : groups) {
     ::killpg(pgid, SIGKILL);
   }
