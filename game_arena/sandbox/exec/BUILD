@@ -34,6 +34,7 @@ cc_library(
     deps = [
         ":sandbox_job_cc_proto",
         "//game_arena/sandbox/common:docker",
+        "//game_arena/sandbox/common:files",
     ],
 )
 
@@ -77,6 +78,7 @@ cc_library(
     srcs = ["workspace.cc"],
     hdrs = ["workspace.h"],
     deps = [
+        ":engine",
         ":sandbox_job_cc_proto",
         "//game_arena/common/process",
         "//game_arena/sandbox/common:docker",

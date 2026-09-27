@@ -234,8 +234,6 @@ message Status {
   }
   Code code = 1;
   string message = 2;  // human text, already trimmed
-  string phase = 3;
-  string step = 4;
 }
 
 message StepResult {

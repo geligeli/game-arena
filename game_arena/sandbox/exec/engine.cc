@@ -5,6 +5,7 @@
 #include <string>
 
 #include "game_arena/sandbox/common/docker.h"
+#include "game_arena/sandbox/common/files.h"
 
 namespace sandbox_exec {
 
@@ -41,6 +42,29 @@ proto::Step Substituted(
     }
   }
   return out;
+}
+
+bool Fail(proto::Status *status, proto::Status::Code code,
+          const std::string &message) {
+  status->set_code(code);
+  status->set_message(message);
+  return false;
+}
+
+proto::Isolation Merge(const proto::Isolation &base,
+                       const proto::Isolation &override_with) {
+  return override_with.ByteSizeLong() > 0 ? override_with : base;
+}
+
+proto::StepResult *AddStepResult(proto::PhaseResult *phase,
+                                 const std::string &name,
+                                 const std::filesystem::path &log_dir) {
+  proto::StepResult *step = phase->add_steps();
+  step->set_name(name);
+  step->set_started(true);
+  step->set_stdout(sandbox_common::ReadFile(log_dir / (name + ".out")));
+  step->set_stderr(sandbox_common::ReadFile(log_dir / (name + ".err")));
+  return step;
 }
 
 std::string SandboxName(const std::string &job_id,

@@ -8,19 +8,13 @@
 #include "game_arena/sandbox/common/files.h"
 #include "game_arena/sandbox/common/step.h"
 #include "game_arena/sandbox/common/text.h"
+#include "game_arena/sandbox/exec/engine.h"
 
 namespace sandbox_exec {
 
 namespace {
 
 using sandbox_common::TailOf;
-
-bool Fail(proto::Status *status, proto::Status::Code code,
-          const std::string &message) {
-  status->set_code(code);
-  status->set_message(message);
-  return false;
-}
 
 std::string GitOf(const proto::Workspace &ws) {
   return ws.git().empty() ? "git" : ws.git();

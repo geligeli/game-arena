@@ -14,6 +14,7 @@
 // environment; that the argv happens to start with "bazel" is the caller's
 // business.
 
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <string>
@@ -77,6 +78,21 @@ inline constexpr char kPortFilePlaceholder[] = "{{port_file}}";
 // engine that substituted only one of them would work until it didn't.
 proto::Step Substituted(const proto::Step &step,
                         const std::map<std::string, std::string> &replacements);
+
+// Sets |status| and returns false.
+bool Fail(proto::Status *status, proto::Status::Code code,
+          const std::string &message);
+
+// |override_with| if it sets anything, else |base|: never field by field, since
+// half-overridden isolation reads as tight and is not.
+proto::Isolation Merge(const proto::Isolation &base,
+                       const proto::Isolation &override_with);
+
+// Appends a started step's result, its output read back from
+// <log_dir>/<name>.{out,err}.
+proto::StepResult *AddStepResult(proto::PhaseResult *phase,
+                                 const std::string &name,
+                                 const std::filesystem::path &log_dir);
 
 class Engine {
  public:

@@ -26,30 +26,6 @@ namespace {
 using sandbox_common::ReadFile;
 using sandbox_common::TailOf;
 
-// A step's isolation, or the phase's, or the job's. Same precedence the
-// container engine uses: a step's isolation replaces rather than merges, so
-// half-overridden isolation cannot read as tight and not be.
-proto::Isolation EffectiveIsolation(const proto::Job &job,
-                                    const proto::Phase &phase,
-                                    const proto::Step &step) {
-  if (step.isolation().ByteSizeLong() > 0) {
-    return step.isolation();
-  }
-  if (phase.isolation().ByteSizeLong() > 0) {
-    return phase.isolation();
-  }
-  return job.isolation();
-}
-
-void Fail(proto::Status *status, proto::Status::Code code,
-          const std::string &message, const std::string &phase,
-          const std::string &step) {
-  status->set_code(code);
-  status->set_message(message);
-  status->set_phase(phase);
-  status->set_step(step);
-}
-
 // Polls for a step's port file. Polling rather than a pipe because a
 // background step is started detached and its stdout is a log, not a channel.
 int AwaitPort(const std::filesystem::path &port_file,
@@ -92,8 +68,7 @@ proto::JobResult ProcessEngine::Run(const proto::Job &job, Observer *observer) {
   proto::Status *status = result.mutable_status();
 
   if (job.phases().empty()) {
-    Fail(status, proto::Status::INVALID_JOB, "a job needs at least one phase",
-         "", "");
+    Fail(status, proto::Status::INVALID_JOB, "a job needs at least one phase");
     return result;
   }
 
@@ -183,9 +158,7 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     }
     const std::vector<std::string> argv = render(step);
     if (argv.empty()) {
-      Fail(status, proto::Status::INVALID_JOB, "a step needs a command",
-           phase.name(), step.name());
-      return false;
+      return Fail(status, proto::Status::INVALID_JOB, "a step needs a command");
     }
     const std::filesystem::path port_file = log_dir / (step.name() + ".port");
     std::error_code ec;
@@ -195,10 +168,8 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
         {.stdout_path = log_dir / (step.name() + ".out"),
          .stderr_path = log_dir / (step.name() + ".err")});
     if (!child) {
-      Fail(status, proto::Status::START_FAILED,
-           step.name() + " is missing at " + argv.front(), phase.name(),
-           step.name());
-      return false;
+      return Fail(status, proto::Status::START_FAILED,
+                  step.name() + " is missing at " + argv.front());
     }
     Track(job.id(), child->pid());
     background.push_back(std::move(*child));
@@ -212,11 +183,10 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
                                 : config_.endpoint_timeout_s;
       const int port = AwaitPort(port_file, std::chrono::seconds(timeout_s));
       if (port <= 0) {
-        Fail(status, proto::Status::ENDPOINT_FAILED,
-             step.name() + " never reported a port: " +
-                 TailOf(ReadFile(log_dir / (step.name() + ".err")), 1500),
-             phase.name(), step.name());
-        return false;
+        return Fail(
+            status, proto::Status::ENDPOINT_FAILED,
+            step.name() + " never reported a port: " +
+                TailOf(ReadFile(log_dir / (step.name() + ".err")), 1500));
       }
       peers[step.name()] = "localhost:" + std::to_string(port);
     } else if (step.endpoint().port() > 0) {
@@ -231,9 +201,7 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   }
   const std::vector<std::string> argv = render(foreground);
   if (argv.empty()) {
-    Fail(status, proto::Status::INVALID_JOB, "a step needs a command",
-         phase.name(), foreground.name());
-    return false;
+    return Fail(status, proto::Status::INVALID_JOB, "a step needs a command");
   }
 
   const proto::Step resolved_foreground = resolve(foreground);
@@ -250,8 +218,10 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
        .env = foreground_env,
        .stdout_path = log_dir / (foreground.name() + ".out"),
        .stderr_path = log_dir / (foreground.name() + ".err"),
-       .address_space_limit_bytes = EffectiveIsolation(job, phase, foreground)
-                                        .address_space_limit_bytes()});
+       .address_space_limit_bytes =
+           Merge(Merge(job.isolation(), phase.isolation()),
+                 foreground.isolation())
+               .address_space_limit_bytes()});
   bool timed_out = false;
   int exit_code = -1;
   if (child) {
@@ -261,21 +231,16 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     Untrack(job.id(), child->pid());
   }
 
-  proto::StepResult *foreground_result = result->add_steps();
-  foreground_result->set_name(foreground.name());
+  proto::StepResult *foreground_result =
+      AddStepResult(result, foreground.name(), log_dir);
   foreground_result->set_started(child.has_value());
   foreground_result->set_timeout_s(foreground.timeout_s());
   foreground_result->set_timed_out(timed_out);
   foreground_result->set_exit_code(timed_out ? 124 : exit_code);
-  foreground_result->set_stdout(
-      ReadFile(log_dir / (foreground.name() + ".out")));
-  foreground_result->set_stderr(
-      ReadFile(log_dir / (foreground.name() + ".err")));
 
   if (!child) {
-    Fail(status, proto::Status::START_FAILED, "cannot run " + argv.front(),
-         phase.name(), foreground.name());
-    return false;
+    return Fail(status, proto::Status::START_FAILED,
+                "cannot run " + argv.front());
   }
 
   // The background steps are done being talked to; let them finish writing
@@ -285,11 +250,8 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     Untrack(job.id(), step.pid());
   }
   for (const proto::Step &step : phase.background()) {
-    proto::StepResult *background_result = result->add_steps();
-    background_result->set_name(step.name());
-    background_result->set_started(true);
-    background_result->set_stdout(ReadFile(log_dir / (step.name() + ".out")));
-    background_result->set_stderr(ReadFile(log_dir / (step.name() + ".err")));
+    proto::StepResult *background_result =
+        AddStepResult(result, step.name(), log_dir);
     if (!peers[step.name()].empty()) {
       background_result->set_peer_address(peers[step.name()]);
     }

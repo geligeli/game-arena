@@ -41,14 +41,6 @@ void Quiet(const std::string &docker, const std::vector<std::string> &args) {
                       std::chrono::seconds(60));
 }
 
-proto::Isolation Merge(const proto::Isolation &base,
-                       const proto::Isolation &override_with) {
-  // A step's isolation replaces the phase's outright rather than merging
-  // field by field. Half-overridden isolation is the kind of thing that reads
-  // as tight and is not.
-  return override_with.ByteSizeLong() > 0 ? override_with : base;
-}
-
 // The job's own volumes: the tree, the staged files, and scratch.
 std::string WorkspaceVolume(const proto::Job &job) {
   return SandboxName(job.id(), "ws");
@@ -127,15 +119,6 @@ bool AppliesStagedFiles(const proto::Job &job, const proto::Step &step) {
          job.workspace().patch() != proto::Workspace::PATCH_HOST;
 }
 
-void Fail(proto::Status *status, proto::Status::Code code,
-          const std::string &message, const std::string &phase,
-          const std::string &step) {
-  status->set_code(code);
-  status->set_message(message);
-  status->set_phase(phase);
-  status->set_step(step);
-}
-
 }  // namespace
 
 ContainerEngine::ContainerEngine(ContainerEngineConfig config)
@@ -157,14 +140,13 @@ proto::JobResult ContainerEngine::Run(const proto::Job &job,
   proto::Status *status = result.mutable_status();
 
   if (job.phases().empty()) {
-    Fail(status, proto::Status::INVALID_JOB, "a job needs at least one phase",
-         "", "");
+    Fail(status, proto::Status::INVALID_JOB, "a job needs at least one phase");
     return result;
   }
 
   if (job.isolation().image().empty()) {
     Fail(status, proto::Status::INVALID_JOB,
-         "a container job needs an image to load its workspace with", "", "");
+         "a container job needs an image to load its workspace with");
     return result;
   }
 
@@ -224,15 +206,13 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
     const StepResult made = Docker(config_.docker, {"volume", "create", volume},
                                    log_dir, "volume_" + volume);
     if (!made.run.started) {
-      Fail(status, proto::Status::TOOL_MISSING,
-           "cannot run docker ('" + config_.docker + "' not found)", "", "");
-      return false;
+      return Fail(status, proto::Status::TOOL_MISSING,
+                  "cannot run docker ('" + config_.docker + "' not found)");
     }
     if (made.run.exit_code != 0) {
-      Fail(status, proto::Status::WORKSPACE_FAILED,
-           "cannot create volume " + volume + ": " + TailOf(made.output, 500),
-           "", "");
-      return false;
+      return Fail(
+          status, proto::Status::WORKSPACE_FAILED,
+          "cannot create volume " + volume + ": " + TailOf(made.output, 500));
     }
   }
 
@@ -299,10 +279,9 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
   const std::string loader = LoaderName(job);
   Quiet(config_.docker, {"rm", "-f", loader});
   const auto fail_load = [&](const std::string &what, const StepResult &step) {
-    Fail(status, proto::Status::WORKSPACE_FAILED,
-         what + ": " + TailOf(step.output, 1000), "", "");
     Quiet(config_.docker, {"rm", "-f", loader});
-    return false;
+    return Fail(status, proto::Status::WORKSPACE_FAILED,
+                what + ": " + TailOf(step.output, 1000));
   };
 
   const StepResult created =
@@ -393,18 +372,15 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
         Docker(config_.docker, {"network", "create", "--internal", network},
                log_dir, phase.name() + "_network");
     if (!made.run.started) {
-      Fail(status, proto::Status::TOOL_MISSING,
-           "cannot run docker ('" + config_.docker + "' not found)",
-           phase.name(), "");
-      return false;
+      return Fail(status, proto::Status::TOOL_MISSING,
+                  "cannot run docker ('" + config_.docker + "' not found)");
     }
     if (made.run.exit_code != 0) {
-      Fail(status, proto::Status::NETWORK_FAILED,
-           "cannot create the phase network: " +
-               TailOf(ReadFile(log_dir / (phase.name() + "_network.err")), 500),
-           phase.name(), "");
       teardown();
-      return false;
+      return Fail(
+          status, proto::Status::NETWORK_FAILED,
+          "cannot create the phase network: " +
+              TailOf(ReadFile(log_dir / (phase.name() + "_network.err")), 500));
     }
   }
 
@@ -450,12 +426,11 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
         Docker(config_.docker, container_args(step, /*detached=*/true), log_dir,
                step.name() + "_start", 120);
     if (!started.run.started || started.run.exit_code != 0) {
-      Fail(status, proto::Status::START_FAILED,
-           "cannot start " + step.name() + ": " +
-               TailOf(ReadFile(log_dir / (step.name() + "_start.err")), 1000),
-           phase.name(), step.name());
       teardown();
-      return false;
+      return Fail(
+          status, proto::Status::START_FAILED,
+          "cannot start " + step.name() + ": " +
+              TailOf(ReadFile(log_dir / (step.name() + "_start.err")), 1000));
     }
   }
 
@@ -467,21 +442,15 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
       Docker(config_.docker, container_args(foreground, /*detached=*/false),
              log_dir, foreground.name(), foreground.timeout_s());
 
-  proto::StepResult *foreground_result = result->add_steps();
-  foreground_result->set_name(foreground.name());
+  proto::StepResult *foreground_result =
+      AddStepResult(result, foreground.name(), log_dir);
   foreground_result->set_started(ran.run.started);
   foreground_result->set_timeout_s(foreground.timeout_s());
-  foreground_result->set_stdout(
-      ReadFile(log_dir / (foreground.name() + ".out")));
-  foreground_result->set_stderr(
-      ReadFile(log_dir / (foreground.name() + ".err")));
 
   if (!ran.run.started) {
-    Fail(status, proto::Status::TOOL_MISSING,
-         "cannot run docker ('" + config_.docker + "' not found)", phase.name(),
-         foreground.name());
     teardown();
-    return false;
+    return Fail(status, proto::Status::TOOL_MISSING,
+                "cannot run docker ('" + config_.docker + "' not found)");
   }
   if (ran.run.timed_out) {
     // The timeout killed the docker *client*; the container belongs to the
@@ -506,11 +475,7 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     Docker(config_.docker, {"wait", container}, log_dir, step.name() + "_wait",
            drain_timeout_s);
     Docker(config_.docker, {"logs", container}, log_dir, step.name());
-    proto::StepResult *background_result = result->add_steps();
-    background_result->set_name(step.name());
-    background_result->set_started(true);
-    background_result->set_stdout(ReadFile(log_dir / (step.name() + ".out")));
-    background_result->set_stderr(ReadFile(log_dir / (step.name() + ".err")));
+    AddStepResult(result, step.name(), log_dir);
   }
 
   // Whatever the steps were asked to bring home, copied out of the exited
