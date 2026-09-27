@@ -12,7 +12,6 @@
 namespace arena_cli {
 namespace {
 
-// The most of a command's output one result puts in an agent's context.
 constexpr size_t kMaxOutputBytes = 20000;
 
 struct Arg {
@@ -126,7 +125,6 @@ std::string Text(const boost::json::value &value) {
   return boost::json::serialize(value);
 }
 
-// |arguments| as |tool|'s command line: its flags, then its positionals.
 std::vector<std::string> Argv(const Tool &tool,
                               const boost::json::object &arguments) {
   std::vector<std::string> argv = {tool.command};

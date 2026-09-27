@@ -1,11 +1,5 @@
-# ~/.bazelrc's cluster, made safe for priming a kit: the shared cache, with
-# every action run here. Passed to the priming build alone, never into a kit:
-#
-#   bazel run //:kit_image_issue -- --image=TAG --prime_bazelrc=prime.bazelrc
-#
-# No --remote_executor and no --remote_default_exec_properties: both are part
-# of every action's key, and a participant's build in the image has neither,
-# so a cache primed with them would never hit.
+# For priming only (--prime_bazelrc). No --remote_executor or exec properties:
+# both are in every action key, and a kit's build has neither.
 common --repository_cache=/large_nfs/.bazel-repo-cache
 
 build --remote_cache=grpc://192.168.1.17:8980

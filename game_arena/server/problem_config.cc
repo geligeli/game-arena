@@ -3,7 +3,7 @@
 #include <google/protobuf/io/tokenizer.h>
 #include <google/protobuf/text_format.h>
 
-#include <cctype>
+#include <algorithm>
 #include <cstddef>
 #include <fstream>
 #include <ios>
@@ -12,9 +12,11 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "game_arena/common/kv_options/kv_options.h"
 
@@ -22,8 +24,6 @@ namespace tournament_arena {
 
 namespace {
 
-// Collects every parse diagnostic instead of only the first, so a config with
-// three typos takes one edit round rather than three.
 class CollectingErrors final : public google::protobuf::io::ErrorCollector {
  public:
   void RecordError(int line, google::protobuf::io::ColumnNumber column,
@@ -39,50 +39,21 @@ class CollectingErrors final : public google::protobuf::io::ErrorCollector {
   std::string text_;
 };
 
-int CountPrimaryMetrics(const proto::GradeSpec &grade) {
-  int primaries = 0;
-  for (const proto::MetricSpec &metric : grade.metrics()) {
-    primaries += metric.primary() ? 1 : 0;
-  }
-  return primaries;
-}
-
 }  // namespace
 
 bool IsValidProblemId(std::string_view problem_id) {
-  if (problem_id.empty() || problem_id.size() > 64) {
-    return false;
-  }
-  const auto is_lower_alnum = [](char c) {
-    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
-  };
-  if (!is_lower_alnum(problem_id.front())) {
-    return false;
-  }
-  for (const char c : problem_id) {
-    if (!is_lower_alnum(c) && c != '-' && c != '_') {
-      return false;
-    }
-  }
-  return true;
+  constexpr std::string_view kLowerAlnum =
+      "abcdefghijklmnopqrstuvwxyz0123456789";
+  return !problem_id.empty() && problem_id.size() <= 64 &&
+         kLowerAlnum.contains(problem_id.front()) &&
+         std::ranges::all_of(problem_id, [&](char c) {
+           return kLowerAlnum.contains(c) || c == '-' || c == '_';
+         });
 }
 
 std::string ExpandSubmissionId(std::string_view text,
                                std::string_view submission_id) {
-  constexpr std::string_view kPlaceholder = "{submission_id}";
-  std::string out;
-  out.reserve(text.size());
-  for (std::size_t at = 0; at < text.size();) {
-    const std::size_t hit = text.find(kPlaceholder, at);
-    if (hit == std::string_view::npos) {
-      out.append(text.substr(at));
-      break;
-    }
-    out.append(text.substr(at, hit - at));
-    out.append(submission_id);
-    at = hit + kPlaceholder.size();
-  }
-  return out;
+  return absl::StrReplaceAll(text, {{"{submission_id}", submission_id}});
 }
 
 std::optional<proto::ProblemConfig> ParseProblemConfigText(
@@ -91,9 +62,7 @@ std::optional<proto::ProblemConfig> ParseProblemConfigText(
   CollectingErrors errors;
   google::protobuf::TextFormat::Parser parser;
   parser.RecordErrorsTo(&errors);
-  // An unknown field is a typo or a config written against a newer server. Both
-  // are worth failing on: silently ignoring it would apply a default the author
-  // believed they had overridden.
+  // Ignoring a typo'd field would apply a default the author meant to override.
   parser.AllowUnknownField(false);
   if (!parser.ParseFromString(std::string(text), &config)) {
     *error =
@@ -104,67 +73,30 @@ std::optional<proto::ProblemConfig> ParseProblemConfigText(
 }
 
 void ApplyProblemDefaults(proto::ProblemConfig *config) {
-  // Unset and "explicitly zero" are the same thing for a proto3 scalar, which
-  // is exactly right here: every field defaulted below is a limit where zero
-  // would be nonsense anyway.
-  proto::SubmissionPolicy *submission = config->mutable_submission();
-  if (submission->max_patch_bytes() == 0) {
-    submission->set_max_patch_bytes(2ULL * 1024 * 1024);
-  }
-  if (submission->max_files() == 0) {
-    submission->set_max_files(64);
-  }
-  if (submission->max_hunks() == 0) {
-    submission->set_max_hunks(512);
-  }
-
-  if (config->build().timeout_s() == 0) {
-    config->mutable_build()->set_timeout_s(1800);
-  }
-
-  proto::SandboxSpec *sandbox = config->mutable_sandbox();
-  if (sandbox->memory_limit_mb() == 0) {
-    sandbox->set_memory_limit_mb(4096);
-  }
-  if (sandbox->pids_limit() == 0) {
-    sandbox->set_pids_limit(512);
-  }
-
+  // proto3: unset is zero, never a sane limit, so the config merges onto these.
+  proto::ProblemConfig defaults;
+  google::protobuf::TextFormat::ParseFromString(
+      R"pb(
+        submission { max_patch_bytes: 2097152 max_files: 64 max_hunks: 512 }
+        build { timeout_s: 1800 }
+        sandbox { memory_limit_mb: 4096 pids_limit: 512 }
+        # No "unlimited": a quota that can be switched off goes unnoticed off.
+        clients {
+          default_quota { max_active_evaluations: 1 max_queued_jobs: 8 }
+        }
+      )pb",
+      &defaults);
   if (config->has_grade()) {
-    proto::GradeSpec *grade = config->mutable_grade();
-    if (grade->repeats() == 0) {
-      grade->set_repeats(3);
-    }
-    if (grade->timeout_s() == 0) {
-      grade->set_timeout_s(1800);
-    }
+    google::protobuf::TextFormat::MergeFromString(
+        "grade { repeats: 3 timeout_s: 1800 }", &defaults);
+  } else if (config->has_match()) {
+    google::protobuf::TextFormat::MergeFromString(
+        "match { games_per_order: 10 turn_timeout_ms: 10000 "
+        "max_moves_per_game: 50000 timeout_s: 1800 }",
+        &defaults);
   }
-  if (config->has_match()) {
-    proto::MatchSpec *match = config->mutable_match();
-    if (match->games_per_order() == 0) {
-      match->set_games_per_order(10);
-    }
-    if (match->turn_timeout_ms() == 0) {
-      match->set_turn_timeout_ms(10000);
-    }
-    if (match->max_moves_per_game() == 0) {
-      match->set_max_moves_per_game(50000);
-    }
-    if (match->timeout_s() == 0) {
-      match->set_timeout_s(1800);
-    }
-  }
-
-  proto::ClientQuota *quota =
-      config->mutable_clients()->mutable_default_quota();
-  // No sentinel for "unlimited", deliberately: a quota that can be switched off
-  // is a quota nobody notices is off.
-  if (quota->max_active_evaluations() == 0) {
-    quota->set_max_active_evaluations(1);
-  }
-  if (quota->max_queued_jobs() == 0) {
-    quota->set_max_queued_jobs(8);
-  }
+  defaults.MergeFrom(*config);
+  *config = std::move(defaults);
 }
 
 bool ValidateProblemConfig(const proto::ProblemConfig &config,
@@ -183,9 +115,7 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
     return false;
   }
   if (config.sandbox().image().empty()) {
-    // Submitted code is built and run in a container, always. A problem with
-    // no image is a problem whose submissions would have to run as the
-    // worker's own user, and the arena has no mode that does that.
+    // Without one a submission would run as the worker's user: no such mode.
     *error =
         "sandbox.image is required: every submission is built and run in a "
         "container";
@@ -203,7 +133,8 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
         *error = "grade.metrics must declare at least one metric";
         return false;
       }
-      const int primaries = CountPrimaryMetrics(grade);
+      const auto primaries =
+          std::ranges::count_if(grade.metrics(), &proto::MetricSpec::primary);
       if (primaries != 1) {
         *error = absl::StrCat(
             "exactly one grade.metrics entry must set primary: true, found ",
@@ -222,9 +153,7 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
         *error = "match.referee_target is required";
         return false;
       }
-      // These ride to the referee as a "k=v,k2=v2" flag, so a key or value
-      // carrying a separator would arrive as something else entirely. Caught
-      // here, at load, rather than as a puzzling referee on a worker.
+      // They ride to the referee as one "k=v,k2=v2" flag.
       for (const auto &[key, value] : match.registry_options()) {
         if (!kv_options::IsValidKey(key)) {
           *error =
@@ -249,8 +178,6 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
       return false;
   }
 
-  // Ranking and evaluation have to agree, or the leaderboard reads a score that
-  // is never written.
   if (config.ranking().kind() == proto::RankingSpec::ELO &&
       !config.has_match()) {
     *error = "ranking.kind ELO requires a match evaluation";

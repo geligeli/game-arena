@@ -13,8 +13,7 @@ game_arena/
   proto/      wire protocols: arena, tournament_broker, problem, kit
   server/     the coordinator: submissions, scheduling, HTTP
   standings/  how results are rated, kept and shown; shared with a kit's broker
-  sandbox/    exec/ (the engine), common/ (docker mechanics),
-              worker/ (fleet), runner/ (dev tool)
+  sandbox/    exec/ (the engine), common/ (docker mechanics), worker/ (fleet)
   referee/    the match loop and the broker protocol
   client/     the generic reference client
   cli/        arena_cli: the participant's client, installed into every kit

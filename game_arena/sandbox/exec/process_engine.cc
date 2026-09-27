@@ -26,32 +26,7 @@ namespace {
 using sandbox_common::ReadFile;
 using sandbox_common::TailOf;
 
-// A step's isolation, or the phase's, or the job's. Same precedence the
-// container engine uses: a step's isolation replaces rather than merges, so
-// half-overridden isolation cannot read as tight and not be.
-proto::Isolation EffectiveIsolation(const proto::Job &job,
-                                    const proto::Phase &phase,
-                                    const proto::Step &step) {
-  if (step.isolation().ByteSizeLong() > 0) {
-    return step.isolation();
-  }
-  if (phase.isolation().ByteSizeLong() > 0) {
-    return phase.isolation();
-  }
-  return job.isolation();
-}
-
-void Fail(proto::Status *status, proto::Status::Code code,
-          const std::string &message, const std::string &phase,
-          const std::string &step) {
-  status->set_code(code);
-  status->set_message(message);
-  status->set_phase(phase);
-  status->set_step(step);
-}
-
-// Polls for a step's port file. Polling rather than a pipe because a
-// background step is started detached and its stdout is a log, not a channel.
+// Polls: a background step's stdout is a log file, not a channel.
 int AwaitPort(const std::filesystem::path &port_file,
               std::chrono::seconds limit) {
   const auto deadline = std::chrono::steady_clock::now() + limit;
@@ -67,9 +42,6 @@ int AwaitPort(const std::filesystem::path &port_file,
 }
 
 }  // namespace
-
-ProcessEngine::ProcessEngine(ProcessEngineConfig config)
-    : config_(std::move(config)) {}
 
 void ProcessEngine::Track(const std::string &job_id, pid_t pgid) {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -92,8 +64,7 @@ proto::JobResult ProcessEngine::Run(const proto::Job &job, Observer *observer) {
   proto::Status *status = result.mutable_status();
 
   if (job.phases().empty()) {
-    Fail(status, proto::Status::INVALID_JOB, "a job needs at least one phase",
-         "", "");
+    Fail(status, proto::Status::INVALID_JOB, "a job needs at least one phase");
     return result;
   }
 
@@ -122,9 +93,7 @@ proto::JobResult ProcessEngine::Run(const proto::Job &job, Observer *observer) {
     // A phase that failed early stopped its background steps untracked.
     running_.erase(job.id());
     if (cancelled_.erase(job.id()) > 0) {
-      // Unconditionally, including over an OK status: a killed step merely
-      // exits nonzero, which on its own is indistinguishable from a step that
-      // failed on its own merits.
+      // Even over OK: a killed step just exits nonzero, like a failed one.
       status->set_code(proto::Status::CANCELLED);
       status->set_message("cancelled");
     }
@@ -147,13 +116,10 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     return shared / step.name();
   };
 
-  // Resolved addresses of the background steps, for {{peer:<name>}}.
   std::map<std::string, std::string> peers;
   std::vector<process::Child> background;
 
-  // Every placeholder this engine can resolve, rebuilt per step because
-  // {{port_file}} is per step and the peer addresses are only known once the
-  // background steps have published them.
+  // Per step: {{port_file}} is, and a peer is known only once it published.
   const auto resolve = [&](const proto::Step &step) -> proto::Step {
     std::map<std::string, std::string> replacements = {
         {kScratchPlaceholder, scratch(step).string()},
@@ -178,14 +144,9 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   }
 
   for (const proto::Step &step : phase.background()) {
-    if (observer != nullptr) {
-      observer->OnStepStarted(job.id(), phase.name(), step.name());
-    }
     const std::vector<std::string> argv = render(step);
     if (argv.empty()) {
-      Fail(status, proto::Status::INVALID_JOB, "a step needs a command",
-           phase.name(), step.name());
-      return false;
+      return Fail(status, proto::Status::INVALID_JOB, "a step needs a command");
     }
     const std::filesystem::path port_file = log_dir / (step.name() + ".port");
     std::error_code ec;
@@ -195,45 +156,32 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
         {.stdout_path = log_dir / (step.name() + ".out"),
          .stderr_path = log_dir / (step.name() + ".err")});
     if (!child) {
-      Fail(status, proto::Status::START_FAILED,
-           step.name() + " is missing at " + argv.front(), phase.name(),
-           step.name());
-      return false;
+      return Fail(status, proto::Status::START_FAILED,
+                  step.name() + " is missing at " + argv.front());
     }
     Track(job.id(), child->pid());
     background.push_back(std::move(*child));
 
     if (step.endpoint().discover_via_port_file()) {
-      // The port is only knowable once the step is listening. Waiting for the
-      // file it writes after bind() is the difference between "the peer could
-      // not connect" and "it connected before anything was there".
+      // Written after bind(), so nothing dials before the peer listens.
       const int timeout_s = step.endpoint().discover_timeout_s() > 0
                                 ? step.endpoint().discover_timeout_s()
-                                : config_.endpoint_timeout_s;
+                                : 60;
       const int port = AwaitPort(port_file, std::chrono::seconds(timeout_s));
       if (port <= 0) {
-        Fail(status, proto::Status::ENDPOINT_FAILED,
-             step.name() + " never reported a port: " +
-                 TailOf(ReadFile(log_dir / (step.name() + ".err")), 1500),
-             phase.name(), step.name());
-        return false;
+        return Fail(
+            status, proto::Status::ENDPOINT_FAILED,
+            step.name() + " never reported a port: " +
+                TailOf(ReadFile(log_dir / (step.name() + ".err")), 1500));
       }
       peers[step.name()] = "localhost:" + std::to_string(port);
-    } else if (step.endpoint().port() > 0) {
-      peers[step.name()] =
-          "localhost:" + std::to_string(step.endpoint().port());
     }
   }
 
   const proto::Step &foreground = phase.foreground();
-  if (observer != nullptr) {
-    observer->OnStepStarted(job.id(), phase.name(), foreground.name());
-  }
   const std::vector<std::string> argv = render(foreground);
   if (argv.empty()) {
-    Fail(status, proto::Status::INVALID_JOB, "a step needs a command",
-         phase.name(), foreground.name());
-    return false;
+    return Fail(status, proto::Status::INVALID_JOB, "a step needs a command");
   }
 
   const proto::Step resolved_foreground = resolve(foreground);
@@ -250,8 +198,10 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
        .env = foreground_env,
        .stdout_path = log_dir / (foreground.name() + ".out"),
        .stderr_path = log_dir / (foreground.name() + ".err"),
-       .address_space_limit_bytes = EffectiveIsolation(job, phase, foreground)
-                                        .address_space_limit_bytes()});
+       .address_space_limit_bytes =
+           Merge(Merge(job.isolation(), phase.isolation()),
+                 foreground.isolation())
+               .address_space_limit_bytes()});
   bool timed_out = false;
   int exit_code = -1;
   if (child) {
@@ -261,38 +211,24 @@ bool ProcessEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     Untrack(job.id(), child->pid());
   }
 
-  proto::StepResult *foreground_result = result->add_steps();
-  foreground_result->set_name(foreground.name());
+  proto::StepResult *foreground_result =
+      AddStepResult(result, foreground.name(), log_dir);
   foreground_result->set_started(child.has_value());
   foreground_result->set_timeout_s(foreground.timeout_s());
   foreground_result->set_timed_out(timed_out);
   foreground_result->set_exit_code(timed_out ? 124 : exit_code);
-  foreground_result->set_stdout(
-      ReadFile(log_dir / (foreground.name() + ".out")));
-  foreground_result->set_stderr(
-      ReadFile(log_dir / (foreground.name() + ".err")));
 
   if (!child) {
-    Fail(status, proto::Status::START_FAILED, "cannot run " + argv.front(),
-         phase.name(), foreground.name());
-    return false;
+    return Fail(status, proto::Status::START_FAILED,
+                "cannot run " + argv.front());
   }
 
-  // The background steps are done being talked to; let them finish writing
-  // their own verdicts.
   for (process::Child &step : background) {
     step.Wait();
     Untrack(job.id(), step.pid());
   }
   for (const proto::Step &step : phase.background()) {
-    proto::StepResult *background_result = result->add_steps();
-    background_result->set_name(step.name());
-    background_result->set_started(true);
-    background_result->set_stdout(ReadFile(log_dir / (step.name() + ".out")));
-    background_result->set_stderr(ReadFile(log_dir / (step.name() + ".err")));
-    if (!peers[step.name()].empty()) {
-      background_result->set_peer_address(peers[step.name()]);
-    }
+    AddStepResult(result, step.name(), log_dir);
   }
 
   std::vector<const proto::Step *> all;
@@ -330,9 +266,7 @@ void ProcessEngine::Cancel(const std::string &job_id) {
       groups.push_back(it->second);
     }
   }
-  // The group, not the process: build tools spawn trees, and killing only the
-  // parent leaves the workers building. Signalling one that has already
-  // exited is a no-op, which is the race worth designing for.
+  // The group: build tools spawn trees that outlive a killed parent.
   for (const pid_t pgid : groups) {
     ::killpg(pgid, SIGKILL);
   }

@@ -22,11 +22,11 @@ class DashboardTest : public ::testing::Test {
     dir_ = std::filesystem::temp_directory_path() /
            ("dashboard_" + std::to_string(::getpid()));
     std::filesystem::remove_all(dir_);
-    SubmissionRules rules;
-    rules.files_submit_dir = "solutions";
-    rules.harness.set_api_dep("//problem/harness:api");
-    rules.harness.set_main_src("//problem/harness:main.cc");
-    rules.policy.add_allow_paths("solutions/**");
+    proto::SubmissionPolicy rules;
+    rules.set_files_submit_dir("solutions");
+    rules.mutable_harness()->set_api_dep("//problem/harness:api");
+    rules.mutable_harness()->set_main_src("//problem/harness:main.cc");
+    rules.add_allow_paths("solutions/**");
     store_ = std::make_unique<CandidateStore>(dir_ / "candidates",
                                               CandidateLimits{}, rules);
     jobs_ = std::make_unique<JobLog>(dir_ / "jobs");

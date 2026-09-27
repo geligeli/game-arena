@@ -16,23 +16,6 @@ std::string RenderReport(const std::map<std::string, double> &metrics) {
          "\n";
 }
 
-bool WriteReport(const std::string &path,
-                 const std::map<std::string, double> &metrics,
-                 std::string *error) {
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  if (!out) {
-    *error = "cannot open the report path '" + path + "' for writing";
-    return false;
-  }
-  out << RenderReport(metrics);
-  out.close();
-  if (!out) {
-    *error = "failed while writing the report to '" + path + "'";
-    return false;
-  }
-  return true;
-}
-
 bool WriteReportToArenaPath(const std::map<std::string, double> &metrics,
                             std::string *error) {
   const char *path = std::getenv("ARENA_REPORT");
@@ -42,7 +25,19 @@ bool WriteReportToArenaPath(const std::map<std::string, double> &metrics,
         "order under the arena";
     return false;
   }
-  return WriteReport(path, metrics, error);
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out) {
+    *error =
+        "cannot open the report path '" + std::string(path) + "' for writing";
+    return false;
+  }
+  out << RenderReport(metrics);
+  out.close();
+  if (!out) {
+    *error = "failed while writing the report to '" + std::string(path) + "'";
+    return false;
+  }
+  return true;
 }
 
 }  // namespace grader

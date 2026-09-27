@@ -3,8 +3,7 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# For graders that are C++ binaries. A grader in any other language should just
-# printf the JSON; this is not a dependency the arena imposes on a problem.
+# For C++ graders; one in any other language can printf the JSON.
 cc_library(
     name = "report",
     srcs = ["report.cc"],
@@ -12,8 +11,6 @@ cc_library(
     deps = ["@boost.json"],
 )
 
-# Round trips through the worker's real parser: the two halves of this format
-# live in one repo precisely so a test can hold them together.
 cc_test(
     name = "report_test",
     srcs = ["report_test.cc"],
@@ -24,8 +21,7 @@ cc_test(
     ],
 )
 
-# Every file of this package, for the arena a sandbox builds against: a graded
-# problem's api_dep may be :report (see //:sandbox_surface).
+# A sandbox vendors this package whole (//:sandbox_surface).
 filegroup(
     name = "sandbox_surface_files",
     srcs = glob(["**"]),

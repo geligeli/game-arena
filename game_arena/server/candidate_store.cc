@@ -2,42 +2,32 @@
 
 #include <algorithm>
 #include <array>
-#include <boost/json/object.hpp>
-#include <boost/json/serialize.hpp>
-#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <string_view>
 
 #include "absl/log/log.h"
+#include "absl/strings/ascii.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "game_arena/server/generated_build.h"
 #include "game_arena/server/problem_config.h"
 #include "game_arena/server/unified_diff.h"
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_arena {
 
 namespace {
 
-int64_t NowUnixMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
-
-// Only sources the generated BUILD knows how to compile. A submission that
-// smuggles in a shell script or a BUILD file of its own would otherwise run
-// with the worker's privileges at build time.
+// Only what the generated BUILD compiles: a submitted BUILD or script runs.
 constexpr std::array<std::string_view, 5> kAllowedExtensions = {
     ".h", ".hpp", ".cc", ".cpp", ".inl"};
 
 bool HasAllowedExtension(const std::string &path) {
   const auto dot = path.rfind('.');
-  if (dot == std::string::npos) {
-    return false;
-  }
-  const std::string_view ext(path.data() + dot, path.size() - dot);
-  return std::find(kAllowedExtensions.begin(), kAllowedExtensions.end(), ext) !=
-         kAllowedExtensions.end();
+  return dot != std::string::npos &&
+         std::ranges::contains(kAllowedExtensions,
+                               std::string_view(path).substr(dot));
 }
 
 }  // namespace
@@ -55,9 +45,7 @@ bool ValidateSourcePath(const std::string &path, std::string *error) {
     *error = "file path must be relative, got '" + path + "'";
     return false;
   }
-  // Checked on the raw string rather than via std::filesystem, because
-  // lexically_normal() would silently resolve "a/../../b" into something that
-  // looks fine.
+  // On the raw string: lexically_normal() would quietly resolve "a/../../b".
   if (path.find("..") != std::string::npos) {
     *error = "file path must not contain '..': '" + path + "'";
     return false;
@@ -70,14 +58,12 @@ bool ValidateSourcePath(const std::string &path, std::string *error) {
     *error = "malformed file path: '" + path + "'";
     return false;
   }
-  for (const char c : path) {
-    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                    (c >= '0' && c <= '9') || c == '.' || c == '_' ||
-                    c == '-' || c == '/';
-    if (!ok) {
-      *error = "file path has an unsupported character: '" + path + "'";
-      return false;
-    }
+  if (!std::ranges::all_of(path, [](char c) {
+        return absl::ascii_isalnum(c) || c == '.' || c == '_' || c == '-' ||
+               c == '/';
+      })) {
+    *error = "file path has an unsupported character: '" + path + "'";
+    return false;
   }
   if (!HasAllowedExtension(path)) {
     *error = "unsupported file type: '" + path +
@@ -89,36 +75,25 @@ bool ValidateSourcePath(const std::string &path, std::string *error) {
 
 std::string Slugify(const std::string &display_name) {
   std::string slug;
-  slug.reserve(display_name.size());
   for (const char c : display_name) {
-    if (c >= 'a' && c <= 'z') {
-      slug += c;
-    } else if (c >= 'A' && c <= 'Z') {
-      slug += static_cast<char>(c - 'A' + 'a');
-    } else if (c >= '0' && c <= '9') {
-      slug += c;
-    } else if (!slug.empty() && slug.back() != '-') {
+    if (absl::ascii_isalnum(c)) {
+      slug += absl::ascii_tolower(c);
+    } else if (!slug.empty() && !slug.ends_with('-')) {
       slug += '-';
     }
   }
-  while (!slug.empty() && slug.back() == '-') {
+  // No "--" and no leading '-', so at most one trailing '-' to drop.
+  slug.resize(std::min<std::size_t>(slug.size(), 40));
+  if (slug.ends_with('-')) {
     slug.pop_back();
   }
-  if (slug.empty()) {
-    slug = "candidate";
-  }
-  if (slug.size() > 40) {
-    slug.resize(40);
-    while (!slug.empty() && slug.back() == '-') {
-      slug.pop_back();
-    }
-  }
-  return slug;
+  return slug.empty() ? "candidate" : slug;
 }
 
 CandidateStore::CandidateStore(std::filesystem::path dir,
-                               CandidateLimits limits, SubmissionRules rules)
-    : dir_(std::move(dir)), limits_(limits), rules_(std::move(rules)) {
+                               CandidateLimits limits,
+                               proto::SubmissionPolicy policy)
+    : dir_(std::move(dir)), limits_(limits), policy_(std::move(policy)) {
   std::error_code ec;
   std::filesystem::create_directories(dir_, ec);
   if (ec) {
@@ -163,11 +138,7 @@ void CandidateStore::Load() {
 
 namespace {
 
-// A path passes when it matches some allow pattern (or there are none) and no
-// deny pattern. Deny wins, so a broad allow can be narrowed without rewriting
-// it.
-// "{submission_id}" in a pattern is the submitter's own id, which is how a
-// problem confines a patch to its participant's directory.
+// Deny wins; no allow pattern allows all; {submission_id} is the submitter's.
 bool PathAllowed(const proto::SubmissionPolicy &policy, const std::string &id,
                  const std::string &path, std::string *error) {
   for (const std::string &pattern : policy.deny_paths()) {
@@ -193,7 +164,6 @@ bool PathAllowed(const proto::SubmissionPolicy &policy, const std::string &id,
 
 }  // namespace
 
-// A participant is one entry: its id is who submitted it.
 static std::string CandidateIdFor(const proto::SubmitRequest &request) {
   return Slugify(request.author().empty() ? request.display_name()
                                           : request.author());
@@ -211,9 +181,7 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
   }
 
   if (request.patch().empty()) {
-    // The structured form is a convenience over the patch form, so it is
-    // checked here and then converted; everything below applies to the result.
-    if (rules_.files_submit_dir.empty()) {
+    if (policy_.files_submit_dir().empty()) {
       *error =
           "this problem takes patches, not file lists: send a unified diff in "
           "the patch field";
@@ -251,7 +219,7 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
                "' is not among the submitted files";
       return false;
     }
-    const auto &allowed_prefixes = rules_.policy.allowed_dep_prefixes();
+    const auto &allowed_prefixes = policy_.allowed_dep_prefixes();
     for (const std::string &dep : request.extra_deps()) {
       const bool allowed =
           std::any_of(allowed_prefixes.begin(), allowed_prefixes.end(),
@@ -270,19 +238,16 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
     }
   }
 
-  // From here on there is only a patch, whichever form arrived. Validating the
-  // synthesized one too is deliberate: the generator is code, and a policy that
-  // only checked hand-written patches would not check what actually gets built.
+  // A synthesized patch is checked too: it is what actually gets built.
   const std::string id = CandidateIdFor(request);
   const std::optional<std::string> patch = PatchForLocked(request, id, error);
   if (!patch.has_value()) {
     return false;
   }
-  const proto::SubmissionPolicy &policy = rules_.policy;
-  if (policy.max_patch_bytes() > 0 &&
-      patch->size() > policy.max_patch_bytes()) {
+  if (policy_.max_patch_bytes() > 0 &&
+      patch->size() > policy_.max_patch_bytes()) {
     *error = "patch is too large (" + std::to_string(patch->size()) +
-             " bytes, max " + std::to_string(policy.max_patch_bytes()) + ")";
+             " bytes, max " + std::to_string(policy_.max_patch_bytes()) + ")";
     return false;
   }
 
@@ -290,20 +255,20 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
   if (!ParseUnifiedDiff(*patch, &parsed, error)) {
     return false;
   }
-  if (policy.max_files() > 0 && parsed.files.size() > policy.max_files()) {
+  if (policy_.max_files() > 0 && parsed.files.size() > policy_.max_files()) {
     *error =
         "patch touches too many files: " + std::to_string(parsed.files.size()) +
-        " (max " + std::to_string(policy.max_files()) + ")";
+        " (max " + std::to_string(policy_.max_files()) + ")";
     return false;
   }
-  if (policy.max_hunks() > 0 &&
-      static_cast<uint32_t>(parsed.total_hunks) > policy.max_hunks()) {
+  if (policy_.max_hunks() > 0 &&
+      static_cast<uint32_t>(parsed.total_hunks) > policy_.max_hunks()) {
     *error = "patch has too many hunks: " + std::to_string(parsed.total_hunks) +
-             " (max " + std::to_string(policy.max_hunks()) + ")";
+             " (max " + std::to_string(policy_.max_hunks()) + ")";
     return false;
   }
   for (const std::string &path : TouchedPaths(parsed)) {
-    if (!PathAllowed(policy, id, path, error)) {
+    if (!PathAllowed(policy_, id, path, error)) {
       return false;
     }
   }
@@ -322,12 +287,8 @@ std::optional<std::string> CandidateStore::PatchForLocked(
   if (!request.patch().empty()) {
     return std::string(request.patch());
   }
-  if (rules_.files_submit_dir.empty()) {
-    *error = "this problem takes patches, not file lists";
-    return std::nullopt;
-  }
 
-  const std::string root = rules_.files_submit_dir + "/" + candidate_id;
+  const std::string root = policy_.files_submit_dir() + "/" + candidate_id;
   std::vector<NewFile> files;
   std::vector<std::string> paths;
   for (const proto::SourceFile &file : request.files()) {
@@ -335,10 +296,9 @@ std::optional<std::string> CandidateStore::PatchForLocked(
     paths.push_back(file.path());
   }
 
-  // The BUILD is generated, never submitted: a submitter who could write their
-  // own could write a genrule, and a genrule runs arbitrary code at build time.
+  // Generated, never submitted: a submitter's own BUILD could hold a genrule.
   const std::string build = GenerateCandidateBuild(
-      rules_.harness, paths, request.entry_header(),
+      policy_.harness(), paths, request.entry_header(),
       {request.extra_deps().begin(), request.extra_deps().end()});
   if (build.empty()) {
     *error =
@@ -367,42 +327,13 @@ bool CandidateStore::WriteManifestLocked(
     const proto::Candidate &candidate) const {
   proto::CandidateManifest manifest;
   *manifest.mutable_candidate() = candidate;
-  const std::filesystem::path path = root / "manifest.pb";
-  // Written via a temp file and renamed, so a crash mid-write cannot leave a
-  // half-parsed manifest that Load() would then skip.
-  const std::filesystem::path tmp = path.string() + ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out || !manifest.SerializeToOstream(&out)) {
-      LOG(ERROR) << "Could not write candidate manifest " << path;
-      return false;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path, ec);
-  if (ec) {
-    LOG(ERROR) << "Could not install manifest " << path << ": " << ec.message();
+  std::string error;
+  if (!tournament_broker::WriteAtomically(
+          root / "manifest.pb", manifest.SerializeAsString(), &error)) {
+    LOG(ERROR) << "Could not write candidate manifest: " << error;
     return false;
   }
   return true;
-}
-
-void CandidateStore::AppendIndexLocked(
-    const proto::Candidate &candidate) const {
-  std::ofstream index(dir_ / "index.jsonl", std::ios::app);
-  if (!index) {
-    LOG(ERROR) << "Could not append to candidate index in " << dir_;
-    return;
-  }
-  index << boost::json::serialize(boost::json::object{
-               {"candidate_id", candidate.candidate_id()},
-               {"display_name", candidate.display_name()},
-               {"author", candidate.author()},
-               {"game", candidate.game()},
-               {"parent_id", candidate.parent_id()},
-               {"submitted_unix_ms", candidate.submitted_unix_ms()},
-           })
-        << "\n";
 }
 
 std::optional<proto::Candidate> CandidateStore::Create(
@@ -423,7 +354,7 @@ std::optional<proto::Candidate> CandidateStore::Create(
   *candidate.mutable_extra_deps() = request.extra_deps();
   *candidate.mutable_params() = request.params();
   candidate.set_status(proto::Candidate::PENDING);
-  candidate.set_submitted_unix_ms(NowUnixMs());
+  candidate.set_submitted_unix_ms(absl::ToUnixMillis(absl::Now()));
 
   const std::optional<std::string> patch =
       PatchForLocked(request, candidate.candidate_id(), error);
@@ -468,10 +399,7 @@ std::optional<proto::Candidate> CandidateStore::Create(
     }
   }
 
-  // Files the patch adds are also written out plainly, so a rival's source can
-  // be read and grepped without reconstructing it from a diff. A patch that
-  // only modifies existing files adds none, and GetSource then has nothing to
-  // serve for it -- which is honest: those lines live in the repo, not here.
+  // Added files are also written out plainly, for GetSource and grep.
   for (const PatchFile &file : parsed.files) {
     if (!file.is_new || file.added_content.empty()) {
       continue;
@@ -501,7 +429,6 @@ std::optional<proto::Candidate> CandidateStore::Create(
     *error = "cannot write manifest";
     return std::nullopt;
   }
-  AppendIndexLocked(candidate);
   (staged ? staged_ : candidates_)[candidate.candidate_id()] = candidate;
   LOG(INFO) << "Candidate " << candidate.candidate_id() << " submitted by '"
             << candidate.author() << "' (" << patch->size() << " byte patch, "
@@ -532,9 +459,6 @@ std::optional<std::string> CandidateStore::ReadSource(
     }
     candidate = it->second;
   }
-  // Matched against the manifest rather than re-validated: only paths that
-  // were accepted at submit time can be read back, so there is no second
-  // parser to keep in agreement with the first.
   const auto &paths = candidate.file_paths();
   if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
     *error = "candidate '" + candidate_id + "' has no file '" + path + "'";

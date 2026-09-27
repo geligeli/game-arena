@@ -17,21 +17,11 @@ JobLog::JobLog(std::filesystem::path dir) : dir_(std::move(dir)) {
 }
 
 void JobLog::Put(const JobRecord &record) {
-  const std::filesystem::path path = dir_ / (record.job().job_id() + ".pb");
-  // Via a temp file, so a reader never sees half a record.
-  const std::filesystem::path tmp = path.string() + ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out || !record.SerializeToOstream(&out)) {
-      LOG(ERROR) << "Could not write job record " << path;
-      return;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path, ec);
-  if (ec) {
-    LOG(ERROR) << "Could not install job record " << path << ": "
-               << ec.message();
+  std::string error;
+  if (!tournament_broker::WriteAtomically(
+          dir_ / (record.job().job_id() + ".pb"), record.SerializeAsString(),
+          &error)) {
+    LOG(ERROR) << "Could not write job record: " << error;
   }
 }
 

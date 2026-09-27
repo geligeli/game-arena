@@ -1,8 +1,4 @@
-# A worked example: a two-player tournament problem with its own game.
-#
-# Its own bazel workspace, not part of game-arena's build, because that is what
-# a real problem repo is. Nothing in the arena knows this game exists: the rules
-# reach it by linking //game:registry into a referee binary.
+# A match problem with its own game, in its own workspace as a real problem repo is.
 
 module(
     name = "connect4_problem",
@@ -20,8 +16,7 @@ local_path_override(
     path = "../..",
 )
 
-# The kit base with coding agents (docker/coding-agents), in place of the
-# arena's own kit_base.
+# The kit base with coding agents (docker/coding-agents), in place of the arena's.
 bazel_dep(name = "rules_oci", version = "2.3.0")
 
 oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")

@@ -2,214 +2,93 @@ syntax = "proto3";
 
 package tournament_arena.proto;
 
-// What a problem *is*, expressed as data rather than compiled-in assumptions.
-//
-// One server runs one problem. Everything that used to be a flag on the
-// tournament server or a hardcoded branch in the worker -- which repo to build,
-// what counts as a good answer, how much a submission may touch, what the
-// sandbox is allowed to do -- lives here, so standing up a new problem is
-// writing a .textproto rather than editing C++.
-//
-// The whole message is embedded verbatim in every WorkOrder. That is what keeps
-// the fleet stateless with respect to problems: a worker has no config file, no
-// notion of which problem it serves, and needs no restart when one changes.
-//
-// Two ways a solution earns a score, and they are exclusive:
-//
-//   GradeSpec   run it, read a number off it (how fast, how small, how
-//   accurate) MatchSpec   play it against others, rate the outcomes with ELO
-//
-// Text format, loaded by server/problem_config.h. Protobuf rather than YAML
-// because the config is already a wire message: it is served to agents over
-// RPC, rendered on the leaderboard, and shipped inside every work order, and a
-// second hand-written schema for those would be a second thing to keep in sync.
+// What a problem is, as data: one server runs one, loaded from a .textproto by
+// server/problem_config.h. A problem is either graded or played.
 
-// ---------------------------------------------------------------------------
-// What a submission may contain
-// ---------------------------------------------------------------------------
-
-// Bounds on a submitted patch, checked by the coordinator before anything is
-// stored or dispatched. These are cheap parse-level checks, not a security
-// boundary -- the sandbox is (see SandboxSpec). Their job is to keep a
-// runaway agent from filling the disk and to keep submissions on-topic.
+// Cheap checks before anything is stored; the sandbox is the security boundary.
 message SubmissionPolicy {
   uint64 max_patch_bytes = 1;
   uint32 max_files = 2;
   uint32 max_hunks = 3;
 
-  // Glob patterns over the patch's touched paths, matched in this order: a
-  // path must match some allow_paths entry and no deny_paths entry. An empty
-  // allow_paths allows everything not denied.
-  //
-  // Worth stating plainly: this does NOT contain a hostile submission. A patch
-  // that may touch a BUILD file can run arbitrary code at build time through a
-  // genrule, and most interesting problems must allow exactly that. Use it to
-  // express what a solution *is* ("only under solutions/"), and rely on the
-  // sandbox for what a solution may *do*.
+  // Globs over touched paths: a path must match an allow entry (empty allows
+  // all) and no deny entry. Not containment: a BUILD file can run a genrule.
   repeated string allow_paths = 4;
   repeated string deny_paths = 5;
 
-  // Directory an add-only patch is synthesized under when a client submits
-  // plain files instead of a diff. Empty disables that convenience, requiring
-  // every submission to arrive as a patch.
+  // Where plain-file submissions become an add-only patch; empty: patches only.
   string files_submit_dir = 6;
 
-  // How to compile a structured submission. Required for files_submit_dir to
-  // be usable; ignored for patch submissions, which bring their own BUILD.
+  // Required for files_submit_dir; a patch brings its own BUILD.
   CandidateHarness harness = 7;
 
-  // Label prefixes a structured submission may name in extra_deps, e.g.
-  // "//game_mcts/core/mcts:". Anything outside them is refused: the arena is
-  // not a general build service, and a dep on an arbitrary external repo is a
-  // way to run code during the build. Empty allows no extra deps at all.
-  //
-  // Like `harness`, these are the problem's labels. The coordinator cannot
-  // have an opinion here without knowing what the problem is made of.
+  // Label prefixes extra_deps may name; empty allows none.
   repeated string allowed_dep_prefixes = 8;
 }
 
-// The fixed parts of the BUILD file the coordinator generates around a
-// structured submission.
-//
-// These are labels in the PROBLEM's repository, not the arena's -- the arena
-// has no opinion on what a solution links against, and hardcoding one here
-// would be the coordinator knowing what the problem is. A problem that wants
-// its own harness names it; a problem with no structured form leaves this
-// empty and only accepts patches.
+// The problem's labels for the BUILD generated around a structured submission.
 message CandidateHarness {
-  // Library every submission is compiled against, e.g.
-  // "//game_arena/candidate_api:candidate_api".
+  // Library every submission is compiled against.
   string api_dep = 1;
 
-  // Source providing main(), compiled per candidate rather than depended on:
-  // the entry header and game arrive as local_defines, and those do not
-  // propagate from a prebuilt library.
+  // Provides main(); compiled per candidate so local_defines reach it.
   string main_src = 2;
 
-  // Further deps of the generated bot binary (client, broker stubs, logging).
+  // Further deps of the generated bot binary.
   repeated string bot_deps = 3;
 
-  // local_define selecting which game the harness compiles for, e.g.
-  // "CANDIDATE_GAME_RISK2". Empty when the harness serves one game and needs
-  // no selection.
+  // A local_define selecting the harness's game; empty when it serves one.
   string game_define = 4;
 
-  // Name of the generated cc_binary, so build.targets and grade.argv can name
-  // it: "//solutions/{submission_id}:<binary_name>". Empty means "bot".
+  // The generated cc_binary's name (empty: "bot"), for targets and argv.
   string binary_name = 5;
 }
 
-// ---------------------------------------------------------------------------
-// The participant's kit
-// ---------------------------------------------------------------------------
-
-// What a participant's environment is, beyond the files the build macro names
-// in kit_files.
-//
-// Everything here ends up inside the kit -- in arena.textproto, which steers
-// the kit's arena_cli, or in the kit's image. A participant may change any of
-// it; none of it is enforcement. What the tournament accepts is decided by
-// SubmissionPolicy and SourcePolicy, at the coordinator, from the problem's
-// own copy of this config.
+// Ends up in the kit, where a participant may change it: none of it enforces.
 message KitSpec {
-  // The participant everyone starts as: a directory under
-  // submission.files_submit_dir, in kit_files, that a participant's own
-  // directory is copied from the first time.
+  // Under files_submit_dir; a participant's directory is first copied from it.
   string starter_dir = 5;
 
-  // Leave the kit image's bazel able to fetch from the network. Off by
-  // default: a kit whose dependencies are vendored builds what the sandbox
-  // builds, and a dependency that resolves here but not there is a
-  // submission that fails after it was tested.
+  // Off: a dependency the kit fetches but the sandbox cannot fails later.
   bool allow_network_builds = 4;
 }
 
-// ---------------------------------------------------------------------------
-// What participants may read of each other
-// ---------------------------------------------------------------------------
-
-// The arena's default is that every candidate's source is readable by every
-// participant: the point of a tournament like this is that strategies are
-// improved upon, and a leaderboard nobody can learn from is only a scoreboard.
-// A problem run as an exam, or scored on originality, says otherwise here.
-//
-// Enforced by the coordinator on GetSource, and on the manifests GetCandidate
-// and ListCandidates return -- a stored patch is source too. It is not a
-// secrecy guarantee against the operator or against a participant who can
-// reach the coordinator's disk; it is the tournament's rule about reading.
+// Enforced by the coordinator on GetSource and on manifests' patches: the
+// tournament's rule about reading, not secrecy from the operator.
 message SourcePolicy {
   enum Visibility {
-    // Any participant may read any candidate's files. The arena's default.
-    ALL = 0;
-    // Only what you submitted yourself. Reads are then gated on the same
-    // token writes are, so an anonymous reader gets nothing.
-    OWN = 1;
-    // Nobody's files, your own included. The kit is all you get.
-    NONE = 2;
+    ALL = 0;   // the default
+    OWN = 1;   // only your own; reads are gated on your token
+    NONE = 2;  // nobody's, your own included
   }
   Visibility visibility = 1;
 }
 
-// ---------------------------------------------------------------------------
-// Building
-// ---------------------------------------------------------------------------
-
 message BuildSpec {
-  // Bazel targets built after the patch applies, in order. A build failure is
-  // reported to the submitter as compacted compiler output, never a full log.
-  //
-  // "{submission_id}" is substituted before the target reaches bazel, so a
-  // problem whose solutions each live in their own directory can name them:
-  //   "//solutions/{submission_id}:bot"
-  // The same substitution applies to grade.argv and match.referee_target.
-  //
-  // For a match problem, the target naming {submission_id} is the bot the
-  // worker starts against the referee; with no such target, the first one is.
+  // Built in order, "{submission_id}" substituted (as in grade.argv and
+  // match.referee_target). A match's bot is the target naming it, or the first.
   repeated string targets = 1;
   // Extra bazel flags, e.g. "--config=native".
   repeated string bazel_flags = 2;
   uint32 timeout_s = 3;
 }
 
-// ---------------------------------------------------------------------------
-// The sandbox
-// ---------------------------------------------------------------------------
-
 message SandboxSpec {
-  // Image every container starts from, and where the problem's tree is: at
-  // /workspace, which is what a job's fresh volume is filled from. Must carry
-  // bazel matching the tree's .bazelversion. Either it also carries every
-  // external repository MODULE.bazel.lock resolves, the C++ toolchain among
-  // them, or allow_build_network is set: without egress a module fetch is a
-  // build failure, not a retry. Two submissions are only comparable if they
-  // were built in the same one.
+  // Holds the tree at /workspace and bazel matching .bazelversion; without
+  // allow_build_network, also every dependency, vendored.
   string image = 1;
 
-  // Caps on the containers that run the solution -- a bot, a graded command.
-  // The build runs in the same sandbox without them: a build is the problem's
-  // own toolchain, and is bounded by build.timeout_s instead.
+  // Caps on what runs the solution; the build has build.timeout_s instead.
   uint32 memory_limit_mb = 2;
   double cpus = 3;
   uint32 pids_limit = 4;
 
-  // Let the build container reach the network.
-  //
-  // Off by default, and worth keeping off: a build that can fetch can also
-  // exfiltrate, and a submitted genrule is arbitrary code. The cost is that the
-  // image must carry every dependency vendored, as `sandbox_image_issue`
-  // makes it, because a module fetch will fail. That failure is the correct
-  // outcome -- it is a submission depending on something the problem did not
-  // offer.
+  // Off by default: a build that can fetch can exfiltrate.
   bool allow_build_network = 7;
 
-  // Run as this user inside the container, e.g. "1000:1000". Empty runs as
-  // whatever the image's default is, which for most images is root.
+  // e.g. "1000:1000"; empty is the image's default, often root.
   string run_as_user = 8;
 }
-
-// ---------------------------------------------------------------------------
-// Evaluation: grading
-// ---------------------------------------------------------------------------
 
 message MetricSpec {
   string name = 1;  // key in the report, e.g. "wall_ms"
@@ -218,21 +97,16 @@ message MetricSpec {
     MAXIMIZE = 1;
   }
   Direction direction = 2;
-  // The metric the leaderboard ranks by. Exactly one metric must set it.
+  // The metric the leaderboard ranks by; exactly one must set it.
   bool primary = 3;
 }
 
-// Run the built solution and read numbers off it.
-//
-// The command writes JSON to the path in $ARENA_REPORT:
-//   {"metrics": {"wall_ms": 1234.5, "peak_rss_mb": 91.2}}
-// A "RESULT wall_ms=1234.5" line on stdout is accepted as a fallback, matching
-// the shape the match harness already prints.
+// Run the solution and read numbers off it (see MetricReport).
 message GradeSpec {
   // argv run inside the sandbox, at the workspace root.
   repeated string argv = 1;
 
-  // Runs to perform. A single timing is noise; the aggregate is the score.
+  // Runs; their aggregate is the score.
   uint32 repeats = 2;
   enum Aggregate {
     MIN = 0;  // best of N -- the usual choice for a timing
@@ -243,67 +117,38 @@ message GradeSpec {
 
   repeated MetricSpec metrics = 4;
 
-  // Only accept results from workers reporting this machine class. A wall-clock
-  // number from a laptop and one from a server are not the same measurement,
-  // and a leaderboard that mixes them is measuring the fleet, not the
-  // submissions. Empty accepts any worker.
+  // Only workers of this machine class; empty accepts any.
   string require_machine_class = 5;
 
   uint32 timeout_s = 6;
 }
 
-// What a graded command writes to the path in $ARENA_REPORT. Parsed as JSON,
-// so a command can emit it with `printf` and no library:
-//
-//   {"metrics": {"wall_ms": 1234.5, "peak_rss_mb": 91.2}}
-//
-// Keys not declared in GradeSpec.metrics are ignored rather than rejected: a
-// benchmark reporting more than the problem ranks on is normal, and failing the
-// run over it would be hostile.
+// {"metrics": {"wall_ms": 1234.5}} at $ARENA_REPORT, or a "RESULT k=v" stdout
+// line. Keys not in GradeSpec.metrics are ignored, not rejected.
 message MetricReport {
   map<string, double> metrics = 1;
 }
 
-// ---------------------------------------------------------------------------
-// Evaluation: matches
-// ---------------------------------------------------------------------------
-
-// Play the solution against others and rate it.
-//
-// The worker starts a referee container and points both sides at it over a
-// private bridge. The referee owns the rules; the coordinator never does.
+// Play against others; the referee owns the rules, never the coordinator.
 message MatchSpec {
-  // Key into the referee's game registry, e.g. "risk2".
+  // Key into the referee's game registry.
   string game = 1;
   // Bazel label of the referee binary, built from the same patched tree.
   string referee_target = 2;
 
   uint32 games_per_order = 3;
-  // Opponents a freshly submitted solution is placed against, e.g.
-  // "builtin:random", "builtin:mcts". A ladder of rated rivals follows them.
+  // e.g. "builtin:random"; a ladder of rated rivals follows them.
   repeated string placement_opponents = 4;
 
   uint32 turn_timeout_ms = 5;
-  // Total thinking time per seat per game. Zero leaves only turn_timeout_ms,
-  // which on its own bounds nothing: a slow strategy can burn the full turn
-  // budget on every one of thousands of moves.
+  // Per seat per game; 0 leaves turn_timeout_ms, which alone bounds nothing.
   uint32 game_time_budget_ms = 6;
   uint32 max_moves_per_game = 7;
   uint32 timeout_s = 8;
 
-  // Opaque settings handed to the referee's game registry at startup, e.g.
-  // {"mcts_iterations": "400"} to set the strength of a search-based builtin
-  // when its spec does not say.
-  //
-  // Opaque on purpose: which knobs exist is a property of the registry linked
-  // into the referee, and the arena cannot enumerate them without knowing what
-  // the problem is. A registry ignores keys it does not recognise.
+  // Opaque, for the referee's registry, which ignores keys it does not know.
   map<string, string> registry_options = 10;
 }
-
-// ---------------------------------------------------------------------------
-// Ranking and client policy
-// ---------------------------------------------------------------------------
 
 message RankingSpec {
   enum Kind {
@@ -311,20 +156,15 @@ message RankingSpec {
     METRIC = 1;  // requires GradeSpec
   }
   Kind kind = 1;
-  // For METRIC: which metric orders the board. Empty uses the GradeSpec metric
-  // marked primary.
+  // For METRIC; empty uses the GradeSpec metric marked primary.
   string metric_name = 2;
 }
 
-// Per-client limits. Defaults live here; server/client_registry.h lets an
-// individual client override them.
+// Defaults; server/client_registry.h overrides them per client.
 message ClientQuota {
-  // Evaluations a client may have running at once. One is the point: a client
-  // waits for its own result before spending the fleet on another guess.
+  // One is the point: a client waits for a result before its next guess.
   uint32 max_active_evaluations = 1;
-  // Outstanding jobs, covering re-evaluations as well as fresh submissions --
-  // without it a client can bank a hundred rematches behind its one active
-  // evaluation.
+  // Outstanding jobs, rematches included.
   uint32 max_queued_jobs = 2;
 }
 
@@ -332,16 +172,11 @@ message ClientPolicy {
   ClientQuota default_quota = 1;
 }
 
-// ---------------------------------------------------------------------------
-// The problem
-// ---------------------------------------------------------------------------
-
 message ProblemConfig {
   // Stable identifier, also the standings key. One server, one problem_id.
   string problem_id = 1;
   string display_name = 2;
-  // Markdown. Served whole to agents so the contract arrives in one call, and
-  // rendered at the top of the leaderboard page for humans.
+  // Markdown, served to agents and shown atop the leaderboard.
   string description = 3;
 
   SubmissionPolicy submission = 5;
@@ -355,9 +190,8 @@ message ProblemConfig {
 
   RankingSpec ranking = 10;
   ClientPolicy clients = 11;
-  // What participants may read of each other. Absent means ALL: the arena
-  // opens source by default and a problem opts out.
+  // Absent means ALL.
   SourcePolicy source = 12;
-  // The participant's environment. Absent is a workable default everywhere.
+  // Absent is a workable default.
   KitSpec kit = 13;
 }

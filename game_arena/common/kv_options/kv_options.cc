@@ -4,21 +4,18 @@
 #include <string>
 #include <string_view>
 
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_split.h"
+
 namespace kv_options {
 
 std::map<std::string, std::string> Parse(std::string_view text) {
   std::map<std::string, std::string> out;
-  while (!text.empty()) {
-    const std::size_t comma = text.find(',');
-    const std::string_view entry = text.substr(0, comma);
+  for (std::string_view entry : absl::StrSplit(text, ',')) {
     const std::size_t eq = entry.find('=');
-    if (!entry.empty() && eq != std::string_view::npos && eq != 0) {
+    if (eq != std::string_view::npos && eq != 0) {
       out[std::string(entry.substr(0, eq))] = std::string(entry.substr(eq + 1));
     }
-    if (comma == std::string_view::npos) {
-      break;
-    }
-    text.remove_prefix(comma + 1);
   }
   return out;
 }
@@ -26,15 +23,9 @@ std::map<std::string, std::string> Parse(std::string_view text) {
 std::string Format(const std::map<std::string, std::string> &options) {
   std::string out;
   for (const auto &[key, value] : options) {  // std::map iterates sorted
-    if (!IsValidKey(key) || !IsValidValue(value)) {
-      continue;
+    if (IsValidKey(key) && IsValidValue(value)) {
+      absl::StrAppend(&out, out.empty() ? "" : ",", key, "=", value);
     }
-    if (!out.empty()) {
-      out += ',';
-    }
-    out += key;
-    out += '=';
-    out += value;
   }
   return out;
 }

@@ -22,8 +22,7 @@ std::string WorkDirOf(const proto::Workspace &workspace,
   return sandbox_common::kWorkspace;
 }
 
-}  // namespace
-
+// Verbatim tokens as they are, everything else single-quoted.
 std::string RenderArgv(const proto::Step &step) {
   std::string rendered;
   for (const proto::Token &token : step.argv()) {
@@ -35,18 +34,13 @@ std::string RenderArgv(const proto::Step &step) {
   return rendered;
 }
 
+}  // namespace
+
 std::string EntrypointScript(const proto::Workspace &workspace,
                              const proto::Step &step) {
   std::string script = "set -eu\n";
-  // The tree and the scratch dir are mounted; the one thing left to arrange
-  // is a HOME bazel can write to.
   script += sandbox_common::ScratchPrelude();
 
-  if (step.applies_patches() &&
-      workspace.patch() == proto::Workspace::PATCH_COPY_IN_ENTRYPOINT) {
-    script += std::string("cp -a ") + sandbox_common::kPatchMount + "/. " +
-              sandbox_common::kWorkspace + "/\n";
-  }
   script += "cd " + WorkDirOf(workspace, step) + "\n";
 
   if (step.applies_patches() &&
@@ -58,8 +52,7 @@ std::string EntrypointScript(const proto::Workspace &workspace,
           "\n";
     }
   }
-  // Sorted, because a map's order is not the caller's and a build that
-  // differs only in the order of two exports is a cache miss for nothing.
+  // Sorted: proto map iteration order is unspecified.
   for (const auto &[key, value] : std::map<std::string, std::string>(
            step.env().begin(), step.env().end())) {
     script += "export " + key + "=" + ShellQuote(value) + "\n";

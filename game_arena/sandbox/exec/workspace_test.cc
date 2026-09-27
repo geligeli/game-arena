@@ -98,49 +98,6 @@ TEST_F(WorkspaceTest, CreatesTheScratchDir) {
   EXPECT_TRUE(std::filesystem::is_directory(root_ / "scratch"));
 }
 
-TEST_F(WorkspaceTest, ExportsTheTreeWithoutItsGitDir) {
-  proto::Workspace ws = BaseWorkspace();
-  ws.set_tar(FakeTool("tar", 0));
-
-  proto::Status status;
-  ASSERT_TRUE(
-      ExportTree(ws, root_ / "out" / "tree.tar", root_ / "logs", &status))
-      << status.message();
-  EXPECT_NE(ToolLog().find("tar --exclude=./.git -cf " +
-                           (root_ / "out" / "tree.tar").string() + " -C " +
-                           (root_ / "lower").string() + " ."),
-            std::string::npos)
-      << ToolLog();
-}
-
-TEST_F(WorkspaceTest, AFailedExportIsAWorkspaceFailure) {
-  proto::Workspace ws = BaseWorkspace();
-  ws.set_tar(FakeTool("tar", 1));
-
-  proto::Status status;
-  EXPECT_FALSE(
-      ExportTree(ws, root_ / "out" / "tree.tar", root_ / "logs", &status));
-  EXPECT_EQ(status.code(), proto::Status::WORKSPACE_FAILED);
-  EXPECT_NE(status.message().find("tar said no"), std::string::npos)
-      << status.message();
-}
-
-TEST_F(WorkspaceTest, ARealTarExportsARealTree) {
-  std::ofstream(root_ / "lower" / "hello.txt") << "hi";
-  std::filesystem::create_directories(root_ / "lower" / ".git");
-  std::ofstream(root_ / "lower" / ".git" / "HEAD") << "ref";
-  proto::Workspace ws = BaseWorkspace();
-
-  proto::Status status;
-  ASSERT_TRUE(ExportTree(ws, root_ / "tree.tar", root_ / "logs", &status))
-      << status.message();
-  std::ifstream in(root_ / "tree.tar", std::ios::binary);
-  const std::string archive{std::istreambuf_iterator<char>(in),
-                            std::istreambuf_iterator<char>()};
-  EXPECT_NE(archive.find("hello.txt"), std::string::npos);
-  EXPECT_EQ(archive.find(".git/HEAD"), std::string::npos);
-}
-
 TEST_F(WorkspaceTest, AppliesAHostPatchWithACheckFirst) {
   proto::Workspace ws = BaseWorkspace();
   ws.set_git(FakeTool("git", 0));

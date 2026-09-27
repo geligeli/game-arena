@@ -11,8 +11,7 @@
 
 namespace process {
 
-// How a child starts. Empty paths inherit the caller's. Every field has an
-// initializer so a designated one may leave any of them out.
+// Empty paths inherit. Every field has an initializer, for designated init.
 struct Options {
   std::filesystem::path cwd = {};
   // "K=V" entries laid over the caller's environment.
@@ -20,14 +19,11 @@ struct Options {
   std::filesystem::path stdin_path = {};
   std::filesystem::path stdout_path = {};
   std::filesystem::path stderr_path = {};
-  // RLIMIT_AS for the child, in bytes. Zero leaves it unlimited. A cap makes
-  // an over-allocating child fail its own allocation rather than push the host
-  // into swap or the OOM killer.
+  // RLIMIT_AS; 0 is unlimited. An over-allocating child fails, not the host.
   std::size_t address_space_limit_bytes = 0;
 };
 
-// A child in its own process group, so stopping it stops what it spawned:
-// build tools fan out into workers that outlive their parent otherwise.
+// A child in its own process group, so stopping it stops what it spawned.
 // Destroying a running Child stops it.
 class Child {
  public:
@@ -39,15 +35,13 @@ class Child {
                                     const Options& options);
 
   Child(Child&& other) noexcept;
-  Child& operator=(Child&& other) noexcept;
   ~Child();
   Child(const Child&) = delete;
   Child& operator=(const Child&) = delete;
 
   pid_t pid() const { return pid_; }
 
-  // The exit code once the child has exited (128 + signal when killed by
-  // one), nullopt while it runs.
+  // The exit code (128 + signal) once exited, nullopt while running.
   std::optional<int> Poll();
 
   // Blocks until the child exits and returns its exit code, or nullopt once a

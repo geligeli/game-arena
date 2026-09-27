@@ -11,19 +11,15 @@ namespace tournament_arena {
 
 namespace {
 
-// A line is worth keeping if it says what broke or where. Ordered roughly by
-// how often each one carries the answer.
 bool IsInteresting(const std::string &line) {
   static const RE2 *const kPatterns[] = {
-      // file.cc:12:34: error: ...  (gcc/clang, the usual answer)
+      // file.cc:12:34: error: ...
       new RE2(R"(^\s*\S+\.(cc|cpp|h|hpp|inl):\d+(:\d+)?:)"),
       new RE2(R"(\b(error|fatal error|undefined reference):)"),
-      // bazel's own failures: unknown target, bad label, missing dep.
       new RE2(R"(^ERROR:)"),
-      // The include chain, and its "                 from x.h:3," follow-ons,
-      // which say which of the candidate's headers pulled the failure in.
+      // "In file included from" and its "from x.h:3," follow-ons.
       new RE2(R"(^\s*(In file included from |from )\S)"),
-      // The "required from here" chain that explains a template error.
+      // The chain that explains a template error.
       new RE2(R"(required from|instantiation of|in expansion of macro)"),
       new RE2(R"(^Use --sandbox_debug|^\s*\^)"),
   };
@@ -50,15 +46,12 @@ std::string CompactBuildLog(const std::string &log, BuildLogLimits limits) {
   }
 
   if (kept.empty()) {
-    // An unrecognised failure still has to be diagnosable, so fall back to the
-    // end of the log rather than reporting nothing.
     return TailOf(log, limits.max_chars);
   }
 
   const bool trimmed = static_cast<int>(kept.size()) > limits.max_lines;
   if (trimmed) {
-    // The first errors are the real ones; everything after tends to be
-    // fallout from them.
+    // The first errors are the real ones; the rest tend to be fallout.
     kept.resize(limits.max_lines);
   }
 

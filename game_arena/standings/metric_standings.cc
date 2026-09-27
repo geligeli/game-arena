@@ -1,25 +1,17 @@
 #include "game_arena/standings/metric_standings.h"
 
 #include <algorithm>
-#include <chrono>
 #include <fstream>
 #include <ios>
 #include <string>
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_arena {
-
-namespace {
-
-int64_t NowUnixMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
-
-}  // namespace
 
 MetricStandings::MetricStandings(std::filesystem::path path,
                                  std::string metric_name, bool lower_is_better)
@@ -55,16 +47,14 @@ void MetricStandings::Record(const std::string &candidate_id,
     std::lock_guard lock(mutex_);
     proto::MetricRecord &record = (*store_.mutable_records())[candidate_id];
     record.set_candidate_id(candidate_id);
-    // Replace rather than merge: the newest measurement is the one that stands,
-    // and keeping a stale metric alongside a fresh one would rank a submission
-    // on numbers taken at different times.
+    // Replace, not merge: never rank on numbers taken at different times.
     record.mutable_metrics()->clear();
     for (const auto &[name, value] : result.metrics()) {
       (*record.mutable_metrics())[name] = value;
     }
     record.set_worker_id(result.worker_id());
     record.set_machine_class(result.machine_class());
-    record.set_measured_unix_ms(NowUnixMs());
+    record.set_measured_unix_ms(absl::ToUnixMillis(absl::Now()));
     record.set_runs(result.games_played());
     version = ++version_;
     blob = store_.SerializeAsString();
@@ -77,19 +67,9 @@ void MetricStandings::Save(const std::string &blob, uint64_t version) {
   if (version <= saved_version_) {
     return;  // a newer store already landed
   }
-  const std::filesystem::path tmp = path_.string() + ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out.write(blob.data(), static_cast<std::streamsize>(blob.size()))) {
-      LOG(ERROR) << "Cannot write metric store " << tmp;
-      return;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path_, ec);
-  if (ec) {
-    LOG(ERROR) << "Cannot rename " << tmp << " to " << path_ << ": "
-               << ec.message();
+  std::string error;
+  if (!tournament_broker::WriteAtomically(path_, blob, &error)) {
+    LOG(ERROR) << "Could not write metric store: " << error;
     return;
   }
   saved_version_ = version;
@@ -135,20 +115,15 @@ std::vector<Standing> MetricStandings::Rank(int limit) const {
   for (Standing &row : rows) {
     row = Get(row.candidate_id);
   }
-  // A submission with no reading for the primary metric cannot be placed, so it
-  // is left off rather than shown at one end as if it had scored there.
+  // No primary metric, no place: left off rather than shown at one end.
   std::erase_if(rows, [&](const Standing &row) {
     return !row.metrics.contains(metric_name_);
   });
 
-  const bool lower_is_better = lower_is_better_;
-  std::sort(rows.begin(), rows.end(),
-            [&](const Standing &a, const Standing &b) {
-              if (a.score != b.score) {
-                return lower_is_better ? a.score < b.score : a.score > b.score;
-              }
-              return a.candidate_id < b.candidate_id;
-            });
+  std::ranges::sort(rows, {}, [&](const Standing &row) {
+    return std::pair<double, const std::string &>(
+        lower_is_better_ ? row.score : -row.score, row.candidate_id);
+  });
   if (limit > 0 && rows.size() > static_cast<std::size_t>(limit)) {
     rows.resize(limit);
   }

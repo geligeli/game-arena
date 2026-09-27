@@ -9,6 +9,7 @@
 
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/str_cat.h"
 
 namespace tournament_broker {
 
@@ -21,6 +22,21 @@ bool IsSafeId(std::string_view id) {
   });
 }
 
+bool WriteAtomically(const std::filesystem::path &path, std::string_view bytes,
+                     std::string *error) {
+  const std::filesystem::path tmp = path.string() + ".tmp";
+  if (!(std::ofstream(tmp, std::ios::binary) << bytes)) {
+    *error = absl::StrCat("cannot write ", tmp.string());
+    return false;
+  }
+  std::error_code ec;
+  std::filesystem::rename(tmp, path, ec);
+  if (ec) {
+    *error = absl::StrCat("cannot replace ", path.string(), ": ", ec.message());
+  }
+  return !ec;
+}
+
 GameHistory::GameHistory(std::filesystem::path dir) : dir_(std::move(dir)) {
   std::error_code ec;
   std::filesystem::create_directories(dir_, ec);
@@ -28,8 +44,7 @@ GameHistory::GameHistory(std::filesystem::path dir) : dir_(std::move(dir)) {
     LOG(ERROR) << "Cannot create game history dir " << dir_ << ": "
                << ec.message();
   }
-  // Seed the in-memory tail from whatever a previous run left behind. This is
-  // the only time the index file is read.
+  // Seed the tail from what a previous run left behind.
   std::ifstream in(dir_ / "index.jsonl");
   std::string line;
   while (std::getline(in, line)) {
@@ -53,9 +68,8 @@ std::filesystem::path GameHistory::Store(const proto::GameRecord &record) {
     }
   }
 
-  // One line of index.jsonl. serialize() never emits a newline of its own --
-  // a name carrying one comes back as \n -- so the object stays on one line
-  // however the players are called.
+  // serialize() escapes newlines, so an entry stays on one line whatever the
+  // names.
   json::object entry{
       {"game_id", record.game_id()},
       {"game", record.game()},

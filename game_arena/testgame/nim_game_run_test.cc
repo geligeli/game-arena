@@ -182,10 +182,10 @@ class NimGameRunTest : public ::testing::Test {
   void RunToCompletion(std::array<Seat, 2> seats, GameRunConfig config) {
     std::promise<void> finished;
     auto done = finished.get_future();
-    auto run =
-        GameRun::Create(GameRegistry().at("nim"), config, std::move(seats),
-                        ++counter_, history_.get(), pool_.get(), timer_.get(),
-                        [&finished] { finished.set_value(); });
+    auto run = std::make_shared<GameRun>(
+        GameRegistry().at("nim"), config, std::move(seats), ++counter_,
+        history_.get(), pool_.get(), timer_.get(),
+        [&finished] { finished.set_value(); });
     run->Start();
     ASSERT_EQ(done.wait_for(std::chrono::seconds(10)),
               std::future_status::ready)

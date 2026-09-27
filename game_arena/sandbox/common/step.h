@@ -1,13 +1,6 @@
 #ifndef GAME_ARENA_GAME_ARENA_SANDBOX_COMMON_STEP_H
 #define GAME_ARENA_GAME_ARENA_SANDBOX_COMMON_STEP_H
 
-// One subprocess step of an order, with its output captured to files.
-//
-// Shared by the sandbox backends so a step is launched, logged and timed out
-// the same way whether it runs on the host or starts a container. stdout and
-// stderr stay apart on disk -- combining them into one file would interleave
-// unpredictably -- and are concatenated only when reporting.
-
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -19,11 +12,10 @@ namespace sandbox_common {
 
 struct StepResult {
   process::RunResult run;
-  std::string output;  // stdout followed by stderr
+  std::string output;  // stdout then stderr
 };
 
-// Runs |executable| with output captured to <log_dir>/<tag>.{out,err} and a
-// wall-clock timeout.
+// Output goes to <log_dir>/<tag>.{out,err}.
 StepResult RunStep(const std::string &executable,
                    const std::vector<std::string> &args,
                    const std::filesystem::path &cwd,

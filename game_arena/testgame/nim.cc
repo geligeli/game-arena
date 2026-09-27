@@ -13,12 +13,8 @@ namespace arena_testgame {
 namespace {
 
 bool ParseInt(std::string_view text, int *out) {
-  if (text.empty()) {
-    return false;
-  }
-  const char *begin = text.data();
-  const char *end = begin + text.size();
-  const std::from_chars_result result = std::from_chars(begin, end, *out);
+  const char *end = text.data() + text.size();
+  const std::from_chars_result result = std::from_chars(text.data(), end, *out);
   return result.ec == std::errc{} && result.ptr == end;
 }
 
@@ -41,8 +37,6 @@ std::string NimSession::SerializeState() const {
 }
 
 void NimSession::ApplyChanceAction(std::mt19937 & /*gen*/) {
-  // Unreachable: IsChanceNode() is always false. Loud rather than silent,
-  // because reaching it would mean the broker ignored IsChanceNode().
   CHECK(false) << "Nim has no chance nodes";
 }
 
@@ -82,37 +76,26 @@ std::optional<tournament_broker::GameOutcome> NimSession::Outcome() const {
 
 std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec,
                                                         std::string *error) {
-  if (spec == "random") {
-    return [](std::string_view state_bytes, std::mt19937 &gen) -> std::string {
-      int remaining = 0;
-      int player = 0;
-      if (!ParseState(state_bytes, &remaining, &player) || remaining <= 0) {
-        return "1";  // let the referee reject it
-      }
-      const int most = std::min(kMaxTake, remaining);
-      std::uniform_int_distribution<int> pick(1, most);
-      return std::to_string(pick(gen));
-    };
+  if (spec != "random" && spec != "optimal") {
+    *error =
+        "unknown builtin '" + std::string(spec) + "' (want random|optimal)";
+    return std::nullopt;
   }
-  if (spec == "optimal") {
-    return [](std::string_view state_bytes, std::mt19937 &gen) -> std::string {
-      int remaining = 0;
-      int player = 0;
-      if (!ParseState(state_bytes, &remaining, &player) || remaining <= 0) {
-        return "1";
-      }
-      // Leave a multiple of (kMaxTake + 1) behind and the opponent is lost.
-      // From such a position there is no winning move, so play uniformly.
-      const int winning = remaining % (kMaxTake + 1);
-      if (winning != 0) {
-        return std::to_string(winning);
-      }
-      std::uniform_int_distribution<int> pick(1, std::min(kMaxTake, remaining));
-      return std::to_string(pick(gen));
-    };
-  }
-  *error = "unknown builtin '" + std::string(spec) + "' (want random|optimal)";
-  return std::nullopt;
+  return [optimal = spec == "optimal"](std::string_view state_bytes,
+                                       std::mt19937 &gen) -> std::string {
+    int remaining = 0;
+    int player = 0;
+    if (!ParseState(state_bytes, &remaining, &player) || remaining <= 0) {
+      return "1";  // let the referee reject it
+    }
+    // Leaving a multiple of kMaxTake + 1 wins; from one, no move does.
+    const int winning = remaining % (kMaxTake + 1);
+    if (optimal && winning != 0) {
+      return std::to_string(winning);
+    }
+    std::uniform_int_distribution<int> pick(1, std::min(kMaxTake, remaining));
+    return std::to_string(pick(gen));
+  };
 }
 
 tournament_broker::GameDescriptor Descriptor() {

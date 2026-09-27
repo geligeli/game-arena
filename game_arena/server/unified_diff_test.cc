@@ -33,7 +33,7 @@ TEST(UnifiedDiffTest, ParsesAnAddedFile) {
   ASSERT_EQ(patch.files.size(), 1u);
   EXPECT_TRUE(patch.files[0].is_new);
   EXPECT_EQ(patch.files[0].path(), "solutions/x/strategy.h");
-  EXPECT_EQ(patch.files[0].hunks, 1);
+  EXPECT_EQ(patch.total_hunks, 1);
   // The content comes back so the leaderboard can show source without a
   // checkout.
   EXPECT_EQ(patch.files[0].added_content,
@@ -62,7 +62,6 @@ TEST(UnifiedDiffTest, ParsesAModificationAcrossSeveralFiles) {
             &patch));
   ASSERT_EQ(patch.files.size(), 2u);
   EXPECT_EQ(patch.files[0].path(), "core/a.h");
-  EXPECT_EQ(patch.files[0].hunks, 2);
   EXPECT_FALSE(patch.files[0].is_new);
   // Only added files carry content; a modification's '+' lines are not a file.
   EXPECT_TRUE(patch.files[0].added_content.empty());
@@ -82,7 +81,7 @@ TEST(UnifiedDiffTest, ParsesADeletion) {
             "-b\n",
             &patch));
   ASSERT_EQ(patch.files.size(), 1u);
-  EXPECT_TRUE(patch.files[0].is_delete);
+  EXPECT_TRUE(patch.files[0].new_path.empty());
   EXPECT_EQ(patch.files[0].path(), "core/gone.h");
 }
 

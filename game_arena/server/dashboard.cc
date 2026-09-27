@@ -44,13 +44,19 @@ std::string Time(int64_t unix_ms) {
                           absl::UTCTimeZone());
 }
 
-// A player, linked to their page. A builtin has none.
+// A builtin has no page.
 std::string PlayerLink(std::string_view name) {
   if (!IsSafeId(name)) {
     return HtmlEscape(name);
   }
   return absl::StrCat("<a href=\"/participants/", name, "\">", HtmlEscape(name),
                       "</a>");
+}
+
+std::string PlayerLinks(const std::vector<std::string> &players) {
+  return absl::StrJoin(players, " vs ", [](std::string *out, const auto &name) {
+    out->append(PlayerLink(name));
+  });
 }
 
 std::string OpponentLink(std::string_view spec) {
@@ -62,8 +68,7 @@ std::string OpponentLink(std::string_view spec) {
              : absl::StrCat("vs ", HtmlEscape(spec));
 }
 
-// Without terminal colour codes (ESC [ ... letter): every example's .bazelrc
-// asks the compiler for colour.
+// Drops ESC [ ... letter: every example's .bazelrc asks for compiler colour.
 std::string StripAnsi(std::string_view text) {
   std::string out;
   out.reserve(text.size());
@@ -82,8 +87,7 @@ std::string Pre(std::string_view text) {
   return absl::StrCat("<pre>", HtmlEscape(StripAnsi(text)), "</pre>");
 }
 
-// A game's bytes as a person can read them: a state or action may serialize
-// to anything, and only text is worth showing.
+// A state or action may serialize to anything; only text is shown.
 std::string Readable(std::string_view bytes) {
   const bool text = std::ranges::all_of(bytes, [](char c) {
     return static_cast<unsigned char>(c) >= 0x20 || c == '\n' || c == '\t' ||
@@ -93,14 +97,12 @@ std::string Readable(std::string_view bytes) {
               : absl::StrCat("(", bytes.size(), " bytes, not text)");
 }
 
-// Enough of an error to tell jobs apart in a table.
 std::string FirstLine(std::string_view text) {
   const std::string_view line = text.substr(0, text.find('\n'));
   return line.size() <= 120 ? std::string(line)
                             : absl::StrCat(line.substr(0, 120), "...");
 }
 
-// "ok" when every order that came back built, "failed" when one did not.
 std::string BuildSummary(const JobRecord &record) {
   std::string summary = "-";
   for (const JobRecord::Order &order : record.orders()) {
@@ -115,8 +117,6 @@ std::string BuildSummary(const JobRecord &record) {
   return summary;
 }
 
-// A submission's files, rebuilt from its patch; a patch that changes files
-// already in the tree is shown as it is.
 std::string SourceOf(const std::string &patch) {
   Patch parsed;
   std::string error;
@@ -151,7 +151,6 @@ constexpr std::string_view kJobHeader =
     "<th>State</th><th>Build</th><th>W</th><th>D</th><th>L</th>"
     "<th>Error</th></tr>";
 
-// One line of the games index, as the dashboard reads it.
 std::string Field(const json::object &game, std::string_view key) {
   const json::value *value = game.if_contains(key);
   return value != nullptr && value->is_string()
@@ -184,8 +183,6 @@ std::string ResultText(int64_t result, int64_t winner,
   return "-";
 }
 
-// Steps through the frames above it: first, back, play, forward, last, a
-// slider, and the arrow keys.
 constexpr std::string_view kReplayScript = R"(<script>
 var frames=document.querySelectorAll('.f'),at=0,timer=null;
 function go(i){at=Math.max(0,Math.min(frames.length-1,i));
@@ -382,8 +379,7 @@ std::string Dashboard::GamesPage(int page, const std::string &player) const {
     }
     games.push_back(std::move(value.as_object()));
   }
-  // The index is in the order games arrived, and an order sends all of its
-  // games when it finishes.
+  // The index is in arrival order, and an order sends its games at the end.
   std::ranges::stable_sort(games, std::greater{}, [](const json::object &game) {
     return Number(game, "finished_unix_ms");
   });
@@ -398,12 +394,8 @@ std::string Dashboard::GamesPage(int page, const std::string &player) const {
        ++i) {
     const json::object &game = games[i];
     const std::vector<std::string> players = Players(game);
-    std::vector<std::string> links;
-    for (const std::string &name : players) {
-      links.push_back(PlayerLink(name));
-    }
     html << "<tr><td class=\"l\">" << Time(Number(game, "finished_unix_ms"))
-         << "</td><td class=\"l\">" << absl::StrJoin(links, " vs ")
+         << "</td><td class=\"l\">" << PlayerLinks(players)
          << "</td><td class=\"l\">"
          << ResultText(Number(game, "result"), Number(game, "winning_player"),
                        players)
@@ -434,14 +426,10 @@ std::optional<std::string> Dashboard::ReplayPage(
   }
   const std::vector<std::string> players(record->player_names().begin(),
                                          record->player_names().end());
-  std::vector<std::string> links;
-  for (const std::string &name : players) {
-    links.push_back(PlayerLink(name));
-  }
 
   std::ostringstream html;
   html << PageStart(record->game() + ": " + absl::StrJoin(players, " vs "))
-       << "<p>" << absl::StrJoin(links, " vs ") << " &middot; "
+       << "<p>" << PlayerLinks(players) << " &middot; "
        << ResultText(record->result(), record->winning_player(), players)
        << " (" << HtmlEscape(record->termination_reason()) << ") &middot; "
        << record->steps_size() << " moves &middot; "

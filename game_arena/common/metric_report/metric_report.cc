@@ -3,67 +3,50 @@
 #include <google/protobuf/util/json_util.h>
 
 #include <algorithm>
-#include <cctype>
 #include <charconv>
 #include <cstddef>
 #include <map>
-#include <numeric>
 #include <string>
 #include <string_view>
-#include <vector>
 
+#include "absl/strings/str_split.h"
+#include "absl/strings/strip.h"
 #include "game_arena/proto/problem.pb.h"
 
 namespace metric_report {
 
 namespace {
 
-// "RESULT a=1 b=2.5" -> {a: 1, b: 2.5}. The last RESULT line wins, so a
-// command that prints progress lines before its final one is fine.
+// "RESULT a=1 b=2.5" -> {a: 1, b: 2.5}; the last RESULT line wins.
 bool ParseResultLineMetrics(std::string_view text,
                             std::map<std::string, double> *metrics) {
-  constexpr std::string_view kMarker = "RESULT ";
-  std::size_t line_start = 0;
   bool found = false;
-  while (line_start <= text.size()) {
-    const std::size_t nl = text.find('\n', line_start);
-    const std::string_view line = text.substr(
-        line_start, nl == std::string_view::npos ? std::string_view::npos
-                                                 : nl - line_start);
-    if (line.rfind(kMarker, 0) == 0) {
-      std::map<std::string, double> parsed;
-      std::size_t at = kMarker.size();
-      while (at < line.size()) {
-        while (at < line.size() && line[at] == ' ') {
-          ++at;
-        }
-        const std::size_t eq = line.find('=', at);
-        if (eq == std::string_view::npos) {
-          break;
-        }
-        std::size_t end = line.find(' ', eq);
-        if (end == std::string_view::npos) {
-          end = line.size();
-        }
-        const std::string_view key = line.substr(at, eq - at);
-        const std::string_view value = line.substr(eq + 1, end - eq - 1);
-        double number = 0.0;
-        const auto [ptr, ec] =
-            std::from_chars(value.data(), value.data() + value.size(), number);
-        if (ec == std::errc() && !key.empty()) {
-          parsed[std::string(key)] = number;
-        }
-        at = end;
-      }
-      if (!parsed.empty()) {
-        *metrics = std::move(parsed);
-        found = true;
-      }
+  for (std::string_view line : absl::StrSplit(text, '\n')) {
+    if (!absl::ConsumePrefix(&line, "RESULT ")) {
+      continue;
     }
-    if (nl == std::string_view::npos) {
-      break;
+    std::map<std::string, double> parsed;
+    // A key runs from the first non-space to the next '=', a value to the next
+    // space; from_chars takes a numeric prefix ("1.5abc" reads as 1.5).
+    for (;;) {
+      line.remove_prefix(std::min(line.find_first_not_of(' '), line.size()));
+      const std::size_t eq = line.find('=');
+      if (eq == std::string_view::npos) {
+        break;
+      }
+      const std::size_t end = std::min(line.find(' ', eq), line.size());
+      double number = 0.0;
+      if (eq > 0 &&
+          std::from_chars(line.data() + eq + 1, line.data() + end, number).ec ==
+              std::errc()) {
+        parsed[std::string(line.substr(0, eq))] = number;
+      }
+      line.remove_prefix(end);
     }
-    line_start = nl + 1;
+    if (!parsed.empty()) {
+      *metrics = std::move(parsed);
+      found = true;
+    }
   }
   return found;
 }
@@ -75,8 +58,7 @@ bool Parse(std::string_view json, std::string_view stdout_text,
   metrics->clear();
   if (!json.empty()) {
     tournament_arena::proto::MetricReport report;
-    // Unknown fields are tolerated: a command that reports more than the schema
-    // knows about is being helpful, not wrong.
+    // A command reporting more than the schema knows is being helpful.
     google::protobuf::json::ParseOptions options;
     options.ignore_unknown_fields = true;
     if (google::protobuf::json::JsonStringToMessage(

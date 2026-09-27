@@ -5,17 +5,8 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# A sandbox execution engine, and nothing about what the sandbox is for.
-#
-# The property worth checking when you add a dep here: no target in this
-# package may depend on anything under //game_arena/proto, or on
-# //game_arena/server, //game_arena/referee or //game_arena/sandbox/worker.
-# The arena's own policy -- orders, matches, ELO, metrics -- lives above this,
-# in //game_arena/sandbox/worker.
-#
-#   bazel query 'somepath(//game_arena/sandbox/exec/..., //game_arena/proto/...)'
-#
-# should stay empty.
+# Nothing here may depend on //game_arena/proto, server, referee or
+# sandbox/worker: see the somepath queries in AGENTS.md.
 
 proto_library(
     name = "sandbox_job_proto",
@@ -34,6 +25,8 @@ cc_library(
     deps = [
         ":sandbox_job_cc_proto",
         "//game_arena/sandbox/common:docker",
+        "//game_arena/sandbox/common:files",
+        "@abseil-cpp//absl/strings",
     ],
 )
 
@@ -77,9 +70,8 @@ cc_library(
     srcs = ["workspace.cc"],
     hdrs = ["workspace.h"],
     deps = [
+        ":engine",
         ":sandbox_job_cc_proto",
-        "//game_arena/common/process",
-        "//game_arena/sandbox/common:docker",
         "//game_arena/sandbox/common:files",
         "//game_arena/sandbox/common:step",
         "//game_arena/sandbox/common:text",
@@ -122,13 +114,7 @@ cc_test(
     ],
 )
 
-# The engine that is not a boundary: resource limits and timeouts, run as
-# whoever runs it. It exists so the step kernel can be tested without a docker
-# daemon, and so `isolates` has a false case to assert against -- not so that
-# anything can run a submission on it. No shipped binary may link it: a worker
-# takes the container engine and nothing else, which is what makes "submitted
-# code runs in a container" true by construction. Visible to the two packages
-# whose tests use it.
+# Not a boundary, and test-only: no binary that runs a submission may link it.
 cc_library(
     name = "process_engine",
     srcs = ["process_engine.cc"],

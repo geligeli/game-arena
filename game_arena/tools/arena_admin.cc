@@ -1,21 +1,4 @@
-// Operator tooling for the arena's client registry.
-/*
-bazel run //game_arena/tools:arena_admin -- \
-    mint --client_id=some-agent --display_name="Some Agent"
-
-bazel run //game_arena/tools:arena_admin -- \
-    mint --client_id=some-agent --clients=/srv/arena/clients.textproto
-*/
-//
-// One subcommand so far: `mint`, which prints a fresh token -- and nothing else
-// on stdout, so TOKEN=$(arena_admin mint ...) works -- and, with --clients,
-// writes the client to that file. Without --clients the registry block to
-// paste goes to stderr.
-//
-// It exists because the alternative is an operator inventing their own tokens,
-// and invented tokens are guessable ones. The raw token is printed once, to a
-// terminal, and never written anywhere -- what goes in the registry is its
-// hash, so a leaked registry file is not a set of usable credentials.
+// Mints a client token; stdout is the token alone, for TOKEN=$(... mint ...).
 
 #include <cstdio>
 #include <string>

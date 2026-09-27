@@ -36,8 +36,7 @@ using tcp = net::ip::tcp;
 
 namespace {
 
-// A client that connects and then goes silent must not wedge the single serve
-// coroutine, which takes one connection at a time: bound every operation on it.
+// A silent client must not wedge the one serve coroutine.
 constexpr auto kClientTimeout = std::chrono::seconds(5);
 
 // Error codes come back in the completion tuple instead of as exceptions.
@@ -45,9 +44,7 @@ constexpr auto kAsTuple = net::as_tuple(net::use_awaitable);
 
 }  // namespace
 
-// One pass, so the order of these pairs does not matter: StrReplaceAll never
-// rescans what it just substituted, which is what makes escaping '&' safe
-// alongside the entities that contain one.
+// One pass: StrReplaceAll never rescans a substitution, so '&' is safe here.
 std::string HtmlEscape(std::string_view s) {
   return absl::StrReplaceAll(s, {{"&", "&amp;"},
                                  {"<", "&lt;"},
@@ -97,8 +94,7 @@ bool HttpLeaderboard::Start() {
   if (ec) {
     LOG(ERROR) << "HTTP leaderboard: cannot bind port " << port_ << ": "
                << ec.message();
-    // open() may well have succeeded; leaving the acceptor open would make
-    // bound_port() answer 0 for a server that never started.
+    // Or bound_port() would answer for a server that never started.
     beast::error_code ignored;
     acceptor_.close(ignored);
     return false;
@@ -118,10 +114,7 @@ void HttpLeaderboard::Stop() {
   if (!thread_.joinable()) {
     return;
   }
-  // Closing the acceptor here would race the coroutine sitting in
-  // async_accept; posting it runs the close on the io thread instead, where
-  // the pending accept then completes with an error. A connection already
-  // being served finishes first, bounded by kClientTimeout.
+  // Posted, so the close runs on the io thread instead of racing async_accept.
   net::post(ioc_, [this] {
     beast::error_code ignored;
     acceptor_.close(ignored);
@@ -176,9 +169,7 @@ std::optional<std::pair<std::string, std::string>> HttpLeaderboard::Route(
     std::string_view target) const {
   constexpr std::string_view kHtml = "text/html; charset=utf-8";
   constexpr std::string_view kJson = "application/json";
-  // The standings and candidate store come from the arena. A standalone broker
-  // has neither, and 404 is the honest answer there rather than an empty table
-  // that looks like nobody has scored yet.
+  // Without them 404, not an empty table that looks like nobody has scored.
   if ((target == "/" || target == "/index.html") && standings_ != nullptr) {
     return std::pair(std::string(kHtml), RenderLeaderboardHtml());
   }
@@ -204,8 +195,7 @@ std::string HttpLeaderboard::RenderLeaderboardHtml() const {
        << "<table><tr><th>Rank</th><th>Submission</th>"
           "<th>Author</th><th>"
        << HtmlEscape(score) << "</th>";
-  // A match problem has a W/D/L record; a graded one has the host that produced
-  // the number, which is the thing a reader most needs to trust it.
+  // A graded row shows the host that measured it: what a reader must trust.
   const bool graded = score != "elo";
   html << (graded ? "<th>runs</th><th class=\"d\">machine</th>"
                   : "<th>W</th><th>D</th><th>L</th>");
@@ -213,8 +203,7 @@ std::string HttpLeaderboard::RenderLeaderboardHtml() const {
 
   int rank = 1;
   for (const Standing &row : standings_->Rank(0)) {
-    // Without a submission registry -- the standalone broker's case -- a row is
-    // just a player name, which is its own display name.
+    // Without a registry, the player name is its own display name.
     const auto candidate = candidates_ != nullptr
                                ? candidates_->Get(row.candidate_id)
                                : std::nullopt;
@@ -305,9 +294,7 @@ std::string HttpLeaderboard::RenderLeaderboardJson() const {
 std::string HttpLeaderboard::RenderGamesJson() const {
   json::array games;
   for (const std::string &line : history_->RecentGames(100)) {
-    // Each index line is already a JSON object. Re-parsing rather than
-    // concatenating costs little at this size and means one unreadable line
-    // drops out on its own instead of corrupting the whole document.
+    // Re-parsed, so an unreadable line drops out rather than corrupting all.
     boost::system::error_code ec;
     json::value game = json::parse(line, ec);
     if (ec) {

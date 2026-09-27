@@ -12,9 +12,7 @@ namespace {
 
 constexpr std::string_view kPlayerPrefix = "player:";
 
-// The name the opponent is rated under. A builtin is a player like any other --
-// that is what makes "beat builtin:mcts" a meaningful thing to be rated for --
-// and a candidate opponent is rated under its own id.
+// A builtin is rated like any player; a candidate under its own id.
 std::string OpponentName(const std::string &opponent) {
   if (opponent.rfind(kPlayerPrefix, 0) == 0) {
     return opponent.substr(kPlayerPrefix.size());
@@ -41,9 +39,7 @@ void EloStandings::Record(const std::string &candidate_id,
   }
   const std::string rival = OpponentName(opponent);
 
-  // One call per game. The whole tally applied at once would give a different
-  // rating: ELO's update depends on the rating at the time of each game, so
-  // six wins then four losses is not the same as ten games averaged.
+  // One update per game: ELO is path dependent, so the tally at once differs.
   for (int i = 0; i < result.wins(); ++i) {
     elo_store_->RecordResult(problem_id_, candidate_id, rival, 1.0);
   }
@@ -79,13 +75,9 @@ std::vector<Standing> EloStandings::Rank(int limit) const {
     }
     rows.push_back(Get(candidate.candidate_id()));
   }
-  std::sort(rows.begin(), rows.end(), [](const Standing &a, const Standing &b) {
-    if (a.score != b.score) {
-      return a.score > b.score;
-    }
-    // A stable tiebreak, so two equally rated rows do not swap
-    // places between requests.
-    return a.candidate_id < b.candidate_id;
+  // Ties go by id, so equal rows do not swap places between requests.
+  std::ranges::sort(rows, {}, [](const Standing &row) {
+    return std::pair<double, const std::string &>(-row.score, row.candidate_id);
   });
   if (limit > 0 && rows.size() > static_cast<std::size_t>(limit)) {
     rows.resize(limit);

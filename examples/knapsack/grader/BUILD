@@ -2,26 +2,20 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-# The scoring binary. It is part of the problem, not of a submission, and
-# problem.textproto denies patches that touch it -- editing the grader is
-# editing the scoreboard.
+# Part of the problem, not a submission: allow_paths keeps patches out of it.
 cc_binary(
     name = "grade",
     srcs = ["grade.cc"],
     deps = [
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
-        # Runs the submission with a timeout and an address-space cap.
         "@game_arena//game_arena/common/process",
-        # Writes the JSON the worker scores from.
         "@game_arena//game_arena/grader:report",
     ],
 )
 
-# Everything here, for the sandbox image: a glob does not cross packages, so
-# each one exports its own (arena_problem's `tree`).
+# A glob does not cross packages, so each exports its own (arena_problem's `tree`).
 filegroup(
     name = "tree",
     srcs = glob(["**"]),
-    visibility = ["//visibility:public"],
 )

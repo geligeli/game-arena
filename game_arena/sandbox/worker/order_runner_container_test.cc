@@ -220,7 +220,8 @@ TEST_F(OrderRunnerContainerTest, TheTreeIsTheImagesNotTheWorkers) {
   // from this side -- which is what stops two hosts in one fleet from
   // building a problem out of two different trees.
   const std::size_t before = ReadFile(root_ / "docker.log").size();
-  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("tree-1", "c-ok"), {}).build_ok);
+  ASSERT_TRUE(
+      runner_->RunOrder(0, MakeOrder("tree-1", "c-ok"), {}).result.build_ok());
 
   const std::string mine = ReadFile(root_ / "docker.log").substr(before);
   ExpectLogContains(mine, "docker create --name saw-0-tree-1-load ");
@@ -240,7 +241,7 @@ TEST_F(OrderRunnerContainerTest, RegistryOptionsReachTheReferee) {
   proto::WorkOrder order = MakeOrder("opts-1", "c-ok");
   (*order.mutable_registry_options())["mcts_iterations"] = "800";
   (*order.mutable_registry_options())["depth"] = "7";
-  ASSERT_TRUE(runner_->RunOrder(0, order, {}).build_ok);
+  ASSERT_TRUE(runner_->RunOrder(0, order, {}).result.build_ok());
 
   ExpectLogContains(ReadFile(root_ / "docker.log"),
                     "'--registry_options=depth=7,mcts_iterations=800'");
@@ -251,7 +252,8 @@ TEST_F(OrderRunnerContainerTest, NoRegistryOptionsMeansNoFlag) {
   // The fake docker log is shared by the whole suite, so look only at what
   // this order appended to it.
   const std::size_t before = ReadFile(root_ / "docker.log").size();
-  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("noopts-1", "c-ok"), {}).build_ok);
+  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("noopts-1", "c-ok"), {})
+                  .result.build_ok());
 
   const std::string mine = ReadFile(root_ / "docker.log").substr(before);
   ASSERT_NE(mine.find("saw-0-noopts-1-referee"), std::string::npos)
@@ -263,12 +265,12 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   const OrderOutcome outcome =
       runner_->RunOrder(0, MakeOrder("ok-1", "c-ok"), {});
 
-  EXPECT_TRUE(outcome.build_ok) << outcome.error;
-  EXPECT_TRUE(outcome.error.empty()) << outcome.error;
-  EXPECT_EQ(outcome.games_played, 2);
-  EXPECT_EQ(outcome.wins, 1);
-  EXPECT_EQ(outcome.draws, 1);
-  EXPECT_EQ(outcome.losses, 0);
+  EXPECT_TRUE(outcome.result.build_ok()) << outcome.result.error();
+  EXPECT_TRUE(outcome.result.error().empty()) << outcome.result.error();
+  EXPECT_EQ(outcome.result.games_played(), 2);
+  EXPECT_EQ(outcome.result.wins(), 1);
+  EXPECT_EQ(outcome.result.draws(), 1);
+  EXPECT_EQ(outcome.result.losses(), 0);
 
   // The submission is staged as the one thing the container applies: its patch.
   const auto staged = root_ / "work" / "slot0" / "patches" / "c-ok.diff";
@@ -379,7 +381,8 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
 // as a comment. A submitted genrule is arbitrary code; the claim is that it
 // runs with nothing to reach and nothing to keep.
 TEST_F(OrderRunnerContainerTest, EveryContainerIsHardened) {
-  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("hard-1", "c-hard"), {}).build_ok);
+  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("hard-1", "c-hard"), {})
+                  .result.build_ok());
   const std::string log = ReadFile(root_ / "docker.log");
 
   int hardened = 0;
@@ -412,10 +415,10 @@ TEST_F(OrderRunnerContainerTest, BuildFailureIsReportedNotErrored) {
 
   // A build failure is the candidate's fault: a completed order with the
   // compacted diagnostics, nothing to play.
-  EXPECT_FALSE(outcome.build_ok);
-  EXPECT_TRUE(outcome.error.empty()) << outcome.error;
-  EXPECT_EQ(outcome.games_played, 0);
-  EXPECT_NE(outcome.build_log.find("expected ';' before '}' token"),
+  EXPECT_FALSE(outcome.result.build_ok());
+  EXPECT_TRUE(outcome.result.error().empty()) << outcome.result.error();
+  EXPECT_EQ(outcome.result.games_played(), 0);
+  EXPECT_NE(outcome.result.build_log().find("expected ';' before '}' token"),
             std::string::npos);
   // The run phase never started.
   EXPECT_EQ(ReadFile(root_ / "docker.log").find("saw-0-failbuild-1-run"),
@@ -428,9 +431,10 @@ TEST_F(OrderRunnerContainerTest, RunTimeoutKillsTheContainer) {
 
   const OrderOutcome outcome = runner_->RunOrder(0, order, {});
 
-  EXPECT_TRUE(outcome.build_ok) << outcome.error;
-  EXPECT_NE(outcome.error.find("games timed out after 2s"), std::string::npos)
-      << outcome.error;
+  EXPECT_TRUE(outcome.result.build_ok()) << outcome.result.error();
+  EXPECT_NE(outcome.result.error().find("games timed out after 2s"),
+            std::string::npos)
+      << outcome.result.error();
   // The server stopped the container by name after the client-side timeout.
   ExpectLogContains(ReadFile(root_ / "docker.log"),
                     "docker kill saw-0-blockrun-1-bot");
@@ -445,9 +449,9 @@ TEST_F(OrderRunnerContainerTest, SideWithoutAPatchIsRejected) {
 
   const OrderOutcome outcome = runner_->RunOrder(0, order, {});
 
-  EXPECT_FALSE(outcome.build_ok);
-  EXPECT_NE(outcome.error.find("carries no patch"), std::string::npos)
-      << outcome.error;
+  EXPECT_FALSE(outcome.result.build_ok());
+  EXPECT_NE(outcome.result.error().find("carries no patch"), std::string::npos)
+      << outcome.result.error();
   // Rejected before anything reached docker.
   EXPECT_EQ(ReadFile(root_ / "docker.log").find("saw-0-esc-1"),
             std::string::npos);
@@ -485,7 +489,8 @@ TEST_F(OrderRunnerContainerTest, AHostMayBindItsCachesForSpeed) {
   OrderRunner bound(/*process_engine=*/nullptr, engine_.get(), config);
   std::string error;
   ASSERT_TRUE(bound.Warmup(1, &error)) << error;
-  ASSERT_TRUE(bound.RunOrder(0, MakeOrder("bind-1", "c-ok"), {}).build_ok);
+  ASSERT_TRUE(
+      bound.RunOrder(0, MakeOrder("bind-1", "c-ok"), {}).result.build_ok());
 
   const std::string log = ReadFile(root_ / "docker.log");
   const std::string build = RunArgvFor(log, "saw-0-bind-1-build");
@@ -517,7 +522,8 @@ TEST_F(OrderRunnerContainerTest, AHostMayBindItsCachesForSpeed) {
 // order starts, which is what makes a refactor of the backend reviewable: the
 // emitted argv either is byte-identical or the diff says exactly how it moved.
 TEST_F(OrderRunnerContainerTest, WholeDockerRunArgvIsPinned) {
-  ASSERT_TRUE(runner_->RunOrder(0, MakeOrder("argv-1", "c-ok"), {}).build_ok);
+  ASSERT_TRUE(
+      runner_->RunOrder(0, MakeOrder("argv-1", "c-ok"), {}).result.build_ok());
   const std::string log = ReadFile(root_ / "docker.log");
 
   // The build: throwaway (--rm), no network at all, no memory or pid cap

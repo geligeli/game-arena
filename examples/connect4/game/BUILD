@@ -3,8 +3,6 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# The rules. Depends on one arena header -- the GameSession contract -- and
-# nothing else.
 cc_library(
     name = "connect4",
     srcs = ["connect4.cc"],
@@ -12,8 +10,7 @@ cc_library(
     deps = ["@game_arena//game_arena/referee:game_session"],
 )
 
-# The definition of GameRegistry(). alwayslink because nothing depends on it by
-# label: it exists to satisfy a symbol the arena leaves undefined.
+# alwayslink: nothing depends on it by label; it defines a symbol the arena declares.
 cc_library(
     name = "registry",
     srcs = ["registry.cc"],
@@ -24,9 +21,6 @@ cc_library(
     ],
 )
 
-# Everything a participant needs from this package, for the kit that
-# `bazel run //:kit` writes. The referee is assembled at the root by
-# arena_problem(); here are only the rules.
 filegroup(
     name = "kit",
     srcs = glob([
@@ -47,10 +41,8 @@ cc_test(
     ],
 )
 
-# Everything here, for the sandbox image: a glob does not cross packages, so
-# each one exports its own (arena_problem's `tree`).
+# A glob does not cross packages, so each exports its own (arena_problem's `tree`).
 filegroup(
     name = "tree",
     srcs = glob(["**"]),
-    visibility = ["//visibility:public"],
 )

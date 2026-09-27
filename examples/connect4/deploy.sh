@@ -1,33 +1,25 @@
 #!/bin/bash
-# Pushes this problem's kit image, primed, runs its tournament on this host,
-# and opens a participant's shell in the kit. Leaving the shell stops the
-# tournament.
-#   ./deploy.sh [name]      who you are in the tournament; default $USER
+# ./deploy.sh [name]: pushes the kit image, runs the tournament and a worker
+# here, and opens a kit shell as name (default $USER); leaving it stops them.
 set -euo pipefail
 
-# Primed: dependencies vendored and the cache warm, through prime.bazelrc.
 bazel run //:kit_image_issue -- --image=registry.takumi.city/connect4-kit:1 --push \
     --prime_bazelrc=prime.bazelrc
 
-# The coordinator, as a process. It builds and runs nothing.
 LOG="$(mktemp)"
 bazel run //:tournament >"$LOG" 2>&1 &
 trap 'kill $(jobs -p)' EXIT
 
-# A worker, as another -- one more of these, here or on any host with docker,
-# is more capacity -- and the sandbox image it builds and runs submissions in:
-# dependencies vendored and the cache primed, through prime.bazelrc.
+# More workers, here or on any host with docker, are more capacity.
 bazel run //:sandbox_image_issue -- --prime_bazelrc=prime.bazelrc
 bazel run @game_arena//game_arena/sandbox/worker:sandbox_worker -- \
     --server=localhost:50051 >>"$LOG" 2>&1 &
 
-# Up once the worker has attached.
 until grep -q "Attached to" "$LOG"; do sleep 1; done
 NAME="${1:-$USER}"
 TOKEN="$(bazel run @game_arena//game_arena/tools:arena_admin -- mint --overwrite --client_id="$NAME" \
     --clients="$HOME/.arena/connect4/clients.textproto")"
 
-# Inside: arena_cli submit --wait, arena_cli spar <someone>
 docker run -it --rm --pull=always --network host \
     -e ARENA_SERVER=localhost:50051 -e ARENA_NAME="$NAME" -e ARENA_TOKEN="$TOKEN" -e ARENA_RESTORE=1 \
     registry.takumi.city/connect4-kit:1

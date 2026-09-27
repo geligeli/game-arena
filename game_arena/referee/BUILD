@@ -1,37 +1,17 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
-package(
-    default_visibility = ["//visibility:public"],
-)
+package(default_visibility = ["//visibility:public"])
 
-# The referee: the match loop and the broker protocol the two sides of a match
-# speak. Everything here is game-agnostic -- it only ever sees serialized
-# states and actions as byte strings.
-#
-# The rules themselves arrive through :game_registry, which is a DECLARATION
-# with no definition in this repo. A referee binary is assembled downstream as
-# "a registry + :referee_main"; see //game_arena/testgame for
-# the reference assembly, and //game_mcts/arena in the game-mcts repo for a
-# registry of real games. That is
-# the seam that lets one arena host different problems with different referees
-# compiled in.
-#
-# This package is deliberately NOT a dependency of
-# //game_arena/server, which is a pure coordinator; that
-# package's no_problem_code_test enforces it. Matches run here, in the sandbox,
-# on a worker.
-
-# The type-erased contract between the arena and a problem: implement
-# GameSession, hand back a GameDescriptor. No dependency on any game framework.
+# Game-agnostic: states and actions are only ever byte strings.
 cc_library(
     name = "game_session",
     srcs = ["game_session.cc"],
     hdrs = ["game_session.h"],
+    deps = ["@abseil-cpp//absl/time"],
 )
 
-# The registry interface: name -> GameDescriptor. Header only, on purpose --
-# GameRegistry() is defined by whichever registry the final binary links.
+# Declared, never defined here: a binary links a registry (//game_arena/testgame).
 cc_library(
     name = "game_registry",
     hdrs = ["game_registry.h"],
@@ -44,8 +24,7 @@ cc_library(
     deps = ["//game_arena/proto:tournament_broker_cc_proto"],
 )
 
-# Bounded execution: a worker pool, per-game strands, and one timer thread.
-# No gRPC dependency, so the game layer stays transport agnostic.
+# No gRPC below play_reactor: the game layer stays transport agnostic.
 cc_library(
     name = "worker_pool",
     srcs = ["worker_pool.cc"],
@@ -53,8 +32,6 @@ cc_library(
     deps = ["@abseil-cpp//absl/functional:any_invocable"],
 )
 
-# One game as an event-driven state machine on a strand, instead of a blocking
-# loop on a dedicated thread.
 cc_library(
     name = "game_run",
     srcs = ["game_run.cc"],
@@ -66,6 +43,7 @@ cc_library(
         "//game_arena/proto:tournament_broker_cc_proto",
         "//game_arena/standings:game_history",
         "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/time",
     ],
 )
 
@@ -85,8 +63,6 @@ cc_library(
     ],
 )
 
-# ClientHandle over a gRPC bidi stream, split from the reactor that owns the
-# RPC so the two lifetimes can differ.
 cc_library(
     name = "player_connection",
     srcs = ["player_connection.cc"],
@@ -99,7 +75,6 @@ cc_library(
     ],
 )
 
-# Callback-API reactor: one per Play stream, owned by gRPC.
 cc_library(
     name = "play_reactor",
     srcs = ["play_reactor.cc"],
@@ -113,20 +88,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "broker_service",
-    srcs = ["broker_service.cc"],
-    hdrs = ["broker_service.h"],
-    deps = [
-        ":matchmaker",
-        ":play_reactor",
-        "//game_arena/proto:tournament_broker_cc_grpc",
-        "@grpc//:grpc++",
-    ],
-)
-
-# A match's result from one side, counted from its game records. Shared by the
-# referee, the worker that reads its report and spar.
 cc_library(
     name = "match_tally",
     srcs = ["match_tally.cc"],
@@ -143,21 +104,17 @@ cc_test(
     ],
 )
 
-# One match, then exit. Started by a sandbox worker per order; see referee_main.cc.
-#
-# A library rather than a cc_binary because main() is game-agnostic but the
-# registry it drives is not: link this with a registry to get a referee.
-# alwayslink so main() survives the archive.
+# A library, to be linked with a registry; alwayslink keeps main().
 cc_library(
     name = "referee_main",
     srcs = ["referee_main.cc"],
     alwayslink = 1,
     deps = [
         "//game_arena/common/kv_options",
-        ":broker_service",
         ":game_registry",
         ":match_tally",
         ":matchmaker",
+        ":play_reactor",
         "//game_arena/proto:tournament_broker_cc_proto",
         "//game_arena/standings:game_history",
         "@abseil-cpp//absl/flags:flag",
@@ -188,8 +145,7 @@ cc_test(
     ],
 )
 
-# Every file of this package, for the arena a participant's kit builds
-# against: a kit gets these packages whole (see //:kit_surface).
+# A kit vendors this package whole (//:kit_surface).
 filegroup(
     name = "kit_surface_files",
     srcs = glob(["**"]),

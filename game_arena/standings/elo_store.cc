@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "absl/log/log.h"
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_broker {
 
@@ -65,8 +66,7 @@ std::pair<double, double> EloStore::RecordResult(const std::string &game,
     blob = store_.SerializeAsString();
     version = ++version_;
   }
-  // Disk I/O outside mutex_: readers (leaderboard) and other finishing games
-  // are not blocked by this rewrite.
+  // Outside mutex_, so readers and finishing games do not wait on disk.
   Save(blob, version);
   return new_ratings;
 }
@@ -89,20 +89,9 @@ void EloStore::Save(const std::string &blob, uint64_t version) {
     // A newer store already reached disk; this blob is stale.
     return;
   }
-  const std::filesystem::path tmp = path_.string() + ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out ||
-        !out.write(blob.data(), static_cast<std::streamsize>(blob.size()))) {
-      LOG(ERROR) << "Could not write rating store " << tmp;
-      return;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path_, ec);
-  if (ec) {
-    LOG(ERROR) << "Could not rename " << tmp << " -> " << path_ << ": "
-               << ec.message();
+  std::string error;
+  if (!WriteAtomically(path_, blob, &error)) {
+    LOG(ERROR) << "Could not write rating store: " << error;
     return;
   }
   saved_version_ = version;

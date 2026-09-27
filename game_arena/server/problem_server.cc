@@ -1,37 +1,12 @@
-// The problem server: one process per problem, and a pure coordinator.
-/*
-bazel run //game_arena/server:problem_server -- \
-    --problem_config=game_arena/problems/nim.textproto \
-    --data_dir=tournament_data
-*/
-//
-// It accepts submissions, stores them, schedules their evaluation onto the
-// sandbox fleet, and publishes the standings. It does not build anything, run
-// anything, or referee anything -- all of that happens on a worker, in a
-// container, behind the SandboxFleet stream that workers dial in on.
-//
-// That is not a stylistic claim, it is a build-time one: this binary links no
-// game and no problem code, and
-// //game_arena/server:no_problem_code_test fails the build if
-// it ever does. The rules of any particular problem live in
-// //game_arena/referee, which only workers depend on.
-//
-// What the problem is comes from --problem_config (see proto/problem.proto).
-// Everything that used to be a flag here about *how a game is played* now lives
-// in that file, because it is the same question for a graded problem and a
-// tournament problem only if you never hardcode one of them.
+// The coordinator. It links no problem code (:no_problem_code_test).
 
 #include <grpcpp/grpcpp.h>
-#include <unistd.h>
+#include <signal.h>
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
-#include <csignal>
 #include <filesystem>
-#include <fstream>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <system_error>
 
@@ -79,39 +54,17 @@ ABSL_FLAG(int, shutdown_grace_s, 5,
 
 namespace {
 
-std::mutex g_shutdown_mutex;
-std::condition_variable g_shutdown_cv;
-bool g_shutdown_requested = false;
-
-// Runs in signal context, so it does the least it can: set a flag and wake the
-// main thread, which does the actual shutdown.
-extern "C" void OnShutdownSignal(int /*signum*/) {
-  {
-    std::lock_guard lock(g_shutdown_mutex);
-    g_shutdown_requested = true;
-  }
-  g_shutdown_cv.notify_all();
-}
-
-// Blocks until SIGINT/SIGTERM.
-void WaitForShutdownSignal() {
-  std::unique_lock lock(g_shutdown_mutex);
-  g_shutdown_cv.wait(lock, [] { return g_shutdown_requested; });
-}
-
-// Turns the problem's evaluation spec into the scheduler's knobs. The scheduler
-// stays problem-agnostic: it knows about orders and timeouts, not about games
-// or benchmarks.
 tournament_arena::SchedulerConfig SchedulerConfigFor(
     const tournament_arena::proto::ProblemConfig &problem) {
   tournament_arena::SchedulerConfig config;
-  config.set_build_timeout_s(static_cast<int>(problem.build().timeout_s()));
   *config.mutable_build_targets() = problem.build().targets();
-  *config.mutable_bazel_flags() = problem.build().bazel_flags();
+  tournament_arena::proto::WorkOrder *order = config.mutable_order();
+  order->set_build_timeout_s(static_cast<int>(problem.build().timeout_s()));
+  *order->mutable_bazel_flags() = problem.build().bazel_flags();
 
   // The sandbox, translated rather than embedded: see SandboxOrder.
   const auto &sandbox = problem.sandbox();
-  auto *order_sandbox = config.mutable_sandbox();
+  auto *order_sandbox = order->mutable_sandbox();
   order_sandbox->set_image(sandbox.image());
   order_sandbox->set_memory_limit_mb(sandbox.memory_limit_mb());
   order_sandbox->set_cpus(sandbox.cpus());
@@ -122,45 +75,38 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
     const auto &match = problem.match();
     *config.mutable_placement_opponents() = match.placement_opponents();
     config.set_placement_games(static_cast<int>(match.games_per_order()));
-    config.set_run_timeout_s(static_cast<int>(match.timeout_s()));
-    config.set_referee_target(match.referee_target());
-    config.set_turn_timeout_ms(match.turn_timeout_ms());
-    config.set_game_time_budget_ms(match.game_time_budget_ms());
-    config.set_max_moves_per_game(match.max_moves_per_game());
-    *config.mutable_registry_options() = match.registry_options();
-    // Kept under the worker's own run timeout, so a stuck match comes back as a
-    // partial tally rather than an order-level failure.
-    config.set_match_deadline_s(std::max(1, config.run_timeout_s() - 30));
-    // The bot is the build target named per submission; a problem that builds
-    // nothing per submission plays with the first target it builds.
-    for (const std::string &target : config.build_targets()) {
-      if (target.find("{submission_id}") != std::string::npos) {
-        config.set_bot_target(target);
-        break;
-      }
-    }
-    if (!config.has_bot_target() && config.build_targets_size() > 0) {
-      config.set_bot_target(config.build_targets(0));
+    order->set_run_timeout_s(static_cast<int>(match.timeout_s()));
+    order->set_referee_target(match.referee_target());
+    order->set_turn_timeout_ms(match.turn_timeout_ms());
+    order->set_game_time_budget_ms(match.game_time_budget_ms());
+    order->set_max_moves_per_game(match.max_moves_per_game());
+    *order->mutable_registry_options() = match.registry_options();
+    // Under the run timeout, so a stuck match comes back as a partial tally.
+    order->set_match_deadline_s(std::max(1, order->run_timeout_s() - 30));
+    const auto &targets = config.build_targets();
+    const auto bot = std::find_if(
+        targets.begin(), targets.end(), [](const std::string &target) {
+          return target.find("{submission_id}") != std::string::npos;
+        });
+    if (!targets.empty()) {
+      config.set_bot_target(bot != targets.end() ? *bot : targets[0]);
     }
   } else {
-    // A graded problem has no opponents: one order is the whole evaluation.
     const auto &grade = problem.grade();
     config.set_placement_games(static_cast<int>(grade.repeats()));
-    config.set_run_timeout_s(static_cast<int>(grade.timeout_s()));
+    order->set_run_timeout_s(static_cast<int>(grade.timeout_s()));
 
-    auto *order = config.mutable_grade();
-    for (const std::string &arg : grade.argv()) {
-      order->add_argv(arg);  // "{submission_id}" expanded per submission
-    }
-    order->set_repeats(static_cast<int>(grade.repeats()));
-    order->set_aggregate(
+    auto *graded = order->mutable_grade();
+    *graded->mutable_argv() = grade.argv();  // "{submission_id}" still in it
+    graded->set_repeats(static_cast<int>(grade.repeats()));
+    graded->set_aggregate(
         static_cast<tournament_arena::proto::GradeOrder::Aggregate>(
             static_cast<int>(grade.aggregate())));
     for (const auto &metric : grade.metrics()) {
-      order->add_metric_names(metric.name());
+      graded->add_metric_names(metric.name());
     }
-    order->set_timeout_s(static_cast<int>(grade.timeout_s()));
-    order->set_require_machine_class(grade.require_machine_class());
+    graded->set_timeout_s(static_cast<int>(grade.timeout_s()));
+    graded->set_require_machine_class(grade.require_machine_class());
   }
   return config;
 }
@@ -168,6 +114,13 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
 }  // namespace
 
 int main(int argc, char **argv) {
+  // Before any thread starts, so only the sigwait below sees them.
+  sigset_t shutdown_signals;
+  sigemptyset(&shutdown_signals);
+  sigaddset(&shutdown_signals, SIGINT);
+  sigaddset(&shutdown_signals, SIGTERM);
+  pthread_sigmask(SIG_BLOCK, &shutdown_signals, nullptr);
+
   absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
@@ -195,20 +148,13 @@ int main(int argc, char **argv) {
   tournament_broker::EloStore elo_store(data_dir / "ratings.pb",
                                         absl::GetFlag(FLAGS_k_factor));
   elo_store.Load();
-  // Every game the fleet played, as each order's referee recorded it; served
-  // by the leaderboard's /api/games.
   tournament_broker::GameHistory history(data_dir / "games");
 
-  tournament_arena::SubmissionRules rules;
-  rules.policy = problem->submission();
-  rules.files_submit_dir = problem->submission().files_submit_dir();
-  rules.harness = problem->submission().harness();
   tournament_arena::CandidateStore candidates(
-      data_dir / "candidates", tournament_arena::CandidateLimits{}, rules);
+      data_dir / "candidates", tournament_arena::CandidateLimits{},
+      problem->submission());
   candidates.Load();
 
-  // How this problem is scored. Everything above it -- the scheduler, the
-  // Arena service, the HTTP table -- sees rows, not ratings or milliseconds.
   std::unique_ptr<tournament_arena::Standings> standings;
   std::unique_ptr<tournament_arena::MetricStandings> metric_standings;
   const bool graded = problem->has_grade();
@@ -225,8 +171,6 @@ int main(int argc, char **argv) {
         &elo_store, &candidates, problem->problem_id());
   }
 
-  // Who may submit, and how much. Reread on an unknown token so adding a client
-  // does not mean a restart that drops every attached worker mid-order.
   std::unique_ptr<tournament_arena::ClientRegistry> clients;
   if (!absl::GetFlag(FLAGS_clients).empty()) {
     clients = std::make_unique<tournament_arena::ClientRegistry>(
@@ -241,14 +185,11 @@ int main(int argc, char **argv) {
                     "the caller says it is";
   }
 
-  // Every job, with its submission and each build's output, for the
-  // dashboard: the candidate store keeps only a participant's latest code.
   tournament_arena::JobLog job_log(data_dir / "jobs");
   tournament_arena::Scheduler scheduler(SchedulerConfigFor(*problem),
                                         &candidates, standings.get(), &history,
                                         &job_log);
-  // What an agent needs to know about the problem, curated from the config:
-  // the operator's image names and timeouts are not a submitter's business.
+  // Curated: the operator's image names and timeouts are not a submitter's.
   tournament_arena::proto::ProblemInfo info;
   info.set_problem_id(problem->problem_id());
   info.set_display_name(problem->display_name());
@@ -256,27 +197,17 @@ int main(int argc, char **argv) {
   info.set_max_patch_bytes(problem->submission().max_patch_bytes());
   info.set_max_files(problem->submission().max_files());
   info.set_max_hunks(problem->submission().max_hunks());
-  for (const std::string &pattern : problem->submission().allow_paths()) {
-    info.add_allow_paths(pattern);
-  }
-  for (const std::string &pattern : problem->submission().deny_paths()) {
-    info.add_deny_paths(pattern);
-  }
+  *info.mutable_allow_paths() = problem->submission().allow_paths();
+  *info.mutable_deny_paths() = problem->submission().deny_paths();
   info.set_files_submit_dir(problem->submission().files_submit_dir());
-  switch (problem->source().visibility()) {
-    case tournament_arena::proto::SourcePolicy::OWN:
-      info.set_source_visibility(
-          tournament_arena::proto::ProblemInfo::SOURCE_OWN);
-      break;
-    case tournament_arena::proto::SourcePolicy::NONE:
-      info.set_source_visibility(
-          tournament_arena::proto::ProblemInfo::SOURCE_NONE);
-      break;
-    default:
-      info.set_source_visibility(
-          tournament_arena::proto::ProblemInfo::SOURCE_ALL);
-      break;
-  }
+  const auto visibility = problem->source().visibility();
+  info.set_source_visibility(
+      visibility == tournament_arena::proto::SourcePolicy::OWN
+          ? tournament_arena::proto::ProblemInfo::SOURCE_OWN
+      : visibility == tournament_arena::proto::SourcePolicy::NONE
+          ? tournament_arena::proto::ProblemInfo::SOURCE_NONE
+          : tournament_arena::proto::ProblemInfo::SOURCE_ALL);
+  info.set_graded(graded);
   if (graded) {
     const auto *primary = tournament_arena::PrimaryMetric(*problem);
     info.set_lower_is_better(primary->direction() ==
@@ -284,7 +215,7 @@ int main(int argc, char **argv) {
   }
 
   tournament_arena::ArenaService arena(
-      &candidates, &scheduler, standings.get(), graded,
+      &candidates, &scheduler, standings.get(),
       problem->has_match() ? problem->match().game() : "", std::move(info),
       clients.get());
   tournament_arena::FleetService fleet(&scheduler);
@@ -293,10 +224,7 @@ int main(int argc, char **argv) {
   builder.AddListeningPort(
       "0.0.0.0:" + std::to_string(absl::GetFlag(FLAGS_grpc_port)),
       grpc::InsecureServerCredentials());
-  // Reclaim connections whose peer disappeared without closing the socket. A
-  // worker host that is powered off mid-order leaves no FIN behind, so without
-  // keepalive its Attach stream stays open until the OS gives up on the TCP
-  // connection, which can be hours.
+  // A host powered off mid-order sends no FIN; keepalive reclaims its stream.
   const int keepalive_ms = absl::GetFlag(FLAGS_keepalive_s) * 1000;
   builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIME_MS, keepalive_ms);
   builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 20000);
@@ -312,8 +240,6 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Jobs, participants and game replays beside the leaderboard. As
-  // unauthenticated as it, so source shows only where everyone may read it.
   const tournament_arena::Dashboard dashboard(
       &candidates, &job_log, &history, standings.get(),
       problem->source().visibility() ==
@@ -328,9 +254,6 @@ int main(int argc, char **argv) {
   if (!leaderboard.Start()) {
     return 1;
   }
-
-  std::signal(SIGINT, OnShutdownSignal);
-  std::signal(SIGTERM, OnShutdownSignal);
 
   LOG(INFO) << "Problem '" << problem->problem_id() << "' ("
             << (problem->has_match() ? "match" : "grade")
@@ -349,12 +272,11 @@ int main(int argc, char **argv) {
               << ": the default is that every participant reads every "
                  "submission";
   }
-  WaitForShutdownSignal();
+  int signum = 0;
+  sigwait(&shutdown_signals, &signum);
   LOG(INFO) << "Shutting down";
 
-  // The grace period is a backstop for stragglers -- an arena RPC mid-flight, a
-  // worker's Attach stream. Cancelled calls surface in their handlers, which
-  // always finish the RPC. The no-argument Shutdown() would wait forever.
+  // With no deadline, Shutdown() would wait forever on a worker's Attach.
   server->Shutdown(std::chrono::system_clock::now() +
                    std::chrono::seconds(absl::GetFlag(FLAGS_shutdown_grace_s)));
   leaderboard.Stop();

@@ -3,28 +3,12 @@ load(":defs.bzl", "regctl")
 
 package(default_visibility = ["//visibility:public"])
 
-# Read by sandbox_image_issue, which primes a build the way this rc makes one.
 exports_files(["sandbox.bazelrc"])
 
-# The arena's images, as far as the arena can build them: the base
-# (docker/base/Dockerfile, pulled by digest -- see MODULE.bazel) with what is
-# true of any kit, or of any sandbox, set on it. A problem's own images are
-# arena_problem()'s to build, on these.
-#
-# manual, all of it: building any of this pulls the base from its registry, and
-# `//...` -- a consumer's, a kit's, a sandbox's `bazel vendor` -- must not need
-# one.
+# manual, all of it: building any of this pulls the base, and `//...` must not need a registry.
 
-# What every sandbox image starts from: the base, and a system bazelrc that
-# finds game_arena at /opt/arena/src. arena_problem()'s sandbox_image adds
-# that, and the problem's tree.
-#
-# Bazel's own installation is not unpacked here: it wants a lock file beside
-# itself, and a sandbox's root filesystem is read-only, so the worker points
-# --output_user_root into the persistent output-base volume instead and pays
-# for the unpack once per slot and per bazel. The default user stays root: who a sandbox runs as
-# is the problem's choice (sandbox.run_as_user), and the tree it is handed is
-# chowned to that user by the worker before anything starts.
+# The root fs is read-only, so the worker unpacks bazel into its output-base volume;
+# the user stays root because the worker chowns the tree to sandbox.run_as_user.
 genrule(
     name = "sandbox_rc_layer",
     srcs = ["sandbox.bazelrc"],
@@ -46,16 +30,7 @@ oci_image(
     workdir = "/",
 )
 
-# What every kit image starts from: the arena's base (docker/base/Dockerfile,
-# pulled by digest -- see MODULE.bazel) with what is true of any kit set on
-# it. Nothing of a problem and nothing of a participant: arena_problem()'s
-# kit_image stacks a problem's kit on this, as a build output, and its
-# kit_image_issue adds a primed cache to that outside the build. No token is
-# ever in a kit image.
-#
-# uid 1000 ("ubuntu" in the base) owns /kit; a base that replaces this one
-# (arena_problem's kit_base) has to keep that user.
-#
+# uid 1000 ("ubuntu") owns /kit; a replacement kit_base has to keep that user.
 oci_image(
     name = "kit_base",
     base = "@arena_base",
@@ -68,8 +43,6 @@ oci_image(
     workdir = "/kit",
 )
 
-# What a kit container runs before its command, on every kit image whatever
-# its base (arena_problem's kit_image sets it as the entrypoint).
 genrule(
     name = "kit_entrypoint_layer",
     srcs = ["kit_entrypoint.sh"],
@@ -83,7 +56,6 @@ tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --mode=0755 \
     tags = ["manual"],
 )
 
-# What adds to a built kit image at run time, and pushes it. See defs.bzl.
 regctl(
     name = "regctl",
     tags = ["manual"],

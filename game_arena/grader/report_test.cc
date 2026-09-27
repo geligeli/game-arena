@@ -57,17 +57,21 @@ TEST(Report, SurvivesValuesThatNaiveFormattingWouldMangle) {
 TEST(WriteReport, WritesThePathItIsGiven) {
   const auto path = std::filesystem::temp_directory_path() / "report_test.json";
   std::filesystem::remove(path);
+  ::setenv("ARENA_REPORT", path.string().c_str(), 1);
 
   std::string error;
-  ASSERT_TRUE(WriteReport(path.string(), {{"score", 3}}, &error)) << error;
+  ASSERT_TRUE(WriteReportToArenaPath({{"score", 3}}, &error)) << error;
   EXPECT_NE(ReadFile(path).find("\"score\""), std::string::npos);
+  ::unsetenv("ARENA_REPORT");
   std::filesystem::remove(path);
 }
 
 TEST(WriteReport, FailsLoudlyOnAnUnwritablePath) {
+  ::setenv("ARENA_REPORT", "/nonexistent-dir/report.json", 1);
   std::string error;
-  EXPECT_FALSE(WriteReport("/nonexistent-dir/report.json", {{"a", 1}}, &error));
+  EXPECT_FALSE(WriteReportToArenaPath({{"a", 1}}, &error));
   EXPECT_FALSE(error.empty());
+  ::unsetenv("ARENA_REPORT");
 }
 
 // A grader run outside the arena should say so rather than silently score

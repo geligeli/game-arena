@@ -1,7 +1,5 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
-
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@protobuf//bazel:proto_library.bzl", "proto_library")
@@ -11,11 +9,6 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-# The coordinator: submissions, scheduling, the fleet service and the HTTP
-# leaderboard. It links no game code; see :no_problem_code_test.
-
-# The BUILD file a structured submission is compiled with. Runs at submit time,
-# because the generated BUILD is part of the patch that gets stored.
 cc_library(
     name = "generated_build",
     srcs = ["generated_build.cc"],
@@ -32,7 +25,6 @@ cc_test(
     ],
 )
 
-# Who may submit, and how much. Holds hashes, never tokens.
 cc_library(
     name = "client_registry",
     srcs = ["client_registry.cc"],
@@ -44,6 +36,7 @@ cc_library(
         "@abseil-cpp//absl/strings",
         "@boringssl//:crypto",
         "@protobuf//:protobuf",
+        "//game_arena/standings:game_history",
     ],
 )
 
@@ -56,9 +49,6 @@ cc_test(
     ],
 )
 
-# Reading and writing unified diffs: which paths a submission touches, how big
-# it is, and what a newly added file contains. Header-level only -- applying a
-# patch is the worker's job, in a container.
 cc_library(
     name = "unified_diff",
     srcs = ["unified_diff.cc"],
@@ -75,8 +65,6 @@ cc_test(
     ],
 )
 
-# What a problem is, as data: parsing, defaulting and checking the .textproto
-# the server is started with. No problem-specific code -- just the schema.
 cc_library(
     name = "problem_config",
     srcs = ["problem_config.cc"],
@@ -108,8 +96,6 @@ cc_test(
     ],
 )
 
-# Persistent registry of submitted strategies: manifests plus their sources on
-# disk, and the validation gate every submission passes through.
 cc_library(
     name = "candidate_store",
     srcs = ["candidate_store.cc"],
@@ -122,7 +108,9 @@ cc_library(
         "//game_arena/proto:arena_cc_proto",
         "//game_arena/proto:problem_cc_proto",
         "@abseil-cpp//absl/log",
-        "@boost.json",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/time",
+        "//game_arena/standings:game_history",
     ],
 )
 
@@ -135,15 +123,12 @@ cc_test(
     ],
 )
 
-# One attached sandbox worker, as the scheduler sees it. Kept gRPC-free so the
-# scheduler can be tested with fakes.
 cc_library(
     name = "fleet_worker",
     hdrs = ["fleet_worker.h"],
     deps = ["//game_arena/proto:arena_cc_proto"],
 )
 
-# Every job on disk: what was submitted and what each order came back with.
 proto_library(
     name = "job_record_proto",
     srcs = ["job_record.proto"],
@@ -175,7 +160,6 @@ cc_test(
     ],
 )
 
-# The pages beside the leaderboard: jobs, participants, games and replays.
 cc_library(
     name = "dashboard",
     srcs = ["dashboard.cc"],
@@ -202,7 +186,6 @@ cc_test(
     ],
 )
 
-# Expands "rate this candidate" into work orders and hands them to the fleet.
 proto_library(
     name = "scheduler_config_proto",
     srcs = ["scheduler_config.proto"],
@@ -220,7 +203,6 @@ cc_library(
     hdrs = ["scheduler.h"],
     deps = [
         ":candidate_store",
-        "//game_arena/standings:elo_store",
         ":fleet_worker",
         ":job_log",
         ":problem_config",
@@ -231,6 +213,7 @@ cc_library(
         "//game_arena/proto:tournament_broker_cc_proto",
         "//game_arena/proto:clients_cc_proto",
         "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/time",
     ],
 )
 
@@ -245,7 +228,6 @@ cc_test(
     ],
 )
 
-# Agent-facing arena RPCs, consumed by the MCP server.
 cc_library(
     name = "arena_service",
     srcs = ["arena_service.cc"],
@@ -253,7 +235,6 @@ cc_library(
     deps = [
         ":candidate_store",
         ":client_registry",
-        "//game_arena/standings:elo_store",
         ":scheduler",
         "//game_arena/proto:arena_cc_grpc",
         "@abseil-cpp//absl/log",
@@ -261,7 +242,6 @@ cc_library(
     ],
 )
 
-# Sandbox fleet RPCs: one Attach stream per worker host.
 cc_library(
     name = "fleet_service",
     srcs = ["fleet_service.cc"],
@@ -275,8 +255,6 @@ cc_library(
     ],
 )
 
-# The coordinator. Links no game and no problem code -- enforced by
-# :no_problem_code_test, not by convention.
 cc_binary(
     name = "problem_server",
     srcs = ["problem_server.cc"],
@@ -303,12 +281,7 @@ cc_binary(
     ],
 )
 
-# The coordinator must never link a game.
-#
-# Checked on the linked binary rather than on the dependency graph, because the
-# graph has more than one route in: the referee package, a game target directly,
-# or something that quietly grew a dep on one. Symbols do not care which route
-# was taken.
+# On the linked binary's symbols: the dep graph has more than one route in.
 sh_test(
     name = "no_problem_code_test",
     srcs = ["no_problem_code_test.sh"],

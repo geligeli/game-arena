@@ -11,9 +11,7 @@ namespace tournament_arena {
 
 namespace {
 
-// Maps the engine's phases onto the arena's, which is the whole reason the
-// engine reports phases by name rather than by enum: it does not know that
-// "build" is a build.
+// Phases by name: the engine does not know that "build" is a build.
 class ProgressObserver final : public sandbox_exec::Observer {
  public:
   ProgressObserver(std::string order_id, const OrderRunner::ProgressSink *sink)
@@ -49,15 +47,7 @@ OrderRunner::OrderRunner(sandbox_exec::Engine *process_engine,
       machine_class_(std::move(machine_class)) {}
 
 bool OrderRunner::Warmup(int slots, std::string *error) {
-  // Only the directories. The tree is in the image an order names: a worker
-  // has none of its own.
-  //
-  // The process engine's state is all under work_dir. A container's lives in
-  // docker volumes, unless this host opted into bind mounts for its caches;
-  // those directories are created here when they are ours to create,
-  // because docker conjures a missing bind-mount source up as an empty
-  // directory owned by root, which is a confusing way to find out the path
-  // was wrong.
+  // Bind-mount sources too: docker would create a missing one owned by root.
   std::error_code ec;
   std::filesystem::create_directories(config_.disk_cache, ec);
   if (!config_.bind_disk_cache_dir.empty()) {
@@ -82,23 +72,9 @@ bool OrderRunner::Warmup(int slots, std::string *error) {
   return true;
 }
 
-std::string OrderRunner::engines() const {
-  if (process_engine_ != nullptr && container_engine_ != nullptr) {
-    return process_engine_->name() + "+" + container_engine_->name();
-  }
-  if (container_engine_ != nullptr) {
-    return container_engine_->name();
-  }
-  return process_engine_ != nullptr ? process_engine_->name() : "none";
-}
-
 sandbox_exec::Engine *OrderRunner::EngineFor(
     const proto::WorkOrder &order) const {
-  // The problem decides, by naming an image or not -- and the coordinator
-  // requires one (server/problem_config.cc), so in a tournament this is
-  // always the container engine. A worker binary is built with no other
-  // (sandbox/worker/sandbox_worker.cc); the process engine reaches this class
-  // only from a test.
+  // A tournament always names an image; the process engine is test-only.
   return order.sandbox().image().empty() ? process_engine_ : container_engine_;
 }
 
@@ -112,9 +88,7 @@ std::string OrderRunner::Refusal(const proto::WorkOrder &order) const {
   }
   const std::string &required = order.grade().require_machine_class();
   if (!required.empty() && required != machine_class_) {
-    // A wall-clock number from the wrong kind of host is worse than no
-    // number: it looks like a result. This is what stops a leaderboard from
-    // ranking the fleet instead of the submissions.
+    // A number from the wrong kind of host would rank the fleet, not the code.
     return "this problem requires machine_class '" + required +
            "'; this worker is '" +
            (machine_class_.empty() ? "unset" : machine_class_) + "'";
@@ -126,7 +100,7 @@ OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
                                    const ProgressSink &progress) {
   OrderOutcome outcome;
   if (const std::string refusal = Refusal(order); !refusal.empty()) {
-    outcome.error = refusal;
+    outcome.result.set_error(refusal);
     return outcome;
   }
 
@@ -135,7 +109,7 @@ OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
   std::string error;
   if (!JobForOrder(slot, order, config_, engine->capabilities(), &job,
                    &error)) {
-    outcome.error = error;
+    outcome.result.set_error(error);
     return outcome;
   }
 

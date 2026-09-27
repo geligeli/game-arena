@@ -34,17 +34,17 @@ proto::SubmitRequest MakeRequest(const std::string &name = "My Bot") {
 
 // The rules a structured submission needs: where its files land, and a policy
 // that admits that directory.
-SubmissionRules MakeRules() {
-  SubmissionRules rules;
-  rules.files_submit_dir = "solutions";
-  rules.policy.add_allowed_dep_prefixes("//problem/lib:");
-  rules.policy.add_allowed_dep_prefixes("//problem/lib:");
-  rules.policy.add_allowed_dep_prefixes("//problem/game:");
-  rules.policy.add_allowed_dep_prefixes("//problem/strategies:");
-  rules.policy.add_allowed_dep_prefixes("@abseil-cpp//");
-  rules.harness.set_api_dep("//problem/harness:api");
-  rules.harness.set_main_src("//problem/harness:main.cc");
-  rules.policy.add_allow_paths("solutions/**");
+proto::SubmissionPolicy MakeRules() {
+  proto::SubmissionPolicy rules;
+  rules.set_files_submit_dir("solutions");
+  rules.add_allowed_dep_prefixes("//problem/lib:");
+  rules.add_allowed_dep_prefixes("//problem/lib:");
+  rules.add_allowed_dep_prefixes("//problem/game:");
+  rules.add_allowed_dep_prefixes("//problem/strategies:");
+  rules.add_allowed_dep_prefixes("@abseil-cpp//");
+  rules.mutable_harness()->set_api_dep("//problem/harness:api");
+  rules.mutable_harness()->set_main_src("//problem/harness:main.cc");
+  rules.add_allow_paths("solutions/**");
   return rules;
 }
 
@@ -109,8 +109,8 @@ TEST_F(CandidateStoreTest, StoresSourcesAsReadableFiles) {
 // A patch is the general form; the structured submission above is a
 // convenience that becomes one.
 TEST_F(CandidateStoreTest, AcceptsAPatchDirectly) {
-  SubmissionRules rules;
-  rules.policy.add_allow_paths("problem/lib/**");
+  proto::SubmissionPolicy rules;
+  rules.add_allow_paths("problem/lib/**");
   CandidateStore store(dir_, CandidateLimits{}, rules);
 
   proto::SubmitRequest request;
@@ -133,9 +133,9 @@ TEST_F(CandidateStoreTest, AcceptsAPatchDirectly) {
 }
 
 TEST_F(CandidateStoreTest, HoldsPatchesToTheProblemsPathPolicy) {
-  SubmissionRules rules;
-  rules.policy.add_allow_paths("problem/lib/**");
-  rules.policy.add_deny_paths("**/BUILD");
+  proto::SubmissionPolicy rules;
+  rules.add_allow_paths("problem/lib/**");
+  rules.add_deny_paths("**/BUILD");
   CandidateStore store(dir_, CandidateLimits{}, rules);
   std::string error;
 
@@ -166,8 +166,8 @@ TEST_F(CandidateStoreTest, HoldsPatchesToTheProblemsPathPolicy) {
 TEST_F(CandidateStoreTest, APatchMayOnlyTouchItsOwnDirectory) {
   // Every participant's code sits beside everyone else's, so a problem says
   // "your own directory" with the id a submission will be given.
-  SubmissionRules rules;
-  rules.policy.add_allow_paths("bots/{submission_id}/**");
+  proto::SubmissionPolicy rules;
+  rules.add_allow_paths("bots/{submission_id}/**");
   CandidateStore store(dir_, CandidateLimits{}, rules);
   const auto patch_by = [](const std::string &author, const std::string &path) {
     proto::SubmitRequest request;
@@ -187,7 +187,7 @@ TEST_F(CandidateStoreTest, APatchMayOnlyTouchItsOwnDirectory) {
 }
 
 TEST_F(CandidateStoreTest, RejectsAPatchThatEscapesTheRepo) {
-  SubmissionRules rules;
+  proto::SubmissionPolicy rules;
   CandidateStore store(dir_, CandidateLimits{}, rules);
   proto::SubmitRequest request;
   request.set_display_name("Escape");
@@ -204,8 +204,8 @@ TEST_F(CandidateStoreTest, RejectsAPatchThatEscapesTheRepo) {
 }
 
 TEST_F(CandidateStoreTest, BoundsHunkCount) {
-  SubmissionRules rules;
-  rules.policy.set_max_hunks(1);
+  proto::SubmissionPolicy rules;
+  rules.set_max_hunks(1);
   CandidateStore store(dir_, CandidateLimits{}, rules);
   proto::SubmitRequest request;
   request.set_display_name("Sprawling");
@@ -491,8 +491,8 @@ TEST_F(CandidateStoreTest, EnforcesSizeAndCountLimits) {
 
   // The overall cap is on the synthesized patch, which is what actually gets
   // stored and dispatched -- not on the sum of the file contents.
-  SubmissionRules tight = MakeRules();
-  tight.policy.set_max_patch_bytes(120);
+  proto::SubmissionPolicy tight = MakeRules();
+  tight.set_max_patch_bytes(120);
   CandidateStore small(dir_, CandidateLimits{}, tight);
   proto::SubmitRequest too_big_total = MakeRequest();
   too_big_total.mutable_files(0)->set_content(std::string(90, 'x') + "\n");

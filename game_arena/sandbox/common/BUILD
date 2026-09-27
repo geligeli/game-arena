@@ -3,11 +3,6 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# Mechanics shared by the standalone sandbox runner (sandbox/runner) and the
-# fleet worker's backends (sandbox/worker), so the two cannot drift into
-# spelling the same step, mount or container differently: a patch staged for
-# one means the same thing to the other.
-
 cc_library(
     name = "files",
     srcs = ["files.cc"],
@@ -23,9 +18,6 @@ cc_test(
     ],
 )
 
-# Trimming captured output. Every layer reports a failure; only one of them
-# knows what bazel is, so this is here rather than beside the build-log
-# compactor it used to share a target with.
 cc_library(
     name = "text",
     srcs = ["text.cc"],
@@ -41,8 +33,6 @@ cc_test(
     ],
 )
 
-# One subprocess step with its output captured to files, the same shape
-# whether the step runs on the host or starts a container.
 cc_library(
     name = "step",
     srcs = ["step.cc"],
@@ -63,17 +53,10 @@ cc_test(
     ],
 )
 
-# Docker mechanics: container naming, bind-mount syntax, the fixed
-# in-container mount points, entrypoint script preludes, lifecycle helpers,
-# and the one shape a `docker run` argv takes.
 cc_library(
     name = "docker",
     srcs = ["docker.cc"],
     hdrs = ["docker.h"],
-    deps = [
-        ":step",
-        "//game_arena/common/process",
-    ],
 )
 
 cc_test(

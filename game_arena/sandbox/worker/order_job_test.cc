@@ -15,7 +15,7 @@ namespace {
 namespace sx = sandbox_exec::proto;
 
 sandbox_exec::Capabilities ContainerCapabilities() {
-  return sandbox_exec::Capabilities{/*isolates=*/true, /*shared_network=*/true,
+  return sandbox_exec::Capabilities{/*isolates=*/true,
                                     /*stable_peer_names=*/true};
 }
 
@@ -177,7 +177,6 @@ TEST(JobForOrderTest, AContainerRefereeListensOnAFixedPortAndIsDialledByName) {
 
   // Its own network namespace, so nothing can collide on the port and the
   // peer resolves by name.
-  EXPECT_EQ(job.phases(1).background(0).endpoint().port(), 50051);
   EXPECT_NE(ArgvOf(job.phases(1).background(0)).find("--port=50051"),
             std::string::npos);
   EXPECT_NE(ArgvOf(job.phases(1).foreground())

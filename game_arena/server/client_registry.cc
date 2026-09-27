@@ -1,6 +1,7 @@
 #include "game_arena/server/client_registry.h"
 
 #include <google/protobuf/text_format.h>
+#include <openssl/mem.h>
 #include <openssl/sha.h>
 
 #include <cstddef>
@@ -13,23 +14,18 @@
 
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_arena {
 
 namespace {
 
-// Equal-length, data-independent comparison. A byte-at-a-time early return
-// would let a caller with a stopwatch learn a valid hash one byte at a time.
+// Constant-time, or a stopwatch would reveal a valid hash a byte at a time.
 bool ConstantTimeEquals(std::string_view a, std::string_view b) {
-  if (a.size() != b.size()) {
-    return false;
-  }
-  unsigned char diff = 0;
-  for (std::size_t i = 0; i < a.size(); ++i) {
-    diff |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
-  }
-  return diff == 0;
+  return a.size() == b.size() &&
+         CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
 }
 
 }  // namespace
@@ -38,27 +34,18 @@ std::string HashToken(std::string_view token) {
   unsigned char digest[SHA256_DIGEST_LENGTH];
   ::SHA256(reinterpret_cast<const unsigned char *>(token.data()), token.size(),
            digest);
-  std::string hex;
-  hex.reserve(sizeof(digest) * 2);
-  static constexpr char kHex[] = "0123456789abcdef";
-  for (const unsigned char byte : digest) {
-    hex.push_back(kHex[byte >> 4]);
-    hex.push_back(kHex[byte & 0x0f]);
-  }
-  return hex;
+  return absl::BytesToHexString(
+      {reinterpret_cast<const char *>(digest), sizeof(digest)});
 }
 
 std::string MintToken() {
-  // random_device is the right source here and nowhere near a hot path.
+  // The system CSPRNG, never a seeded PRNG: this is a credential.
   std::random_device entropy;
-  std::uniform_int_distribution<unsigned> nibble(0, 15);
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string token;
-  token.reserve(64);
-  for (int i = 0; i < 64; ++i) {
-    token.push_back(kHex[nibble(entropy)]);
+  std::string bytes(32, '\0');
+  for (char &byte : bytes) {
+    byte = static_cast<char>(entropy());
   }
-  return token;
+  return absl::BytesToHexString(bytes);
 }
 
 proto::Client MakeClient(std::string_view client_id,
@@ -77,8 +64,7 @@ proto::Client MakeClient(std::string_view client_id,
 }
 
 std::string ClientBlockText(const proto::Client &client) {
-  // Printed through the registry message, so the block is exactly the shape
-  // Load() parses -- one "clients { ... }" entry.
+  // Printed through the registry message: exactly the shape Load() parses.
   proto::ClientRegistry one;
   *one.add_clients() = client;
   std::string text;
@@ -149,23 +135,7 @@ bool SetClientToken(const std::filesystem::path &path,
   }
   std::string text;
   google::protobuf::TextFormat::PrintToString(parsed, &text);
-  // Written aside and renamed, so a server reading it never sees half a file.
-  const std::filesystem::path tmp = path.string() + ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    out << text;
-    if (!out) {
-      *error = absl::StrCat("cannot write ", tmp.string());
-      return false;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path, ec);
-  if (ec) {
-    *error = absl::StrCat("cannot replace ", path.string(), ": ", ec.message());
-    return false;
-  }
-  return true;
+  return tournament_broker::WriteAtomically(path, text, error);
 }
 
 ClientRegistry::ClientRegistry(std::filesystem::path path,
@@ -199,8 +169,6 @@ bool ClientRegistry::Load(std::string *error) {
     }
   }
 
-  // Only swapped in once the whole file is known good, so a typo during a
-  // reload leaves the running set intact rather than locking everyone out.
   {
     std::lock_guard lock(mutex_);
     registry_ = std::move(parsed);
@@ -230,14 +198,8 @@ std::optional<ClientIdentity> ClientRegistry::Resolve(
     identity.display_name = client.display_name().empty()
                                 ? client.client_id()
                                 : client.display_name();
-    identity.quota = client.quota();
-    if (identity.quota.max_active_evaluations() == 0) {
-      identity.quota.set_max_active_evaluations(
-          defaults_.max_active_evaluations());
-    }
-    if (identity.quota.max_queued_jobs() == 0) {
-      identity.quota.set_max_queued_jobs(defaults_.max_queued_jobs());
-    }
+    identity.quota = defaults_;
+    identity.quota.MergeFrom(client.quota());
     return identity;
   }
   return std::nullopt;

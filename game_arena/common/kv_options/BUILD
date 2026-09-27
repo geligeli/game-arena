@@ -7,6 +7,7 @@ cc_library(
     name = "kv_options",
     srcs = ["kv_options.cc"],
     hdrs = ["kv_options.h"],
+    deps = ["@abseil-cpp//absl/strings"],
 )
 
 cc_test(
@@ -18,8 +19,7 @@ cc_test(
     ],
 )
 
-# Every file of this package, for the arena a participant's kit builds
-# against: a kit gets these packages whole (see //:kit_surface).
+# A kit vendors this package whole (//:kit_surface).
 filegroup(
     name = "kit_surface_files",
     srcs = glob(["**"]),

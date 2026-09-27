@@ -1,7 +1,7 @@
 // One builder against the scripts it replaces.
 //
 // The expectations here descend from the hand-assembled versions in
-// sandbox/worker (build, run, grade) and sandbox/runner (copy-and-run). With
+// sandbox/worker (build, run, grade). With
 // the tree copied into a volume there is no overlay to assemble any more,
 // so the prelude is one line.
 
@@ -126,28 +126,6 @@ TEST(EntrypointScriptTest, ReproducesTheGradeScriptsExportedReportPath) {
             std::string::npos)
       << script;
   EXPECT_LT(script.find("export ARENA_REPORT="), script.find("exec './bench'"));
-}
-
-TEST(EntrypointScriptTest, ReproducesTheStandaloneRunnersCopyAndRun) {
-  proto::Workspace ws;
-  ws.set_patch(proto::Workspace::PATCH_COPY_IN_ENTRYPOINT);
-
-  proto::Step step;
-  step.set_applies_patches(true);
-  *step.add_argv() = Word("bazel", true);
-  *step.add_argv() = Word("run", true);
-  *step.add_argv() = Word("//problem/app:target", false);
-  *step.add_argv() = Word("--", true);
-  *step.add_argv() = Word("--flag=1", false);
-  *step.add_argv() = Word("a b", false);
-
-  const std::string script = EntrypointScript(ws, step);
-  EXPECT_NE(script.find("cp -a /patches/. /workspace/"), std::string::npos)
-      << script;
-  EXPECT_NE(script.find("exec bazel run '//problem/app:target' -- "
-                        "'--flag=1' 'a b'"),
-            std::string::npos)
-      << script;
 }
 
 TEST(EntrypointScriptTest, ThereIsNothingToAssemble) {

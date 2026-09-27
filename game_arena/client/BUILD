@@ -1,11 +1,8 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
-package(
-    default_visibility = ["//visibility:public"],
-)
+package(default_visibility = ["//visibility:public"])
 
-# The client half of the Play stream, with the game left out. A bot for any
-# problem is this plus one function; see examples/.
+# A bot for any problem is this plus one function; see examples/.
 cc_library(
     name = "play_loop",
     srcs = ["play_loop.cc"],
@@ -17,8 +14,7 @@ cc_library(
     ],
 )
 
-# Every file of this package, for the arena a participant's kit builds
-# against: a kit gets these packages whole (see //:kit_surface).
+# A kit vendors this package whole (//:kit_surface).
 filegroup(
     name = "kit_surface_files",
     srcs = glob(["**"]),

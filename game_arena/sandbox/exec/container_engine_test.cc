@@ -9,9 +9,11 @@
 
 #include <unistd.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 #include "gtest/gtest.h"
 
@@ -32,7 +34,6 @@ class ContainerEngineTest : public ::testing::Test {
             ("container_engine_test_" + std::to_string(::getpid()));
     std::filesystem::remove_all(root_);
     std::filesystem::create_directories(root_ / "logs");
-    std::filesystem::create_directories(root_ / "lower");
 
     std::ofstream docker(root_ / "docker");
     docker << "#!/usr/bin/env bash\n"
@@ -80,10 +81,9 @@ class ContainerEngineTest : public ::testing::Test {
   }
 
   // A workspace laid out the way the fleet worker lays out a slot: the tree
-  // and the staged patch on this side, the persistent output base a volume.
+  // the image's, the staged patch on this side, the output base a volume.
   proto::Workspace SlotWorkspace() {
     proto::Workspace ws;
-    ws.set_tree_dir((root_ / "lower").string());
     ws.set_staging_dir((root_ / "patches").string());
     proto::StagedFile *patch = ws.add_staged_files();
     patch->set_path("c-ok.diff");
@@ -183,8 +183,7 @@ TEST_F(ContainerEngineTest, TheWorkspaceIsLoadedThroughTheDaemonNotMounted) {
 
   const std::string log = Log();
   // Fresh volumes for the job, then a loader that exists to be copied into:
-  // the tree as a tar on stdin (`cp -`), the staged files from the staging
-  // dir, both read by the docker *client* on this side.
+  // the staged files, read by the docker *client* on this side.
   const auto volume = log.find("docker volume create saw-0-load-1-ws");
   const auto create = log.find(
       "docker create --name saw-0-load-1-load "
@@ -203,7 +202,6 @@ TEST_F(ContainerEngineTest, TheWorkspaceIsLoadedThroughTheDaemonNotMounted) {
       "0:0 /workspace /patches /sandbox\n"
       "chown 0:0 /output_base\n"
       "chown 0:0 /disk_cache\n");
-  const auto tree = log.find("docker cp - saw-0-load-1-load:/workspace");
   const auto patches = log.find("docker cp " + (root_ / "patches").string() +
                                 "/. saw-0-load-1-load:/patches");
   const auto start = log.find("docker start -a saw-0-load-1-load");
@@ -213,20 +211,16 @@ TEST_F(ContainerEngineTest, TheWorkspaceIsLoadedThroughTheDaemonNotMounted) {
   const auto removed = log.rfind("docker volume rm -f saw-0-load-1-ws");
   ASSERT_NE(volume, std::string::npos) << log;
   ASSERT_NE(create, std::string::npos) << log;
-  ASSERT_NE(tree, std::string::npos) << log;
   ASSERT_NE(patches, std::string::npos) << log;
   ASSERT_NE(start, std::string::npos) << log;
   ASSERT_NE(run, std::string::npos) << log;
   ASSERT_NE(removed, std::string::npos) << log;
   EXPECT_LT(volume, create);
-  EXPECT_LT(create, tree);
-  EXPECT_LT(tree, patches);
+  EXPECT_LT(create, patches);
   EXPECT_LT(patches, start);
   EXPECT_LT(start, run);
   EXPECT_LT(run, removed);
   EXPECT_EQ(log.find("type=bind"), std::string::npos) << log;
-  // The tar itself is not left behind.
-  EXPECT_FALSE(std::filesystem::exists(root_ / "logs" / "tree.tar"));
 }
 
 TEST_F(ContainerEngineTest, TheLoaderHandsTheTreeToTheSandboxUser) {
@@ -548,6 +542,52 @@ TEST_F(ContainerEngineTest, AJobNeedsAnImageToLoadWith) {
 TEST_F(ContainerEngineTest, CancelIsANoOpForAJobItIsNotRunning) {
   engine_->Cancel("never-heard-of-it");
   EXPECT_EQ(Log().find("kill"), std::string::npos);
+}
+
+TEST_F(ContainerEngineTest, CancelKillsTheRunningContainer) {
+  // A `docker run` that blocks until `docker kill` finds its marker.
+  const std::string marker = "sleeper-" + root_.filename().string();
+  std::ofstream docker(root_ / "docker");
+  docker << "#!/usr/bin/env bash\n"
+         << "echo \"docker $*\" >> \"" << (root_ / "docker.log").string()
+         << "\"\n"
+         << "case \"$1\" in\n"
+         << "  run) bash -c 'sleep 30; true' " << marker << "; exit 137;;\n"
+         << "  kill) pkill -f " << marker << ";;\n"
+         << "esac\n"
+         << "exit 0\n";
+  docker.close();
+
+  proto::Job job;
+  job.set_id("saw-0-cancel-1");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_workspace() = SlotWorkspace();
+  *job.mutable_isolation() = HardenedIsolation();
+  proto::Phase *phase = job.add_phases();
+  phase->set_name("match");
+  proto::Step *bot = phase->mutable_foreground();
+  bot->set_name("bot");
+  bot->set_timeout_s(60);
+  *bot->add_argv() = Word("./bot", false);
+
+  std::thread canceller([this] {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (Log().find("--name saw-0-cancel-1-bot ") == std::string::npos &&
+           std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    engine_->Cancel("saw-0-cancel-1");
+  });
+  const auto started = std::chrono::steady_clock::now();
+  const proto::JobResult result = engine_->Run(job, nullptr);
+  canceller.join();
+
+  EXPECT_LT(std::chrono::steady_clock::now() - started,
+            std::chrono::seconds(20));
+  EXPECT_EQ(result.status().code(), proto::Status::CANCELLED);
+  EXPECT_NE(Log().find("docker kill saw-0-cancel-1-bot"), std::string::npos)
+      << Log();
 }
 
 }  // namespace

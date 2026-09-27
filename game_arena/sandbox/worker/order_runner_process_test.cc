@@ -93,11 +93,11 @@ TEST_F(OrderRunnerProcessTest, ReadsTheJsonReportTheCommandWrites) {
                 /*repeats=*/1, proto::GradeOrder::MIN),
       {});
 
-  EXPECT_TRUE(outcome.build_ok);
-  EXPECT_EQ(outcome.error, "");
-  ASSERT_TRUE(outcome.metrics.contains("wall_ms"));
-  EXPECT_DOUBLE_EQ(outcome.metrics.at("wall_ms"), 250.5);
-  EXPECT_EQ(outcome.games_played, 1) << "runs, for a graded order";
+  EXPECT_TRUE(outcome.result.build_ok());
+  EXPECT_EQ(outcome.result.error(), "");
+  ASSERT_TRUE(outcome.result.metrics().contains("wall_ms"));
+  EXPECT_DOUBLE_EQ(outcome.result.metrics().at("wall_ms"), 250.5);
+  EXPECT_EQ(outcome.result.games_played(), 1) << "runs, for a graded order";
 }
 
 // One timing is noise; the aggregate over the runs is the score.
@@ -114,11 +114,11 @@ TEST_F(OrderRunnerProcessTest, RepeatsTheRunAndTakesTheBest) {
       {});
 
   std::filesystem::remove("/tmp/local_grade_counter");
-  EXPECT_EQ(outcome.error, "");
-  ASSERT_TRUE(outcome.metrics.contains("wall_ms"));
+  EXPECT_EQ(outcome.result.error(), "");
+  ASSERT_TRUE(outcome.result.metrics().contains("wall_ms"));
   // 300, 200, 100 -> best of three.
-  EXPECT_DOUBLE_EQ(outcome.metrics.at("wall_ms"), 100.0);
-  EXPECT_EQ(outcome.games_played, 3);
+  EXPECT_DOUBLE_EQ(outcome.result.metrics().at("wall_ms"), 100.0);
+  EXPECT_EQ(outcome.result.games_played(), 3);
 }
 
 // A benchmark that only knows how to print a line is not shut out.
@@ -128,8 +128,8 @@ TEST_F(OrderRunnerProcessTest, AcceptsAResultLineInsteadOfAReport) {
       MakeOrder("#!/usr/bin/env bash\necho 'RESULT wall_ms=42'\n", 1,
                 proto::GradeOrder::MIN),
       {});
-  EXPECT_EQ(outcome.error, "");
-  EXPECT_DOUBLE_EQ(outcome.metrics.at("wall_ms"), 42.0);
+  EXPECT_EQ(outcome.result.error(), "");
+  EXPECT_DOUBLE_EQ(outcome.result.metrics().at("wall_ms"), 42.0);
 }
 
 // A benchmark reporting more than the problem ranks on is normal; the extra is
@@ -142,9 +142,9 @@ TEST_F(OrderRunnerProcessTest, KeepsOnlyTheProblemsMetrics) {
                 "> \"$ARENA_REPORT\"\n",
                 1, proto::GradeOrder::MIN),
       {});
-  EXPECT_EQ(outcome.error, "");
-  EXPECT_TRUE(outcome.metrics.contains("wall_ms"));
-  EXPECT_FALSE(outcome.metrics.contains("noise"));
+  EXPECT_EQ(outcome.result.error(), "");
+  EXPECT_TRUE(outcome.result.metrics().contains("wall_ms"));
+  EXPECT_FALSE(outcome.result.metrics().contains("noise"));
 }
 
 // A nonzero exit means the measurement is not trustworthy, whatever it printed.
@@ -157,9 +157,12 @@ TEST_F(OrderRunnerProcessTest, RefusesToScoreAFailedRun) {
                 "exit 3\n",
                 1, proto::GradeOrder::MIN),
       {});
-  EXPECT_TRUE(outcome.metrics.empty()) << "a failed run must not be scored";
-  EXPECT_NE(outcome.error.find("exited 3"), std::string::npos) << outcome.error;
-  EXPECT_NE(outcome.error.find("segfault"), std::string::npos) << outcome.error;
+  EXPECT_TRUE(outcome.result.metrics().empty())
+      << "a failed run must not be scored";
+  EXPECT_NE(outcome.result.error().find("exited 3"), std::string::npos)
+      << outcome.result.error();
+  EXPECT_NE(outcome.result.error().find("segfault"), std::string::npos)
+      << outcome.result.error();
 }
 
 TEST_F(OrderRunnerProcessTest, SaysSoWhenNothingWasMeasured) {
@@ -168,9 +171,9 @@ TEST_F(OrderRunnerProcessTest, SaysSoWhenNothingWasMeasured) {
       MakeOrder("#!/usr/bin/env bash\necho 'ran, measured nothing'\n", 1,
                 proto::GradeOrder::MIN),
       {});
-  EXPECT_TRUE(outcome.metrics.empty());
-  EXPECT_NE(outcome.error.find("ARENA_REPORT"), std::string::npos)
-      << outcome.error;
+  EXPECT_TRUE(outcome.result.metrics().empty());
+  EXPECT_NE(outcome.result.error().find("ARENA_REPORT"), std::string::npos)
+      << outcome.result.error();
 }
 
 // The command reports a number the problem does not rank on, so there is
@@ -182,10 +185,10 @@ TEST_F(OrderRunnerProcessTest, SaysSoWhenTheProblemsMetricIsMissing) {
                 "printf '{\"metrics\": {\"other\": 5}}' > \"$ARENA_REPORT\"\n",
                 1, proto::GradeOrder::MIN),
       {});
-  EXPECT_TRUE(outcome.metrics.empty());
-  EXPECT_NE(outcome.error.find("none of this problem's metrics"),
+  EXPECT_TRUE(outcome.result.metrics().empty());
+  EXPECT_NE(outcome.result.error().find("none of this problem's metrics"),
             std::string::npos)
-      << outcome.error;
+      << outcome.result.error();
 }
 
 // Cancelling work that is actually running, which is the case that matters.
@@ -220,8 +223,8 @@ TEST_F(OrderRunnerProcessTest, CancelStopsARunThatIsAlreadyUnderWay) {
       << "the cancel did not reach the running command";
   EXPECT_TRUE(std::filesystem::exists(marker)) << "the command never started";
   // Killed, so nothing was measured -- and a killed run must never be scored.
-  EXPECT_TRUE(outcome.metrics.empty());
-  EXPECT_FALSE(outcome.error.empty());
+  EXPECT_TRUE(outcome.result.metrics().empty());
+  EXPECT_FALSE(outcome.result.error().empty());
 }
 
 // Every problem names a sandbox image, and an order carrying one is a
@@ -237,10 +240,10 @@ TEST_F(OrderRunnerProcessTest, RefusesAnOrderThatNamesAnImage) {
 
   const OrderOutcome outcome = runner_->RunOrder(0, order, {});
 
-  EXPECT_FALSE(outcome.build_ok);
-  EXPECT_TRUE(outcome.metrics.empty());
-  EXPECT_NE(outcome.error.find("container engine"), std::string::npos)
-      << outcome.error;
+  EXPECT_FALSE(outcome.result.build_ok());
+  EXPECT_TRUE(outcome.result.metrics().empty());
+  EXPECT_NE(outcome.result.error().find("container engine"), std::string::npos)
+      << outcome.result.error();
 }
 
 // Cancelling something that is not running must be harmless: the stream thread
@@ -263,15 +266,15 @@ TEST_F(OrderRunnerProcessTest, RefusesAnOrderForAnotherMachineClass) {
   order.mutable_grade()->set_require_machine_class("bench-m7i");
 
   const OrderOutcome refused = bench.RunOrder(0, order, {});
-  EXPECT_NE(refused.error.find("requires machine_class 'bench-m7i'"),
+  EXPECT_NE(refused.result.error().find("requires machine_class 'bench-m7i'"),
             std::string::npos)
-      << refused.error;
-  EXPECT_NE(refused.error.find("bench-c7i"), std::string::npos);
-  EXPECT_FALSE(refused.build_ok);
+      << refused.result.error();
+  EXPECT_NE(refused.result.error().find("bench-c7i"), std::string::npos);
+  EXPECT_FALSE(refused.result.build_ok());
 
   // The matching class runs normally.
   order.mutable_grade()->set_require_machine_class("bench-c7i");
-  EXPECT_EQ(bench.RunOrder(0, order, {}).error.find("machine_class"),
+  EXPECT_EQ(bench.RunOrder(0, order, {}).result.error().find("machine_class"),
             std::string::npos);
 }
 
@@ -282,8 +285,9 @@ TEST_F(OrderRunnerProcessTest, AnUnsetMachineClassCannotSatisfyARequirement) {
   order.mutable_grade()->set_require_machine_class("bench-c7i");
 
   const OrderOutcome refused = runner_->RunOrder(0, order, {});
-  EXPECT_NE(refused.error.find("this worker is 'unset'"), std::string::npos)
-      << refused.error;
+  EXPECT_NE(refused.result.error().find("this worker is 'unset'"),
+            std::string::npos)
+      << refused.result.error();
 }
 
 TEST_F(OrderRunnerProcessTest, ReportsEveryPhaseItReaches) {
@@ -314,8 +318,8 @@ TEST_F(OrderRunnerProcessTest, CancelIsANoOpForAnUnknownOrder) {
           "printf '{\"metrics\": {\"wall_ms\": 7}}' > \"$ARENA_REPORT\"\n",
           1, proto::GradeOrder::MIN),
       {});
-  EXPECT_EQ(outcome.error, "");
-  EXPECT_DOUBLE_EQ(outcome.metrics.at("wall_ms"), 7.0);
+  EXPECT_EQ(outcome.result.error(), "");
+  EXPECT_DOUBLE_EQ(outcome.result.metrics().at("wall_ms"), 7.0);
 }
 
 }  // namespace

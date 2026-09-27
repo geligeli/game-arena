@@ -6,8 +6,6 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-# Operator tooling for the arena. Not part of the server: nothing here runs in
-# the request path.
 cc_binary(
     name = "arena_admin",
     srcs = ["arena_admin.cc"],
@@ -21,9 +19,6 @@ cc_binary(
     ],
 )
 
-# Standing a tournament up from a problem repository, and handing out kits to
-# enter it. Driven through the targets @game_arena//game_arena/rules:problem.bzl
-# generates; the arena binaries it launches ride along as data.
 cc_binary(
     name = "arena_tournament",
     srcs = ["arena_tournament.cc"],
@@ -57,7 +52,6 @@ cc_binary(
     ],
 )
 
-# The sandbox's own targets, rc and owners, for a priming build on the host.
 cc_library(
     name = "sandbox_priming",
     srcs = ["sandbox_priming.cc"],

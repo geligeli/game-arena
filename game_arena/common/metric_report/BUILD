@@ -3,17 +3,14 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# The $ARENA_REPORT format, as data. Both ends of it live in this repo on
-# purpose -- game_arena/grader writes it, a sandbox worker reads it back -- so
-# it sits below both rather than inside either. What to do with several runs'
-# numbers is a separate, arena-shaped question: see
-# //game_arena/sandbox/worker:grade_policy.
+# Below both ends of the format: game_arena/grader and the sandbox worker.
 cc_library(
     name = "metric_report",
     srcs = ["metric_report.cc"],
     hdrs = ["metric_report.h"],
     deps = [
         "//game_arena/proto:problem_cc_proto",
+        "@abseil-cpp//absl/strings",
         "@protobuf//:protobuf",
     ],
 )

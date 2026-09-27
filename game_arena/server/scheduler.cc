@@ -6,17 +6,13 @@
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "game_arena/server/problem_config.h"
 
 namespace tournament_arena {
 
 namespace {
-
-int64_t NowUnixMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
 
 constexpr std::string_view kBuiltinPrefix = "builtin:";
 constexpr std::string_view kPlayerPrefix = "player:";
@@ -36,32 +32,9 @@ JobRecord::Order *OrderIn(JobRecord *record, const std::string &order_id) {
 
 }  // namespace
 
-Scheduler::Reservation::~Reservation() {
-  if (scheduler_ == nullptr) {
-    return;
-  }
-  // Never consumed -- the submission was rejected or failed to store -- so the
-  // slot goes back rather than being held until restart.
-  std::lock_guard lock(scheduler_->mutex_);
-  scheduler_->ReleaseReservationLocked(client_id_);
-}
-
-Scheduler::Reservation::Reservation(Reservation &&other) noexcept
-    : scheduler_(other.scheduler_),
-      client_id_(std::move(other.client_id_)),
-      superseded_(std::move(other.superseded_)) {
-  other.scheduler_ = nullptr;
-}
-
-auto Scheduler::Reservation::operator=(Reservation &&other) noexcept
-    -> Reservation & {
-  if (this != &other) {
-    scheduler_ = other.scheduler_;
-    client_id_ = std::move(other.client_id_);
-    superseded_ = std::move(other.superseded_);
-    other.scheduler_ = nullptr;
-  }
-  return *this;
+void Scheduler::Reservation::Release::operator()(Scheduler *scheduler) const {
+  std::lock_guard lock(scheduler->mutex_);
+  scheduler->ReleaseReservationLocked(client_id);
 }
 
 Scheduler::Scheduler(SchedulerConfig config, CandidateStore *candidates,
@@ -98,11 +71,10 @@ void Scheduler::AbortJobLocked(Job *job, const std::string &reason) {
     order_owner_.erase(owner);
   }
   job->running.clear();
-  // CANCELLED rather than FAILED: an agent polling this needs to tell "you
-  // replaced it" from "it broke".
+  // CANCELLED, not FAILED: "you replaced it" is not "it broke".
   job->status.set_state(proto::Job::CANCELLED);
   job->status.set_error(reason);
-  job->status.set_finished_unix_ms(NowUnixMs());
+  job->status.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
   PersistLocked(job);
 }
 
@@ -110,10 +82,8 @@ auto Scheduler::TryReserve(const std::string &client_id,
                            const proto::ClientQuota &quota, bool cancel_running,
                            std::string *error) -> std::optional<Reservation> {
   Reservation reservation;
-  reservation.client_id_ = client_id;
+  reservation.held_.get_deleter().client_id = client_id;
   if (client_id.empty()) {
-    // No registry configured: nobody to meter. The reservation is inert, and
-    // its destructor has nothing to release.
     return reservation;
   }
 
@@ -138,9 +108,7 @@ auto Scheduler::TryReserve(const std::string &client_id,
       std::max(1, static_cast<int>(quota.max_active_evaluations()));
   const int max_queued = std::max(1, static_cast<int>(quota.max_queued_jobs()));
 
-  // Unconditional, not only when over quota: a client that asks to replace its
-  // work means it, and "sometimes replaces, depending on a limit you cannot
-  // see" is the harder behaviour to reason about.
+  // Unconditional, not only when over quota: no limit the client cannot see.
   if (cancel_running && !replaceable.empty()) {
     for (const std::string &job_id : replaceable) {
       auto it = jobs_.find(job_id);
@@ -169,72 +137,44 @@ auto Scheduler::TryReserve(const std::string &client_id,
   }
 
   ++reserved_[client_id];
-  reservation.scheduler_ = this;
+  reservation.held_.reset(this);
   return reservation;
 }
 
-bool Scheduler::FillSideLocked(const proto::Candidate &candidate,
+void Scheduler::FillSideLocked(const proto::Candidate &candidate,
                                proto::Side *side) const {
   side->set_candidate_id(candidate.candidate_id());
   *side->mutable_params() = candidate.params();
 
-  // The patch is the submission. It travels with the order so a worker needs
-  // nothing but the repo and this message -- no callback to the arena, no
-  // shared filesystem.
-  // From the candidate as handed over, not looked up by id: a resubmit is
-  // staged beside the entry it replaces, and the two share one.
-  if (candidate.patch().empty()) {
-    LOG(ERROR) << "Candidate " << candidate.candidate_id() << " has no patch";
-    return false;
-  }
+  // Not looked up by id: a staged resubmit shares its entry's id.
   side->set_patch(candidate.patch());
 
-  // "{submission_id}" is expanded here, so the worker never sees a template and
-  // needs no problem config of its own.
+  // Expanded here, so the worker needs no problem config of its own.
   for (const std::string &target : config_.build_targets()) {
     side->add_build_targets(
         ExpandSubmissionId(target, candidate.candidate_id()));
   }
   side->set_bot_target(
       ExpandSubmissionId(config_.bot_target(), candidate.candidate_id()));
-  return true;
 }
 
 std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
     const proto::Candidate &candidate, const std::string &opponent, int games,
     const std::string &job_id) {
-  proto::WorkOrder order;
-  order.set_order_id("o" + std::to_string(NowUnixMs()) + "_" +
-                     std::to_string(++order_counter_));
+  proto::WorkOrder order = config_.order();
+  order.set_order_id("o" + std::to_string(absl::ToUnixMillis(absl::Now())) +
+                     "_" + std::to_string(++order_counter_));
   order.set_job_id(job_id);
   order.set_game(candidate.game());
   order.set_opponent_spec(opponent);
   order.set_num_games(games);
-  order.set_build_timeout_s(config_.build_timeout_s());
-  order.set_run_timeout_s(config_.run_timeout_s());
-  order.set_referee_target(config_.referee_target());
-  order.set_match_deadline_s(config_.match_deadline_s());
-  *order.mutable_sandbox() = config_.sandbox();
-  *order.mutable_bazel_flags() = config_.bazel_flags();
-  order.set_turn_timeout_ms(config_.turn_timeout_ms());
-  order.set_game_time_budget_ms(config_.game_time_budget_ms());
-  order.set_max_moves_per_game(config_.max_moves_per_game());
-  *order.mutable_registry_options() = config_.registry_options();
 
-  if (!FillSideLocked(candidate, order.mutable_candidate())) {
-    return std::nullopt;
-  }
+  FillSideLocked(candidate, order.mutable_candidate());
 
-  if (config_.has_grade()) {
-    // A graded order has no opponent: running the command *is* the whole
-    // evaluation.
-    *order.mutable_grade() = config_.grade();
-    order.mutable_grade()->clear_argv();
-    for (const std::string &arg : config_.grade().argv()) {
-      order.mutable_grade()->add_argv(
-          ExpandSubmissionId(arg, candidate.candidate_id()));
+  if (order.has_grade()) {
+    for (std::string &arg : *order.mutable_grade()->mutable_argv()) {
+      arg = ExpandSubmissionId(arg, candidate.candidate_id());
     }
-    order.clear_referee_target();
     return order;
   }
 
@@ -242,9 +182,7 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
     return order;
   }
 
-  // A candidate opponent rides along in the same order. That is what makes an
-  // order a whole match: the worker builds both sides and referees them
-  // itself, so there is no second order to keep in step with this one.
+  // The rival's side rides in the same order: one order is one whole match.
   const std::string rival_id = opponent.rfind(kPlayerPrefix, 0) == 0
                                    ? opponent.substr(kPlayerPrefix.size())
                                    : opponent;
@@ -253,24 +191,23 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
     return std::nullopt;
   }
   order.set_opponent_spec(std::string(kPlayerPrefix) + rival->candidate_id());
-  if (!FillSideLocked(*rival, order.mutable_opponent())) {
-    return std::nullopt;
-  }
+  FillSideLocked(*rival, order.mutable_opponent());
   return order;
 }
 
 std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
                                      const std::vector<std::string> &opponents,
                                      int games, const std::string &client_id) {
-  const std::string job_id =
-      "j" + std::to_string(NowUnixMs()) + "_" + std::to_string(++job_counter_);
+  const std::string job_id = "j" +
+                             std::to_string(absl::ToUnixMillis(absl::Now())) +
+                             "_" + std::to_string(++job_counter_);
 
   Job job;
   job.client_id = client_id;
   job.status.set_job_id(job_id);
   job.status.set_candidate_id(candidate.candidate_id());
   job.status.set_state(proto::Job::QUEUED);
-  job.status.set_created_unix_ms(NowUnixMs());
+  job.status.set_created_unix_ms(absl::ToUnixMillis(absl::Now()));
   *job.record.mutable_submission() = candidate;
 
   int requested = 0;
@@ -291,11 +228,10 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
 
   jobs_[job_id] = std::move(job);
   if (jobs_[job_id].pending.empty()) {
-    // Nothing runnable; do not leave the caller polling a job that will never
-    // move.
+    // Nothing runnable: fail now rather than leave the caller polling.
     jobs_[job_id].status.set_state(proto::Job::FAILED);
     jobs_[job_id].status.set_error("no runnable opponent");
-    jobs_[job_id].status.set_finished_unix_ms(NowUnixMs());
+    jobs_[job_id].status.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
     PersistLocked(&jobs_[job_id]);
     return job_id;
   }
@@ -308,15 +244,12 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
 std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
                                         Reservation reservation) {
   std::lock_guard lock(mutex_);
-  // Consumed: the slot it held becomes the job below, so the destructor must
-  // not hand it back.
+  // Consumed: the slot becomes the job below.
   const std::string client_id = reservation.client_id();
-  if (reservation.scheduler_ != nullptr) {
+  if (reservation.held_.release() != nullptr) {
     ReleaseReservationLocked(client_id);
-    reservation.scheduler_ = nullptr;
   }
-  // A participant's older work is for code this submission replaces, and its
-  // result would be taken for this one's.
+  // Older work is for code this replaces; its result would pass for this one's.
   for (auto &[job_id, job] : jobs_) {
     if (job.status.candidate_id() == candidate.candidate_id() &&
         (job.status.state() == proto::Job::QUEUED ||
@@ -324,9 +257,8 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
       AbortJobLocked(&job, "superseded by a newer submission");
     }
   }
-  if (config_.has_grade()) {
-    // A graded problem has no opponents to be placed against: the one order is
-    // the whole measurement. The empty entry is that order.
+  if (config_.order().has_grade()) {
+    // A graded problem's one order has no opponent: the empty entry.
     return EnqueueLocked(candidate, {""}, config_.placement_games(), client_id);
   }
   std::vector<std::string> opponents(config_.placement_opponents().begin(),
@@ -359,14 +291,6 @@ std::vector<std::string> Scheduler::LadderLocked(
   return ladder;
 }
 
-int Scheduler::FreeSlotsLocked() const {
-  int free = 0;
-  for (const auto &[id, state] : workers_) {
-    free += state.worker->slots() - static_cast<int>(state.in_flight.size());
-  }
-  return free;
-}
-
 void Scheduler::DispatchLocked() {
   bool progress = true;
   while (progress) {
@@ -380,32 +304,23 @@ void Scheduler::DispatchLocked() {
       }
       Job &job = job_it->second;
 
-      // The emptiest worker first, so work spreads across hosts instead of
-      // filling one before touching the next.
-      WorkerState *best = nullptr;
-      for (auto &[id, state] : workers_) {
-        const int room =
-            state.worker->slots() - static_cast<int>(state.in_flight.size());
-        if (room <= 0) {
-          continue;
-        }
-        if (best == nullptr ||
-            room > best->worker->slots() -
-                       static_cast<int>(best->in_flight.size())) {
-          best = &state;
-        }
-      }
-      if (best == nullptr) {
+      // The emptiest worker first, so work spreads across hosts.
+      const auto room = [](const auto &entry) {
+        return entry.second.worker->slots() -
+               static_cast<int>(entry.second.in_flight.size());
+      };
+      const auto emptiest = std::ranges::max_element(workers_, {}, room);
+      if (emptiest == workers_.end() || room(*emptiest) <= 0) {
         ++queued;
         continue;
       }
+      WorkerState *best = &emptiest->second;
 
       proto::WorkOrder order = std::move(job.pending.front());
       proto::FleetMessage msg;
       *msg.mutable_order() = order;
       if (!best->worker->Send(msg)) {
-        // The worker is gone; RemoveWorker will clean it up when its stream
-        // ends. Leave the order queued rather than losing it.
+        // Gone: RemoveWorker cleans up when its stream ends. Stays queued.
         ++queued;
         continue;
       }
@@ -449,9 +364,7 @@ void Scheduler::RemoveWorker(const std::string &worker_id) {
   LOG(INFO) << "Sandbox worker '" << worker_id << "' detached with "
             << orphaned.size() << " order(s) in flight";
 
-  // A dropped worker's orders go back to the queue. Each is self-contained, so
-  // requeueing one is just requeueing one -- there is no sibling order on
-  // another host to cancel, and no half-match to unwind.
+  // Each order is self-contained, so requeueing one unwinds nothing else.
   for (const std::string &order_id : orphaned) {
     const auto owner = order_owner_.find(order_id);
     if (owner == order_owner_.end()) {
@@ -481,8 +394,6 @@ void Scheduler::OnProgress(const proto::OrderProgress &progress) {
   std::lock_guard lock(mutex_);
   const auto owner = order_owner_.find(progress.order_id());
   if (owner == order_owner_.end()) {
-    // The order has already been retired by its result, or never existed.
-    // Either way there is nothing to annotate and nothing to complain about.
     return;
   }
   const auto job_it = jobs_.find(owner->second.first);
@@ -539,8 +450,6 @@ void Scheduler::OnResult(const std::string &worker_id,
   }
   Job &job = job_it->second;
 
-  // Every order is now the job's own whole evaluation, so its tally is the
-  // job's tally -- no "is this half of a pair mine" question to answer.
   job.status.set_games_played(job.status.games_played() +
                               result.games_played());
   job.status.set_wins(job.status.wins() + result.wins());
@@ -548,9 +457,7 @@ void Scheduler::OnResult(const std::string &worker_id,
   job.status.set_losses(job.status.losses() + result.losses());
 
   if (!result.build_ok()) {
-    // An order builds both sides. Whose build broke decides who gets retired,
-    // and the worker is the only one who knows -- so it says. Falling back to
-    // the job's own candidate keeps an older worker's result usable.
+    // Only the worker knows whose build broke; an older one does not say.
     const std::string &broken = result.build_failed_candidate_id().empty()
                                     ? job.status.candidate_id()
                                     : result.build_failed_candidate_id();
@@ -563,8 +470,7 @@ void Scheduler::OnResult(const std::string &worker_id,
                                ? "build failed for " + broken
                                : broken + ": " + result.build_log());
     } else {
-      // Worth distinguishing: the submitter did nothing wrong, and telling
-      // them "your build failed" would send them hunting their own code.
+      // Not "your build failed": that would send them hunting their own code.
       job.status.set_error("opponent " + broken +
                            " failed to build; this candidate was not at fault");
     }
@@ -573,8 +479,7 @@ void Scheduler::OnResult(const std::string &worker_id,
   } else {
     candidates_->SetStatus(job.status.candidate_id(), proto::Candidate::READY,
                            "");
-    // The coordinator owns the standings. A match's referee kept its own
-    // ratings while it played, but those died with its container.
+    // Only the coordinator writes standings; a referee's die with it.
     if (standings_ != nullptr) {
       const auto running = job.running.find(result.order_id());
       const std::string opponent = running != job.running.end()
@@ -605,7 +510,7 @@ void Scheduler::ConcludeJobLocked(Job *job) {
   if (job->status.state() != proto::Job::FAILED) {
     job->status.set_state(proto::Job::DONE);
   }
-  job->status.set_finished_unix_ms(NowUnixMs());
+  job->status.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
 }
 
 void Scheduler::PersistLocked(Job *job) {
@@ -614,8 +519,7 @@ void Scheduler::PersistLocked(Job *job) {
   }
   *job->record.mutable_job() = job->status;
   job_log_->Put(job->record);
-  // jobs_ keeps every job since startup, and a record carries its patch and
-  // every build's output. Nothing writes a finished job's record again.
+  // jobs_ keeps every job, and a record carries patches and build output.
   if (job->pending.empty() && job->running.empty()) {
     job->record.Clear();
   }

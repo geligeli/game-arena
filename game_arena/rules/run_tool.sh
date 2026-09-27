@@ -1,11 +1,5 @@
 #!/bin/bash
-# Runs the arena_tournament tool from a consumer's runfiles.
-#
-# arena_problem() generates sh_binary/sh_test targets whose srcs is this file
-# and whose first argument is the tool's rootpath. Everything else is passed
-# through. The tool finds problem_server, sandbox_worker and the arena's kit
-# surface through the runfiles library, which needs RUNFILES_DIR: `bazel
-# run` and `bazel test` set it in different ways, so both are covered here.
+# Execs the tool ($1) with RUNFILES_DIR, which `bazel run` and `bazel test` set differently.
 set -euo pipefail
 set -x
 

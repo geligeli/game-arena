@@ -1,17 +1,11 @@
 #ifndef CONNECT4_BOTS_BOT_API_H
 #define CONNECT4_BOTS_BOT_API_H
 
-// What a submission writes.
-//
-// One function. Everything else -- connecting to the broker, the handshake,
-// parsing the board, serializing the move, reporting the result -- is
-// bot.cc, compiled unchanged around your header.
+// What a submission writes; bot.cc does everything else around it:
 //
 //   auto ChooseColumn(const bot::Board &board, std::mt19937 &gen) -> int;
 //
-// Return a column 0..6 that is not full. Returning a full or out-of-range
-// column loses the game on the spot: the referee validates every action, and
-// an illegal move is a loss, not a retry.
+// Return a column 0..6 that is not full: an illegal move loses the game.
 
 #include <random>
 #include <vector>
@@ -32,8 +26,7 @@ struct Board {
     return cells[row * connect4::kCols + col];
   }
 
-  // Columns with room, in left-to-right order. Never empty unless the game is
-  // over, in which case you will not be asked.
+  // Columns with room, left to right. Never empty when you are asked.
   auto LegalColumns() const -> std::vector<int> {
     std::vector<int> out;
     for (int col = 0; col < connect4::kCols; ++col) {
@@ -44,8 +37,7 @@ struct Board {
     return out;
   }
 
-  // The board as it would be after `disc` is dropped in `col`. Cheap enough to
-  // call in a search.
+  // The board after `disc` is dropped in `col`. Cheap enough for a search.
   auto After(int col, char disc) const -> connect4::Cells {
     connect4::Cells next = cells;
     const int row = connect4::LandingRow(cells, col);

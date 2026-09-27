@@ -1,13 +1,7 @@
 #ifndef GAME_ARENA_GAME_ARENA_SANDBOX_WORKER_ORDER_RUNNER_H
 #define GAME_ARENA_GAME_ARENA_SANDBOX_WORKER_ORDER_RUNNER_H
 
-// Running one work order on one engine.
-//
-// What is left of the two backends once the mechanics moved into
-// //game_arena/sandbox/exec and the translation into order_job.h: the
-// acceptance gates, and forwarding a cancel. The worker loop knows only this,
-// so which engine is underneath does not touch scheduling, reporting or the
-// fleet protocol.
+// One work order on one engine: the acceptance gates, and forwarding a cancel.
 
 #include <functional>
 #include <map>
@@ -23,45 +17,30 @@ namespace tournament_arena {
 
 class OrderRunner {
  public:
-  // |progress| is called with each phase the order reaches, so the worker can
-  // report it without the engine knowing what a phase means to the arena.
+  // Called with each phase the order reaches.
   using ProgressSink = std::function<void(const std::string &order_id,
                                           proto::OrderProgress::Phase phase)>;
 
-  // Either engine may be null: a host with no docker passes only a process
-  // engine, and an order that needs a container is then refused rather than
-  // quietly run unsandboxed. Which one an order gets is the *problem's*
-  // decision -- it names an image or it does not -- not a worker flag.
+  // Either may be null. An order's image, or its absence, picks the engine.
   OrderRunner(sandbox_exec::Engine *process_engine,
               sandbox_exec::Engine *container_engine, OrderJobConfig config,
               std::string machine_class = {});
 
-  // Prepares per-slot state up front, so the first order does not pay for
-  // it: the bind-mount sources docker would otherwise conjure up as empty
-  // directories. Here rather than on the
-  // engine because a slot is an arena concept -- the engine is handed paths,
-  // it does not know how many of them there will be.
+  // Creates the per-slot directories up front.
   bool Warmup(int slots, std::string *error);
 
   OrderOutcome RunOrder(int slot, const proto::WorkOrder &order,
                         const ProgressSink &progress);
 
-  // Aborts |order_id| if this runner is running it. Called from the stream
-  // thread while a slot thread is inside RunOrder.
+  // From the stream thread, while a slot thread is inside RunOrder.
   void Cancel(const std::string &order_id);
 
-  // What this worker can run, for the hello. Both engines when it has both.
-  std::string engines() const;
-
  private:
-  // Why this worker will not run |order| at all, or empty if it will. Refused
-  // rather than attempted: an order run on the wrong kind of host produces a
-  // number that looks like a result.
+  // Non-empty when this worker must refuse |order| rather than run it.
   std::string Refusal(const proto::WorkOrder &order) const;
   // The engine this order runs on, or null when this worker has none for it.
   sandbox_exec::Engine *EngineFor(const proto::WorkOrder &order) const;
 
-  // What a Cancel needs: which job, and which engine took it.
   struct InFlight {
     std::string job_id;
     sandbox_exec::Engine *engine = nullptr;

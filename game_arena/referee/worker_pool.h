@@ -1,22 +1,7 @@
 #ifndef GAME_ARENA_GAME_ARENA_REFEREE_WORKER_POOL_H
 #define GAME_ARENA_GAME_ARENA_REFEREE_WORKER_POOL_H
 
-// Bounded execution for games, replacing one detached std::thread per game.
-//
-//   WorkerPool  fixed set of threads draining a task queue. Bounds how much
-//               CPU-heavy built-in work (MCTS, minimax) runs at once, which
-//               used to be unbounded: N concurrent games meant N threads
-//               fighting for cores.
-//   Strand      serializes tasks posted to it without owning a thread. A game
-//               puts every state transition on its own strand, so the whole
-//               state machine is single-threaded by construction and needs no
-//               locking of its own.
-//   Timer       one thread serving all deadlines. Kept here rather than using
-//               grpc::Alarm so the game layer stays free of gRPC (and clear of
-//               Alarm's "not reusable while armed" CHECK).
-//
-// Deliberately no gRPC dependency: the matchmaker and game runner stay
-// transport agnostic and unit-testable without a server.
+// Game execution without gRPC, so the game layer stays transport agnostic.
 
 #include <chrono>
 #include <condition_variable>
@@ -63,13 +48,8 @@ class WorkerPool {
   std::vector<std::thread> threads_;
 };
 
-// Serial executor over a WorkerPool. Tasks posted to one Strand never run
-// concurrently with each other, but a Strand costs no thread of its own.
-//
-// shared_ptr owned on purpose: a task typically holds the only reference to
-// the object that owns this strand, so finishing that task can destroy the
-// owner. The drain loop keeps itself alive across that, instead of returning
-// into a freed strand.
+// Serial executor over a WorkerPool. shared_ptr owned: a task may destroy the
+// strand's owner, so the drain loop keeps the strand alive.
 class Strand : public std::enable_shared_from_this<Strand> {
  public:
   static std::shared_ptr<Strand> Create(WorkerPool *pool) {
@@ -102,14 +82,11 @@ class Timer {
   Timer(const Timer &) = delete;
   Timer &operator=(const Timer &) = delete;
 
-  // Runs |fn| on the timer thread after |delay|. |fn| must not block: post the
-  // real work elsewhere. Returns an id usable with Cancel().
+  // |fn| runs on the timer thread, so it must not block.
   Id After(std::chrono::milliseconds delay, Task fn);
 
-  // Best-effort: a timer already being dispatched still runs. Callers must
-  // therefore tolerate a late fire (games compare a turn epoch). O(log n) --
-  // every move arms and cancels one of these, so a linear scan here is
-  // quadratic in the number of concurrent games.
+  // Best effort: one already being dispatched still runs. O(log n), as every
+  // move calls it.
   void Cancel(Id id);
 
   void Stop();
@@ -121,9 +98,7 @@ class Timer {
 
   std::mutex mu_;
   std::condition_variable cv_;
-  // Keyed by (deadline, id) so ordering is still by deadline while every entry
-  // is directly addressable, and |deadlines_| maps an id back to its key.
-  // Cancel is then a lookup rather than a walk.
+  // Ordered by deadline; |deadlines_| maps an id back to its key for Cancel().
   std::map<std::pair<Deadline, Id>, Task> entries_;
   std::unordered_map<Id, Deadline> deadlines_;
   Id next_id_ = 1;

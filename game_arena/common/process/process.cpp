@@ -9,6 +9,8 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
+#include <ranges>
+#include <string_view>
 
 extern char** environ;
 
@@ -70,22 +72,12 @@ std::string ResolveExecutable(const std::string& name) {
   if (path_env == nullptr) {
     return {};
   }
-  const std::string path(path_env);
-  size_t begin = 0;
-  while (begin <= path.size()) {
-    const size_t colon = path.find(':', begin);
-    const std::string dir = path.substr(
-        begin, colon == std::string::npos ? std::string::npos : colon - begin);
-    if (!dir.empty()) {
-      const std::string candidate = dir + "/" + name;
-      if (::access(candidate.c_str(), X_OK) == 0) {
-        return candidate;
-      }
+  for (const auto dir : std::string_view(path_env) | std::views::split(':')) {
+    const std::string candidate =
+        std::string(std::string_view(dir)) + "/" + name;
+    if (!dir.empty() && ::access(candidate.c_str(), X_OK) == 0) {
+      return candidate;
     }
-    if (colon == std::string::npos) {
-      break;
-    }
-    begin = colon + 1;
   }
   return {};
 }
@@ -126,8 +118,7 @@ std::optional<Child> Child::Start(const std::string& executable,
     ::execve(argv[0], argv.data(), envp.data());
     _exit(127);
   }
-  // Also set from the parent: whichever runs first wins, and neither side may
-  // assume the other has been scheduled yet.
+  // Also from the parent: neither side may assume the other has run yet.
   ::setpgid(pid, pid);
   return Child(pid);
 }
@@ -135,18 +126,6 @@ std::optional<Child> Child::Start(const std::string& executable,
 Child::Child(Child&& other) noexcept
     : pid_(other.pid_), exit_code_(other.exit_code_) {
   other.pid_ = -1;
-}
-
-Child& Child::operator=(Child&& other) noexcept {
-  if (this != &other) {
-    if (pid_ > 0) {
-      Stop(std::chrono::seconds(2));
-    }
-    pid_ = other.pid_;
-    exit_code_ = other.exit_code_;
-    other.pid_ = -1;
-  }
-  return *this;
 }
 
 Child::~Child() {

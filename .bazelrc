@@ -1,69 +1,38 @@
-# The C++ toolchain is the hermetic-llvm module in MODULE.bazel; bazel must not
-# autoconfigure one from the host as well. It would go unused, and it fails on
-# a machine (the sandbox image, a kit) that has no compiler installed.
+# The toolchain is hermetic-llvm; a host autoconfig fails where no compiler is installed.
 common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 
 build --cxxopt='-std=c++23'
 build --host_cxxopt='-std=c++23'
 build --copt=-fdiagnostics-color=always
+# Selects googletest's :has_absl (absl flags and failure signal handler in gtest).
 build --define=absl=1
 
-# Shared build cache on the NFS share. /large_nfs/bazel-cache is bind-mounted at
-# the same path inside the devcontainer (see .devcontainer/devcontainer.json), so
-# this one set of paths works both inside and outside the container, and is shared
-# across machines. Read-write: every build everywhere populates it for the next.
-#
-# - disk_cache holds action results: object files, linked binaries, test logs.
-# - repository_cache holds the fetched external archives, so a fresh container or
-#   machine does not re-download everything in MODULE.bazel.
+# Shared caches, at the same path on the host and in the devcontainer.
 common --disk_cache=/large_nfs/bazel-cache/disk
 common --repository_cache=/large_nfs/bazel-cache/repo
 
-# The disk cache never expires on its own; cap it so it cannot fill the share.
-# Collection is LRU and runs in an idle bazel server (see
-# --experimental_disk_cache_gc_idle_delay, 5m by default).
+# The disk cache never expires on its own; an idle server collects it (LRU).
 common --experimental_disk_cache_gc_max_size=50G
 
-# Enable all warnings and make them fatal for project files.
 build --cxxopt=-Wall
 build --cxxopt=-Wextra
 build --cxxopt=-Werror
 build --host_cxxopt=-Wall
 build --host_cxxopt=-Wextra
 build --host_cxxopt=-Werror
-# External dependencies are exempt: silence their warnings entirely so the
-# fatal project warnings above don't break third-party code.
 build --per_file_copt='external/.*@-w'
 build --host_per_file_copt='external/.*@-w'
-# A warning raised inside an external header that a project file includes is
-# not ours either, but -w cannot reach it. Disabled by category as they turn
-# up: abseil 20250814 spells lifetime_capture_by(this) the way clang 23
-# deprecates (fixed upstream after that release).
+# -w cannot reach an external header included from project code: abseil
+# 20250814 spells lifetime_capture_by(this) the way clang 23 deprecates.
 build --cxxopt=-Wno-deprecated-attributes
 build --host_cxxopt=-Wno-deprecated-attributes
 
-# Every config below sets --platform_suffix so it gets its own output directory
-# (bazel-out/k8-fastbuild-<suffix>). Without it they all share k8-fastbuild and
-# each switch discards the previous config's cached artifacts.
-
-# Opt-in: compile for the exact host CPU (enables POPCNT/BMI/AVX2, removes
-# software popcount fallbacks). Faster MCTS rollouts, but the resulting
-# binaries may not run on older or different CPUs.
+# Each config's --platform_suffix keeps its outputs apart, so switching discards nothing.
 build:native --platform_suffix=native
 build:native --copt=-march=native
 
-# Sanitizers. The hermetic toolchain owns the instrumentation: each
-# --@llvm//config:<san> setting adds -fsanitize=<san> and -fno-omit-frame-pointer
-# to every compile and link in the target configuration and links the matching
-# compiler-rt runtime. Tools built for the exec configuration (protoc, the
-# python bootstrap) stay uninstrumented.
-#
-# There is no msan config. MemorySanitizer needs a libc++ built with the same
-# instrumentation, and hermetic-llvm 0.8 builds its runtimes with every
-# sanitizer but asan reset (toolchain/runtimes/with_cfg_runtimes_common.bzl),
-# so an msan build reports uninitialized reads from inside std::string before
-# main() runs. (Under gcc it never worked at all: gcc has no msan.) Add one
-# back when the toolchain ships an instrumented libc++.
+# No msan config: hermetic-llvm 0.8 ships no msan-instrumented libc++, so msan
+# reports uninitialized reads inside std::string before main().
 build:asan --platform_suffix=asan
 build:asan --strip=never
 build:asan --@llvm//config:asan=true
@@ -82,8 +51,5 @@ build:ubsan --@llvm//config:ubsan=true
 build:ubsan --copt=-O0
 build:ubsan --action_env=UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
 
-# Machine-local overrides, uncommitted (see .gitignore). A machine without
-# /large_nfs opts out of the shared caches by putting this in that file:
-#   common --disk_cache=
-#   common --repository_cache=
+# Uncommitted. Without /large_nfs: `common --disk_cache=` and `common --repository_cache=`.
 try-import %workspace%/.bazelrc.local

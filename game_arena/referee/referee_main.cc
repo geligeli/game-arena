@@ -1,31 +1,8 @@
-// The match referee: plays a fixed number of games between two named players
-// and prints the tally.
-/*
-bazel run //game_arena/testgame:match_referee -- \
-    --port=50051 --game=nim --games=10 \
-    --player_a=fast-a1b2c3 --player_b=builtin:optimal
-*/
-//
-// This is the broker, scoped to one match and given a reason to exit. The
-// arena's coordinator used to host it; now a sandbox worker starts one of these
-// per order on a private network, points the two bot containers at it, and
-// collects the report it leaves. That is what lets the coordinator link no
-// game code at all -- the rules live here, and here runs on a worker.
-//
-// The bots are unchanged: they dial in with the same Hello the broker always
-// took. Against a builtin, only one bot connects and names
-// --player_b=builtin:<spec> as its opponent; against another submission, both
-// connect and rendezvous on "player:<the other>".
-//
-// Output contract: a tournament_broker.proto.MatchReport at --report, every
-// game it finished, which referee/match_tally.h counts from --player_a's side.
-// The last line of stdout says the same for a person:
-//
-//   RESULT games=10 wins=6 draws=1 losses=3
+// One match, then exit: a MatchReport at --report, and a last stdout line
+// "RESULT games=10 wins=6 draws=1 losses=3" counted from --player_a's side.
 
 #include <grpcpp/grpcpp.h>
 
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -43,10 +20,10 @@ bazel run //game_arena/testgame:match_referee -- \
 #include "absl/log/log.h"
 #include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/proto/tournament_broker.pb.h"
-#include "game_arena/referee/broker_service.h"
 #include "game_arena/referee/game_registry.h"
 #include "game_arena/referee/match_tally.h"
 #include "game_arena/referee/matchmaker.h"
+#include "game_arena/referee/play_reactor.h"
 #include "game_arena/standings/game_history.h"
 
 ABSL_FLAG(int, port, 50051, "Port the two sides dial");
@@ -86,11 +63,7 @@ ABSL_FLAG(std::string, port_file, "",
 
 namespace {
 
-// Keeps finished games and counts them from --player_a's side.
-//
-// Written from game strands and read by main, so every field is guarded. The
-// matchmaker plays games concurrently when both sides reconnect fast enough,
-// which is why this is a mutex rather than a plain counter.
+// Written from game strands, which may run concurrently, and read by main.
 class Tally {
  public:
   Tally(std::string player_a, int target)
@@ -99,8 +72,6 @@ class Tally {
   void Observe(const tournament_broker::proto::GameRecord &record) {
     {
       std::lock_guard lock(mutex_);
-      // A game player_a was not in cannot be scored from its side. Nothing
-      // should produce one, so say so rather than silently miscounting.
       if (!tournament_broker::AddGame(record, player_a_, &counts_)) {
         LOG(WARNING) << "Ignoring game " << record.game_id() << ": "
                      << player_a_ << " is not a seat in it";
@@ -111,8 +82,7 @@ class Tally {
     cv_.notify_all();
   }
 
-  // Blocks until the target is reached or |deadline| passes. Returns true if
-  // the full match was played.
+  // True once the full match is played; false if |deadline| passes first.
   bool Await(std::chrono::steady_clock::time_point deadline) {
     std::unique_lock lock(mutex_);
     if (deadline == std::chrono::steady_clock::time_point::max()) {
@@ -206,26 +176,14 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Written after the listener is up, so a worker that sees the file knows the
-  // port accepts connections. Written to a temp name and renamed, so a reader
-  // never sees a half-written number.
+  // Written once the listener is up: a worker that sees the file can connect.
   const std::string port_file = absl::GetFlag(FLAGS_port_file);
-  if (!port_file.empty()) {
-    const std::filesystem::path tmp = port_file + ".tmp";
-    {
-      std::ofstream out(tmp);
-      out << bound_port << "\n";
-      if (!out) {
-        LOG(ERROR) << "Cannot write --port_file " << tmp;
-        return 1;
-      }
-    }
-    std::filesystem::rename(tmp, port_file, ec);
-    if (ec) {
-      LOG(ERROR) << "Cannot rename " << tmp << " to " << port_file << ": "
-                 << ec.message();
-      return 1;
-    }
+  std::string error;
+  if (!port_file.empty() &&
+      !tournament_broker::WriteAtomically(
+          port_file, std::to_string(bound_port) + "\n", &error)) {
+    LOG(ERROR) << "Cannot write --port_file: " << error;
+    return 1;
   }
 
   LOG(INFO) << "Referee on :" << bound_port << " for " << target_games << " "
@@ -241,8 +199,7 @@ int main(int argc, char **argv) {
           : std::chrono::steady_clock::time_point::max();
   const bool complete = tally.Await(deadline);
 
-  // Shutdown before Drain, or Drain waits out a full turn timeout for every
-  // game parked on a client that will never answer.
+  // Shutdown first, or Drain waits out a turn timeout per silent client.
   matchmaker.Shutdown();
   matchmaker.Drain();
   server->Shutdown(std::chrono::system_clock::now() + std::chrono::seconds(5));
@@ -252,9 +209,7 @@ int main(int argc, char **argv) {
     LOG(ERROR) << "Deadline reached after " << counts.games << " of "
                << target_games << " games";
   }
-  // The whole point of the process. Written even for a partial match: the
-  // games that were played are real results, and the worker can tell the
-  // match was short because it holds fewer than it asked for.
+  // Even for a partial match: the worker sees fewer games than it asked for.
   const std::string report = absl::GetFlag(FLAGS_report);
   if (!report.empty()) {
     std::ofstream out(report, std::ios::binary);

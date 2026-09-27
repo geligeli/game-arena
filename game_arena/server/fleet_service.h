@@ -1,16 +1,7 @@
 #ifndef GAME_ARENA_GAME_ARENA_SERVER_FLEET_SERVICE_H
 #define GAME_ARENA_GAME_ARENA_SERVER_FLEET_SERVICE_H
 
-// The sandbox fleet's gRPC surface: one long-lived Attach stream per worker.
-//
-// Synchronous, unlike the broker's Play stream, and deliberately so. Workers
-// are counted in units of hosts, not players, so a thread each is nothing --
-// whereas the broker had to stop paying a thread per queued bot. The
-// simplicity is worth more here than the thread.
-//
-// Writes go through a per-worker outbox drained by its own thread. The
-// scheduler calls Send() while holding its lock, so writing to the socket
-// inline would let one unresponsive host stall dispatch for every other.
+// Attach streams. Send() runs under the scheduler's lock, hence the outbox.
 
 #include <condition_variable>
 #include <deque>
@@ -25,16 +16,12 @@
 
 namespace tournament_arena {
 
-// A FleetWorker backed by one Attach stream.
-class StreamFleetWorker
-    : public FleetWorker,
-      public std::enable_shared_from_this<StreamFleetWorker> {
+class StreamFleetWorker : public FleetWorker {
  public:
   using Stream =
       grpc::ServerReaderWriter<proto::FleetMessage, proto::WorkerMessage>;
 
-  // A worker that has stopped reading is broken, not busy: the queue is a
-  // liveness signal rather than a buffer to grow.
+  // A worker that has stopped reading is broken, not busy.
   static constexpr std::size_t kMaxOutbox = 64;
 
   StreamFleetWorker(std::string worker_id, int slots, Stream *stream);
@@ -44,10 +31,8 @@ class StreamFleetWorker
   int slots() const override { return slots_; }
   bool Send(const proto::FleetMessage &msg) override;
 
-  // Starts the writer thread. Call once, before the stream is used.
   void Start();
-  // Stops the writer thread and joins it. Idempotent.
-  void Stop();
+  void Stop();  // idempotent
 
  private:
   void WriterLoop();

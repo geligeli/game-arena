@@ -2,12 +2,10 @@
 
 #include <algorithm>
 #include <array>
-#include <cstddef>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
 #include "game_arena/referee/game_registry.h"
 
@@ -18,8 +16,7 @@ namespace {
 constexpr std::string_view kBuiltinPrefix = "builtin:";
 constexpr std::string_view kPlayerPrefix = "player:";
 
-// Order-independent key for a pair of players in one game, so both sides of a
-// "player:<name>" rendezvous compute the same string.
+// Order-independent, so both sides of a rendezvous compute the same key.
 std::string RendezvousKey(const std::string &game, const std::string &a,
                           const std::string &b) {
   const std::string &lo = a < b ? a : b;
@@ -39,25 +36,9 @@ Matchmaker::Matchmaker(MatchmakerConfig config, GameHistory *history)
 }
 
 Matchmaker::~Matchmaker() {
-  std::vector<std::shared_ptr<ClientHandle>> stranded;
-  {
-    std::lock_guard lock(mutex_);
-    stopping_ = true;
-    for (auto &[key, entry] : rendezvous_) {
-      stranded.push_back(entry.client);
-    }
-    rendezvous_.clear();
-  }
-  reaper_cv_.notify_all();
-  if (reaper_.joinable()) {
-    reaper_.join();
-  }
-  for (const auto &client : stranded) {
-    client->MarkDisconnected();
-    client->CloseAfterFlush();
-  }
-  // Deadlines first: a pending turn timer would otherwise post onto a strand
-  // whose pool is already draining.
+  Shutdown();
+  reaper_.join();
+  // Timer first, or a pending deadline posts onto a draining pool.
   timer_.Stop();
   pool_.Stop();
 }
@@ -67,8 +48,7 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
   {
     std::lock_guard lock(mutex_);
     if (stopping_) {
-      // Otherwise a client arriving during shutdown would be queued or started
-      // after Shutdown() had already swept, and nothing would clean it up.
+      // Shutdown() has swept already; nothing would clean up a later join.
       *error = "server is shutting down";
       return false;
     }
@@ -143,9 +123,7 @@ bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
       reaper_cv_.notify_all();
       return true;
     }
-    // The key is the sorted name pair, so reaching here already means each
-    // side named the other -- unless both sides are the same player, which is
-    // a duplicate connection rather than a pairing.
+    // Same key and same name: a duplicate connection, not a pairing.
     if (it->second.client->name() == client->name()) {
       *error = "another connection is already waiting as '" + client->name() +
                "' for '" + wanted + "'";
@@ -163,8 +141,7 @@ bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
   Seat arriving{.display_name = client->name(),
                 .client = std::move(client),
                 .builtin = nullptr};
-  // Alternate seats across the pair's series: who parked first is a race
-  // between two sandbox workers, so it must not decide who moves first.
+  // Who parked first is a race between two workers; it must not pick seat 0.
   if (pair_games % 2 == 0) {
     StartGame(descriptor, std::move(waiting), std::move(arriving));
   } else {
@@ -183,25 +160,23 @@ void Matchmaker::StartGame(const GameDescriptor &descriptor, Seat seat0,
 
   const uint64_t id = ++game_counter_;
   ++running_games_;
-  auto run =
-      GameRun::Create(descriptor, run_config,
-                      std::array<Seat, 2>{std::move(seat0), std::move(seat1)},
-                      id, history_, &pool_, &timer_, [this, id] {
-                        {
-                          std::lock_guard lock(mutex_);
-                          running_.erase(id);
-                        }
-                        if (--running_games_ == 0) {
-                          std::lock_guard lock(drain_mutex_);
-                          drain_cv_.notify_all();
-                        }
-                      });
+  auto run = std::make_shared<GameRun>(
+      descriptor, run_config,
+      std::array<Seat, 2>{std::move(seat0), std::move(seat1)}, id, history_,
+      &pool_, &timer_, [this, id] {
+        {
+          std::lock_guard lock(mutex_);
+          running_.erase(id);
+        }
+        if (--running_games_ == 0) {
+          std::lock_guard lock(drain_mutex_);
+          drain_cv_.notify_all();
+        }
+      });
   {
     std::lock_guard lock(mutex_);
     running_.emplace(id, run);
   }
-  // GameRun keeps itself alive until it concludes; the registry above is weak
-  // and exists only so Shutdown() can reach it.
   run->Start();
 }
 
@@ -214,9 +189,6 @@ void Matchmaker::Shutdown() {
       return;
     }
     stopping_ = true;
-    // Release everyone still waiting for an opponent: nothing will ever pair
-    // them now, and their streams would otherwise stay open until the client
-    // gave up.
     for (auto &[key, parked] : rendezvous_) {
       waiting.push_back(parked.client);
     }
@@ -256,8 +228,7 @@ void Matchmaker::ReaperLoop() {
       break;
     }
 
-    // Re-scan unconditionally: wait_until also returns on spurious wakeups and
-    // on the notify from a fresh park.
+    // Re-scan: wait_until also returns spuriously and on a fresh park.
     const auto now = std::chrono::steady_clock::now();
     std::vector<std::shared_ptr<ClientHandle>> expired;
     for (auto it = rendezvous_.begin(); it != rendezvous_.end();) {

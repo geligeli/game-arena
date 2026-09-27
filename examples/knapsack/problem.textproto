@@ -1,10 +1,5 @@
-# A graded problem: pack the knapsack well.
-#
-# The smallest complete example of the graded shape. There is no game, no
-# registry and no referee -- the arena builds a submission, runs one command,
-# and reads the numbers that command leaves in $ARENA_REPORT.
-#
-#   bazel run //:play                              # see BUILD
+# The graded shape: the arena builds a submission, runs grade.argv, and reads
+# the numbers it leaves in $ARENA_REPORT.
 
 problem_id: "knapsack"
 display_name: "Knapsack"
@@ -21,25 +16,19 @@ description:
   "is exact. An infeasible answer -- over capacity, a repeated index, junk on "
   "stdout -- scores zero for that case; a crash or a timeout does too.\n"
 
-# Every label below is relative to THIS directory: it is the tree the sandbox
-# image carries, and a worker runs bazel at its root.
+# Every label is relative to this directory, where a worker runs bazel.
 submission {
   max_patch_bytes: 262144
   max_files: 16
-  # A solution lives in its own directory and touches nothing else. In
-  # particular not the grader, and not the cases it is scored on.
+  # Not the grader, and not the cases it is scored on.
   allow_paths: "solutions/{submission_id}/**"
 
   files_submit_dir: "solutions"
   harness {
-    # Nothing to link: a solution here is a standalone program. The generated
-    # BUILD still needs a main, and for this problem the submission provides
-    # it, so the harness names the submission's own source. See
-    # examples/knapsack/README.md.
+    # A standalone program: the submission's own source is the main.
     api_dep: "@game_arena//game_arena/grader:report"
     main_src: "solve.cc"
-    # The generated binary is called what build.targets and grade.argv
-    # expect, and what a hand-written patch's BUILD must call it.
+    # What build.targets and grade.argv expect.
     binary_name: "solve"
   }
 }
@@ -51,22 +40,16 @@ build {
 }
 
 sandbox {
-  # What a worker asks its daemon for, by exactly this name: `bazel build
-  # //:sandbox_image`, this tree on the arena's base. `play` loads it under
-  # this name; deploy.sh pushes it.
+  # What a worker asks its daemon for, as `bazel build //:sandbox_image` makes it.
   image: "registry.takumi.city/knapsack-sandbox:1"
-  # Nothing is vendored into that image, so the first build in a slot fetches
-  # what MODULE.bazel resolves. A build that can fetch can also exfiltrate.
+  # Nothing is vendored into that image. A build that can fetch can also exfiltrate.
   allow_build_network: true
-  # Not root: unpacking a fetched archive as root restores its owners, and a
-  # sandbox has dropped the capability to.
+  # Not root: unpacking a fetched archive as root restores owners, which a sandbox cannot.
   run_as_user: "1000:1000"
   memory_limit_mb: 4096
-  # A grader run has no business reaching the network.
 }
 
-# The participant everyone starts as: copied to <submit dir>/<your name>/ the
-# first time, which is then what `arena_cli submit` sends.
+# Copied to <submit dir>/<your name>/ the first time.
 kit {
   starter_dir: "solutions/reference"
 }
@@ -75,8 +58,7 @@ grade {
   argv: "bazel-bin/grader/grade"
   argv: "--solution=bazel-bin/solutions/{submission_id}/solve"
   argv: "--cases=cases"
-  # Scoring is deterministic here, so one run is the answer. A problem measuring
-  # time would raise this and aggregate MIN.
+  # Deterministic; a problem measuring time would raise this.
   repeats: 1
   aggregate: MIN
   metrics {

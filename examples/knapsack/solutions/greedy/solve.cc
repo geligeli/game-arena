@@ -1,8 +1,4 @@
-// A second submission, so the leaderboard has something to order.
-//
-// Takes items by value-per-weight until nothing else fits. Fast, obvious, and
-// not optimal -- which is the point: it should score below the reference and
-// give a submitter something to beat.
+// Greedy by value per weight: not optimal, so there is something to beat.
 
 #include <algorithm>
 #include <fstream>

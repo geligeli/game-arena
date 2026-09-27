@@ -1,9 +1,5 @@
-// The definition of GameRegistry() that @game_arena only declares.
-//
-// This file is the entire link between a problem's rules and the arena. Linking
-// it into a binary alongside an arena entry point decides which games that
-// binary can run -- see BUILD, where :match_referee is exactly
-// ":registry + @game_arena//game_arena/referee:referee_main".
+// The definition of GameRegistry() that @game_arena only declares: the whole
+// link between these rules and the arena.
 
 #include <map>
 #include <string>
@@ -15,8 +11,7 @@ namespace tournament_broker {
 
 void SetRegistryOptions(
     const std::map<std::string, std::string> & /*options*/) {
-  // Connect Four has nothing to tune. A registry with a search-based builtin
-  // would read its strength here.
+  // Nothing to tune; a search-based builtin would read its strength here.
 }
 
 auto GameRegistry() -> const std::map<std::string, GameDescriptor> & {

@@ -1,31 +1,4 @@
-// Command-line client for the arena's Arena service.
-/*
-arena_cli rules
-arena_cli submit --wait                          # your directory, bots/<you>/
-arena_cli submit --file=strategy.h --wait
-arena_cli submit --patch=my.diff
-arena_cli job <job_id> [--wait]
-arena_cli candidates [--order=newest]
-arena_cli leaderboard [--limit=20]
-arena_cli source <name> [path]   # pulls their directory in beside yours
-arena_cli spar <name> [--games=10]   # and plays yours against it, here
-arena_cli spar builtin:greedy        # or against a builtin
-arena_cli mcp                        # all of the above as MCP tools, on stdio
-ARENA_RESTORE=1 arena_cli init       # your directory, from your last submission
-*/
-//
-// Same RPCs, same compact output, for a shell and -- as `mcp` -- for an
-// agent, whose tool calls are this program run again. Every call carries the
-// --token as x-arena-token metadata: Submit needs it, and so does reading
-// source a problem shows only to its author (ProblemInfo.source_visibility).
-//
-// It ships inside a kit as a binary, not as a bazel target: submitting should
-// not need a toolchain, and a participant should not have to know what the
-// arena's build looks like to enter a tournament. The kit's arena.textproto
-// (proto/kit.proto) is where it gets its defaults -- the coordinator's
-// address, what a solution is made of, where pulled rivals land. That file is
-// the participant's to edit: widening it changes what this tool sends, never
-// what the coordinator accepts.
+// The participant's client, for a shell and (as `mcp`) for an agent.
 
 #include <fcntl.h>
 #include <google/protobuf/text_format.h>
@@ -36,11 +9,13 @@ ARENA_RESTORE=1 arena_cli init       # your directory, from your last submission
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -114,6 +89,7 @@ ABSL_FLAG(int, games, 10, "spar: games to play");
 namespace {
 
 namespace proto = tournament_arena::proto;
+using Stub = proto::Arena::Stub;
 
 constexpr int kPollIntervalS = 2;
 constexpr int kExitError = 1;
@@ -128,25 +104,19 @@ std::string EnvOr(const char *name, std::string fallback) {
 
 struct Client {
   std::unique_ptr<proto::Arena::Stub> stub;
+  std::string server;
   std::string token;
   int timeout_s;
-  // The kit this was run from, and its config. Both empty outside a kit,
-  // which is a working state: every default the config carries can also be
-  // given as a flag.
+  // Both empty outside a kit, which works: every default is also a flag.
   std::filesystem::path kit_dir;
   proto::KitConfig kit;
-  // Who this kit is: $ARENA_NAME, else the kit's client_id. What the
-  // participant's own directory is called, here and at the tournament.
   std::string me;
 
-  // <kit>/<submit_dir>/<name>: where a participant's implementation lives.
   std::filesystem::path DirOf(const std::string &name) const {
     return kit_dir / kit.submit_dir() / name;
   }
 };
 
-// The kit this command belongs to: --kit, $ARENA_KIT, or the nearest
-// enclosing directory holding an arena.textproto. Empty when there is none.
 std::filesystem::path FindKit() {
   if (const std::string flag = absl::GetFlag(FLAGS_kit); !flag.empty()) {
     return flag;
@@ -170,8 +140,6 @@ std::filesystem::path FindKit() {
   return {};
 }
 
-// The kit's config, or an empty one. A kit whose config does not parse is
-// worth saying out loud: the participant edited it, and the fix is theirs.
 proto::KitConfig LoadKitConfig(const std::filesystem::path &kit) {
   proto::KitConfig config;
   if (kit.empty()) {
@@ -202,8 +170,7 @@ void ConfigureContext(const Client &client, grpc::ClientContext *context) {
   }
 }
 
-// Prints a mapped error to stderr and returns the process exit code.
-int RpcError(const grpc::Status &status, const std::string &server) {
+void RpcError(const grpc::Status &status, const std::string &server) {
   switch (status.error_code()) {
     case grpc::StatusCode::UNAUTHENTICATED:
       std::fprintf(stderr,
@@ -212,81 +179,57 @@ int RpcError(const grpc::Status &status, const std::string &server) {
                    "and bakes it into its image). The tournament's operator "
                    "issues it.\n",
                    status.error_message().c_str());
-      return kExitError;
+      return;
     case grpc::StatusCode::RESOURCE_EXHAUSTED:
       std::fprintf(stderr,
                    "ERROR: over quota. %s\n"
                    "Poll `job` until the running one finishes, or pass "
                    "--cancel_running to replace it.\n",
                    status.error_message().c_str());
-      return kExitError;
+      return;
     case grpc::StatusCode::UNAVAILABLE:
       std::fprintf(stderr,
                    "ERROR: no arena at %s. That address comes from --server, "
                    "else $ARENA_SERVER, else the kit's arena.textproto; the "
                    "tournament has to be running and reachable from here.\n",
                    server.c_str());
-      return kExitError;
+      return;
     case grpc::StatusCode::PERMISSION_DENIED:
       std::fprintf(stderr,
                    "ERROR: %s\n"
                    "That is this tournament's rule, not this tool's: `rules` "
                    "prints it.\n",
                    status.error_message().c_str());
-      return kExitError;
+      return;
     default:
       std::fprintf(stderr, "ERROR: %s\n", status.error_message().c_str());
-      return kExitError;
   }
 }
 
-const char *StatusName(proto::Candidate::Status status) {
-  switch (status) {
-    case proto::Candidate::PENDING:
-      return "pending";
-    case proto::Candidate::BUILDING:
-      return "building";
-    case proto::Candidate::READY:
-      return "ready";
-    case proto::Candidate::BUILD_FAILED:
-      return "build-failed";
-    case proto::Candidate::DISABLED:
-      return "disabled";
-    default:
-      return "?";
+// False, with the error printed, when the call fails.
+template <typename Method, typename Request, typename Response>
+bool Call(const Client &client, Method method, const Request &request,
+          Response *response) {
+  grpc::ClientContext context;
+  ConfigureContext(client, &context);
+  const grpc::Status status =
+      (client.stub.get()->*method)(&context, request, response);
+  if (!status.ok()) {
+    RpcError(status, client.server);
   }
+  return status.ok();
 }
 
-const char *JobStateName(proto::Job::State state) {
-  switch (state) {
-    case proto::Job::QUEUED:
-      return "queued";
-    case proto::Job::RUNNING:
-      return "running";
-    case proto::Job::DONE:
-      return "done";
-    case proto::Job::FAILED:
-      return "failed";
-    case proto::Job::CANCELLED:
-      return "cancelled";
-    default:
-      return "?";
+// As printed: BUILD_FAILED is "build-failed", and a value with no name "?".
+template <typename Enum>
+std::string NameOf(Enum value) {
+  const auto *named =
+      google::protobuf::GetEnumDescriptor<Enum>()->FindValueByNumber(value);
+  std::string name = named == nullptr ? "?" : std::string(named->name());
+  for (char &c : name) {
+    c = c == '_' ? '-' : static_cast<char>(std::tolower(c));
   }
-}
-
-// How far a running job has got. Worth showing because a build can take half
-// an hour: "running" on its own does not tell you whether to keep waiting.
-const char *PhaseName(proto::OrderProgress::Phase phase) {
-  switch (phase) {
-    case proto::OrderProgress::PREPARING:
-      return "preparing";
-    case proto::OrderProgress::BUILDING:
-      return "building";
-    case proto::OrderProgress::RUNNING:
-      return "running";
-    default:
-      return "?";
-  }
+  return name;
 }
 
 bool IsTerminal(proto::Job::State state) {
@@ -294,9 +237,6 @@ bool IsTerminal(proto::Job::State state) {
          state == proto::Job::CANCELLED;
 }
 
-// One leaderboard/candidates row, rendered for whichever kind of problem this
-// is: a measurement is not a property of the submission alone, so the host
-// that produced it belongs on the row.
 void PrintStandingHeader(const std::string &score_label, bool graded) {
   if (graded) {
     std::printf("%-28s %9s %5s %-12s %-12s %-12s %s\n", "candidate_id",
@@ -323,7 +263,7 @@ void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
     std::printf("%3d/%3d/%3d %4dg ", standing.wins(), standing.draws(),
                 standing.losses(), played);
   }
-  std::printf("%-12s %-12s %s", StatusName(candidate.status()),
+  std::printf("%-12s %-12s %s", NameOf(candidate.status()).c_str(),
               candidate.author().empty() ? "-" : candidate.author().c_str(),
               candidate.display_name().c_str());
   if (!candidate.parent_id().empty()) {
@@ -333,12 +273,10 @@ void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
 }
 
 void PrintJob(const proto::Job &job) {
-  // The phase only means anything while the job is still going; once it is
-  // done, the last phase it reached is noise.
-  const std::string state = job.state() == proto::Job::RUNNING
-                                ? std::string(JobStateName(job.state())) +
-                                      ", " + PhaseName(job.phase())
-                                : JobStateName(job.state());
+  std::string state = NameOf(job.state());
+  if (job.state() == proto::Job::RUNNING) {
+    state += ", " + NameOf(job.phase());
+  }
   std::printf("job %s [%s] candidate %s\n", job.job_id().c_str(), state.c_str(),
               job.candidate_id().c_str());
   std::printf("games %d/%d  W/D/L %d/%d/%d  score %.3f\n", job.games_played(),
@@ -349,23 +287,16 @@ void PrintJob(const proto::Job &job) {
   }
 }
 
-// Polls until the job reaches a terminal state, printing state transitions.
-// Returns the exit code: 0 on DONE, 1 on FAILED/CANCELLED or an RPC error.
-int WaitForJob(const Client &client, const std::string &server,
-               const std::string &job_id) {
+// Polls while |wait|. 1 once FAILED/CANCELLED, or on an RPC error.
+int WaitForJob(const Client &client, const std::string &job_id, bool wait) {
   proto::Job::State last = proto::Job::QUEUED;
-  // Tracked alongside the state so a long build reports preparing, then
-  // building, then running, instead of one "running" line for half an hour.
   std::optional<proto::OrderProgress::Phase> last_phase;
   for (;;) {
     proto::GetJobRequest request;
     request.set_job_id(job_id);
     proto::Job job;
-    grpc::ClientContext context;
-    ConfigureContext(client, &context);
-    const grpc::Status status = client.stub->GetJob(&context, request, &job);
-    if (!status.ok()) {
-      return RpcError(status, server);
+    if (!Call(client, &Stub::GetJob, request, &job)) {
+      return kExitError;
     }
     if (job.state() != last || last_phase != job.phase()) {
       PrintJob(job);
@@ -375,18 +306,17 @@ int WaitForJob(const Client &client, const std::string &server,
     if (IsTerminal(job.state())) {
       return job.state() == proto::Job::DONE ? 0 : kExitError;
     }
+    if (!wait) {
+      return 0;
+    }
     std::this_thread::sleep_for(std::chrono::seconds(kPollIntervalS));
   }
 }
 
-int CmdRules(const Client &client, const std::string &server) {
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
+int CmdRules(const Client &client) {
   proto::ProblemInfo problem;
-  const grpc::Status status =
-      client.stub->GetProblem(&context, proto::GetProblemRequest(), &problem);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::GetProblem, proto::GetProblemRequest(), &problem)) {
+    return kExitError;
   }
 
   std::printf("PROBLEM  %s  [%s]\n",
@@ -452,9 +382,7 @@ int CmdRules(const Client &client, const std::string &server) {
   return 0;
 }
 
-// Under `bazel run` the working directory is the runfiles tree, so a relative
-// path is taken from the workspace the command was run in, which is where the
-// file the user means actually is.
+// Under `bazel run` the cwd is the runfiles tree; the user means their own.
 auto FromWorkspace(const std::string &path) -> std::filesystem::path {
   const std::filesystem::path p(path);
   const char *workspace = std::getenv("BUILD_WORKSPACE_DIRECTORY");
@@ -475,8 +403,7 @@ bool ReadFile(const std::string &path, std::string *content) {
   return true;
 }
 
-// The sources in |dir|, sorted. Not its BUILD: the coordinator generates the
-// one a submission is compiled with.
+// Not BUILD: the coordinator generates the one a submission is built with.
 std::vector<std::string> SourcesIn(const std::filesystem::path &dir) {
   static constexpr std::array<std::string_view, 5> kSources = {
       ".h", ".hpp", ".cc", ".cpp", ".inl"};
@@ -494,14 +421,12 @@ std::vector<std::string> SourcesIn(const std::filesystem::path &dir) {
   return found;
 }
 
-int CmdSubmit(const Client &client, const std::string &server) {
+int CmdSubmit(const Client &client) {
   std::vector<std::string> files = absl::GetFlag(FLAGS_file);
   const std::string patch_path = absl::GetFlag(FLAGS_patch);
   const std::string name =
       absl::GetFlag(FLAGS_name).empty() ? client.me : absl::GetFlag(FLAGS_name);
 
-  // No files and no patch: your directory is your solution. This is the
-  // ordinary way to submit from a kit -- `submit` and nothing else.
   if (files.empty() && patch_path.empty() && !client.me.empty()) {
     files = SourcesIn(client.DirOf(client.me));
     std::printf("submitting %zu file(s) from %s:\n", files.size(),
@@ -520,8 +445,7 @@ int CmdSubmit(const Client &client, const std::string &server) {
 
   proto::SubmitRequest request;
   request.set_display_name(name);
-  // Who a coordinator with no registry takes this to be from; one with a
-  // registry goes by the token.
+  // Read only by a coordinator with no registry; one with goes by the token.
   request.set_author(client.me);
   request.set_game(absl::GetFlag(FLAGS_game));
   request.set_parent_id(absl::GetFlag(FLAGS_parent_id));
@@ -537,8 +461,7 @@ int CmdSubmit(const Client &client, const std::string &server) {
     }
     request.set_patch(std::move(patch));
   } else {
-    // Flattened to the basename: a submission is its own directory, so the
-    // sender's layout above it is irrelevant and only invites "..".
+    // Basename only: a submission is its own directory; a path invites "..".
     std::vector<std::string> headers;
     for (const std::string &raw : files) {
       std::string content;
@@ -591,12 +514,9 @@ int CmdSubmit(const Client &client, const std::string &server) {
     }
   }
 
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::SubmitResponse response;
-  const grpc::Status status = client.stub->Submit(&context, request, &response);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::Submit, request, &response)) {
+    return kExitError;
   }
 
   std::printf("candidate %s\njob %s queued (build + placement)\n",
@@ -608,33 +528,18 @@ int CmdSubmit(const Client &client, const std::string &server) {
     std::printf("poll: job %s [--wait]\n", response.job_id().c_str());
     return 0;
   }
-  return WaitForJob(client, server, response.job_id());
+  return WaitForJob(client, response.job_id(), true);
 }
 
-int CmdJob(const Client &client, const std::string &server,
-           const std::vector<char *> &args) {
+int CmdJob(const Client &client, const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "job: a job id is required\n");
     return kExitUsage;
   }
-  if (absl::GetFlag(FLAGS_wait)) {
-    return WaitForJob(client, server, args[0]);
-  }
-  proto::GetJobRequest request;
-  request.set_job_id(args[0]);
-  proto::Job job;
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
-  const grpc::Status status = client.stub->GetJob(&context, request, &job);
-  if (!status.ok()) {
-    return RpcError(status, server);
-  }
-  PrintJob(job);
-  return IsTerminal(job.state()) && job.state() != proto::Job::DONE ? kExitError
-                                                                    : 0;
+  return WaitForJob(client, args[0], absl::GetFlag(FLAGS_wait));
 }
 
-int CmdCandidates(const Client &client, const std::string &server) {
+int CmdCandidates(const Client &client) {
   proto::ListCandidatesRequest request;
   request.set_game(absl::GetFlag(FLAGS_game));
   request.set_author(absl::GetFlag(FLAGS_author));
@@ -650,20 +555,15 @@ int CmdCandidates(const Client &client, const std::string &server) {
     return kExitUsage;
   }
 
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::ListCandidatesResponse response;
-  const grpc::Status status =
-      client.stub->ListCandidates(&context, request, &response);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::ListCandidates, request, &response)) {
+    return kExitError;
   }
   if (response.candidates().empty()) {
     std::printf("no candidates yet\n");
     return 0;
   }
-  // This listing has no score_label of its own; a row carrying metrics is a
-  // graded one.
+  // No score_label here: a row with metrics is a graded one.
   const bool graded =
       std::any_of(response.candidates().begin(), response.candidates().end(),
                   [](const proto::CandidateStanding &standing) {
@@ -676,23 +576,18 @@ int CmdCandidates(const Client &client, const std::string &server) {
   return 0;
 }
 
-int CmdLeaderboard(const Client &client, const std::string &server) {
+int CmdLeaderboard(const Client &client) {
   proto::LeaderboardRequest request;
   request.set_limit(absl::GetFlag(FLAGS_limit));
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::LeaderboardResponse response;
-  const grpc::Status status =
-      client.stub->Leaderboard(&context, request, &response);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::Leaderboard, request, &response)) {
+    return kExitError;
   }
   if (response.rows().empty()) {
     std::printf("nothing has been scored yet\n");
     return 0;
   }
-  // The server says what its score column means; a graded problem's is a
-  // metric name, not "elo".
+  // A graded problem's score_label is a metric name, not "elo".
   const bool graded =
       response.score_label() != "" && response.score_label() != "elo";
   PrintStandingHeader(response.score_label(), graded);
@@ -702,23 +597,15 @@ int CmdLeaderboard(const Client &client, const std::string &server) {
   return 0;
 }
 
-// One file of a candidate, into the kit under |into| (empty: stdout). Paths
-// are repo-relative, which in a kit is where they belong -- but only below
-// the candidate's own directory: one that lands anywhere else is refused
-// rather than written.
-int PullSourceFile(const Client &client, const std::string &server,
-                   const std::string &candidate_id, const std::string &path,
-                   const std::filesystem::path &into) {
+// Into |into| (empty: stdout); a path that would land outside it is refused.
+int PullSourceFile(const Client &client, const std::string &candidate_id,
+                   const std::string &path, const std::filesystem::path &into) {
   proto::GetSourceRequest request;
   request.set_candidate_id(candidate_id);
   request.set_path(path);
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::SourceFile source;
-  const grpc::Status status =
-      client.stub->GetSource(&context, request, &source);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::GetSource, request, &source)) {
+    return kExitError;
   }
   if (into.empty()) {
     std::fwrite(source.content().data(), 1, source.content().size(), stdout);
@@ -744,9 +631,8 @@ int PullSourceFile(const Client &client, const std::string &server,
   return 0;
 }
 
-// Your last submission, into your directory: what $ARENA_RESTORE puts there
-// in place of the starter. False when there are no files of yours to pull.
-bool Restore(const Client &client, const std::string &server) {
+// Nothing to pull is not an error: false, and the caller uses the starter.
+bool Restore(const Client &client) {
   proto::GetCandidateRequest request;
   request.set_candidate_id(client.me);
   grpc::ClientContext context;
@@ -757,41 +643,35 @@ bool Restore(const Client &client, const std::string &server) {
     return false;
   }
   for (const std::string &path : candidate.file_paths()) {
-    if (PullSourceFile(client, server, client.me, path,
-                       client.DirOf(client.me)) != 0) {
+    if (PullSourceFile(client, client.me, path, client.DirOf(client.me)) != 0) {
       return false;
     }
   }
   return true;
 }
 
-int CmdSource(const Client &client, const std::string &server,
-              const std::vector<char *> &args) {
+int CmdSource(const Client &client, const std::vector<char *> &args) {
   if (args.empty()) {
     std::fprintf(stderr, "source: a candidate id is required\n");
     return kExitUsage;
   }
   const std::string candidate_id = args[0];
   if (args.size() > 1) {
-    return PullSourceFile(client, server, candidate_id, args[1], {});
+    return PullSourceFile(client, candidate_id, args[1], {});
   }
 
   proto::GetCandidateRequest request;
   request.set_candidate_id(candidate_id);
-  grpc::ClientContext context;
-  ConfigureContext(client, &context);
   proto::Candidate candidate;
-  const grpc::Status status =
-      client.stub->GetCandidate(&context, request, &candidate);
-  if (!status.ok()) {
-    return RpcError(status, server);
+  if (!Call(client, &Stub::GetCandidate, request, &candidate)) {
+    return kExitError;
   }
   std::printf("%s  \"%s\"\n", candidate.candidate_id().c_str(),
               candidate.display_name().c_str());
   std::printf("author %s  game %s  status %s\n",
               candidate.author().empty() ? "-" : candidate.author().c_str(),
               candidate.game().empty() ? "-" : candidate.game().c_str(),
-              StatusName(candidate.status()));
+              NameOf(candidate.status()).c_str());
   std::printf("parent %s\n", candidate.parent_id().empty()
                                  ? "-"
                                  : candidate.parent_id().c_str());
@@ -835,35 +715,29 @@ int CmdSource(const Client &client, const std::string &server,
     return 0;
   }
 
-  // Where it lands: their directory, beside yours. Your own is printed
-  // instead, because what is there is what you are working on.
+  // Your own goes to stdout: pulling it would overwrite your work in progress.
   const bool to_stdout = absl::GetFlag(FLAGS_print) || client.kit_dir.empty() ||
                          client.kit.submit_dir().empty() ||
                          candidate.candidate_id() == client.me;
-  if (to_stdout) {
-    for (const std::string &path : candidate.file_paths()) {
-      std::printf("----- %s -----\n", path.c_str());
-      if (const int code = PullSourceFile(client, server,
-                                          candidate.candidate_id(), path, {});
-          code != 0) {
-        return code;
-      }
+  const std::filesystem::path into =
+      to_stdout ? std::filesystem::path()
+                : client.DirOf(candidate.candidate_id());
+  if (!to_stdout) {
+    std::error_code ec;
+    std::filesystem::create_directories(into, ec);
+    if (ec) {
+      std::fprintf(stderr, "source: cannot create %s: %s\n", into.c_str(),
+                   ec.message().c_str());
+      return kExitError;
     }
-    return 0;
+    std::printf("pulled into %s:\n", into.c_str());
   }
-
-  const std::filesystem::path into = client.DirOf(candidate.candidate_id());
-  std::error_code ec;
-  std::filesystem::create_directories(into, ec);
-  if (ec) {
-    std::fprintf(stderr, "source: cannot create %s: %s\n", into.c_str(),
-                 ec.message().c_str());
-    return kExitError;
-  }
-  std::printf("pulled into %s:\n", into.c_str());
   for (const std::string &path : candidate.file_paths()) {
-    if (const int code = PullSourceFile(client, server,
-                                        candidate.candidate_id(), path, into);
+    if (to_stdout) {
+      std::printf("----- %s -----\n", path.c_str());
+    }
+    if (const int code =
+            PullSourceFile(client, candidate.candidate_id(), path, into);
         code != 0) {
       return code;
     }
@@ -873,10 +747,8 @@ int CmdSource(const Client &client, const std::string &server,
 
 extern "C" char **environ;
 
-// Starts |argv| with its output in |log| (empty: this terminal), and with the
-// environment minus ARENA_TOKEN unless |with_token|: a rival's code has no use
-// for your credential. posix_spawn rather than fork, which a process with
-// gRPC's threads in it should not do.
+// No ARENA_TOKEN unless |with_token|: a rival's code has no use for yours.
+// posix_spawn, not fork: this process has gRPC's threads in it.
 pid_t Spawn(const std::vector<std::string> &argv, const std::string &log,
             bool with_token = false) {
   std::vector<char *> args;
@@ -911,11 +783,7 @@ int Wait(pid_t pid) {
   return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }
 
-// Yours against |name|'s, here: their directory pulled in beside yours, both
-// built, and the games refereed the way the tournament's workers do it -- the
-// same referee, the same bounds on a game, two bots naming each other.
-int CmdSpar(const Client &client, const std::string &server,
-            const std::vector<char *> &args) {
+int CmdSpar(const Client &client, const std::vector<char *> &args) {
   if (args.empty() || client.me.empty() || client.kit.game().empty()) {
     std::fprintf(stderr,
                  "spar <name>: from the kit of a problem played as matches, "
@@ -926,9 +794,8 @@ int CmdSpar(const Client &client, const std::string &server,
   const std::string rival = args[0];
   // A builtin plays inside the referee; there is nothing of it to pull or run.
   const bool builtin = rival.rfind("builtin:", 0) == 0;
-  // Pulled every time: a name stays, what is under it does not. Someone who
-  // is only in this kit -- the starter -- is played as they are.
-  if (!builtin && CmdSource(client, server, args) != 0 &&
+  // Pulled every time; one only in this kit (the starter) is played as it is.
+  if (!builtin && CmdSource(client, args) != 0 &&
       !std::filesystem::exists(client.DirOf(rival))) {
     return kExitError;
   }
@@ -1001,11 +868,9 @@ int CmdSpar(const Client &client, const std::string &server,
   return tally.games > 0 ? 0 : kExitError;
 }
 
-// The commands above as MCP tools on stdio. Each call runs this program again
-// with what this one resolved in its environment, from the kit, so a relative
-// path means what it does in a shell there.
-int CmdMcp(const Client &client, const std::string &server) {
-  ::setenv("ARENA_SERVER", server.c_str(), 1);
+// Each tool call reruns this binary with what this one resolved, in the kit.
+int CmdMcp(const Client &client) {
+  ::setenv("ARENA_SERVER", client.server.c_str(), 1);
   ::setenv("ARENA_TOKEN", client.token.c_str(), 1);
   ::setenv("ARENA_NAME", client.me.c_str(), 1);
   if (!client.kit_dir.empty()) {
@@ -1068,8 +933,6 @@ int main(int argc, char **argv) {
   const std::string command = positional[1];
   const std::vector<char *> args(positional.begin() + 2, positional.end());
 
-  // The kit's config is the last word on every default, after the flag and
-  // the environment: a participant who exports ARENA_SERVER means it.
   const std::filesystem::path kit_dir = FindKit();
   proto::KitConfig kit = LoadKitConfig(kit_dir);
 
@@ -1090,6 +953,7 @@ int main(int argc, char **argv) {
   const std::string me = EnvOr("ARENA_NAME", kit.client_id());
   const Client client{proto::Arena::NewStub(grpc::CreateChannel(
                           server, grpc::InsecureChannelCredentials())),
+                      server,
                       token,
                       absl::GetFlag(FLAGS_timeout_s),
                       kit_dir,
@@ -1097,14 +961,11 @@ int main(int argc, char **argv) {
                       me};
   // Before anything is printed: stdout is the protocol's.
   if (command == "mcp") {
-    return CmdMcp(client, server);
+    return CmdMcp(client);
   }
-  // Yours is a directory like everyone's, named after you. The first time, it
-  // is a copy of the starter's -- or, with $ARENA_RESTORE, of your last
-  // submission, if there is one.
   if (!me.empty() && !client.kit.starter_dir().empty() &&
       !std::filesystem::exists(client.DirOf(me))) {
-    if (!EnvOr("ARENA_RESTORE", "").empty() && Restore(client, server)) {
+    if (!EnvOr("ARENA_RESTORE", "").empty() && Restore(client)) {
       std::printf("%s is yours, restored from your last submission\n\n",
                   client.DirOf(me).c_str());
     } else {
@@ -1116,31 +977,22 @@ int main(int argc, char **argv) {
                   client.kit.starter_dir().c_str());
     }
   }
-  // What a kit image runs as it starts: the above, and nothing else.
+  // What a kit image runs as it starts.
   if (command == "init") {
     return 0;
   }
 
-  if (command == "rules") {
-    return CmdRules(client, server);
-  }
-  if (command == "submit") {
-    return CmdSubmit(client, server);
-  }
-  if (command == "job") {
-    return CmdJob(client, server, args);
-  }
-  if (command == "candidates") {
-    return CmdCandidates(client, server);
-  }
-  if (command == "leaderboard") {
-    return CmdLeaderboard(client, server);
-  }
-  if (command == "source") {
-    return CmdSource(client, server, args);
-  }
-  if (command == "spar") {
-    return CmdSpar(client, server, args);
+  const std::map<std::string, std::function<int()>> commands = {
+      {"rules", [&] { return CmdRules(client); }},
+      {"submit", [&] { return CmdSubmit(client); }},
+      {"job", [&] { return CmdJob(client, args); }},
+      {"candidates", [&] { return CmdCandidates(client); }},
+      {"leaderboard", [&] { return CmdLeaderboard(client); }},
+      {"source", [&] { return CmdSource(client, args); }},
+      {"spar", [&] { return CmdSpar(client, args); }},
+  };
+  if (const auto it = commands.find(command); it != commands.end()) {
+    return it->second();
   }
   PrintUsage();
   return kExitUsage;

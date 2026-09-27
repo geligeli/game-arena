@@ -1,13 +1,8 @@
 #ifndef GAME_ARENA_GAME_ARENA_STANDINGS_ELO_STORE_H
 #define GAME_ARENA_GAME_ARENA_STANDINGS_ELO_STORE_H
 
-// Persistent per-(game, player) ELO ratings. Loaded from disk at startup,
-// updated online after each finished game (standard E = 1/(1+10^((Rb-Ra)/400)),
-// R += K*(S-E)), and rewritten atomically (tmp + rename) after every update.
-//
-// The rewrite happens *outside* mutex_ so a finishing game never blocks other
-// games or the leaderboard on disk I/O; writers are serialized on save_mutex_
-// and stamped with a version so a slow writer cannot clobber a newer store.
+// Per-(game, player) ELO, rewritten after every update outside mutex_; the
+// version keeps a slow writer from clobbering a newer store.
 
 #include <cstdint>
 #include <filesystem>
@@ -27,9 +22,7 @@ class EloStore {
   // Reads the store file if it exists; missing file = empty store.
   void Load();
 
-  // Applies one game result and persists. |score_a| is from player A's
-  // perspective: 1.0 win, 0.5 draw, 0.0 loss. Returns the new ratings
-  // {a, b}. Thread-safe.
+  // |score_a| is 1.0, 0.5 or 0.0 for A's win, draw or loss. Returns {a, b}.
   std::pair<double, double> RecordResult(const std::string &game,
                                          const std::string &player_a,
                                          const std::string &player_b,
@@ -39,8 +32,7 @@ class EloStore {
 
  private:
   static std::string Key(const std::string &game, const std::string &player);
-  // Atomic rewrite (tmp + rename) of an already-serialized store. Must be
-  // called without mutex_ held; drops |blob| if a newer version already landed.
+  // Call without mutex_ held; drops |blob| if a newer version already landed.
   void Save(const std::string &blob, uint64_t version);
 
   const std::filesystem::path path_;

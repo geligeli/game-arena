@@ -3,18 +3,10 @@
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 
 namespace tournament_broker {
-
-namespace {
-
-int64_t NowUnixMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
-
-}  // namespace
 
 GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
                  std::array<Seat, 2> seats, uint64_t game_counter,
@@ -26,22 +18,11 @@ GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
       timer_(timer),
       on_finished_(std::move(on_finished)),
       strand_(Strand::Create(pool)),
-      game_id_("g" + std::to_string(NowUnixMs()) + "_" +
+      game_id_("g" + std::to_string(absl::ToUnixMillis(absl::Now())) + "_" +
                std::to_string(game_counter)),
       seats_(std::move(seats)),
       session_(descriptor.new_session()),
       gen_(std::random_device{}() ^ static_cast<uint32_t>(game_counter)) {}
-
-std::shared_ptr<GameRun> GameRun::Create(const GameDescriptor &descriptor,
-                                         GameRunConfig config,
-                                         std::array<Seat, 2> seats,
-                                         uint64_t game_counter,
-                                         GameHistory *history, WorkerPool *pool,
-                                         Timer *timer, Task on_finished) {
-  return std::shared_ptr<GameRun>(
-      new GameRun(descriptor, config, std::move(seats), game_counter, history,
-                  pool, timer, std::move(on_finished)));
-}
 
 void GameRun::Start() {
   self_ = shared_from_this();
@@ -71,10 +52,9 @@ void GameRun::Begin() {
   record_.set_initial_state(session_->SerializeState());
   record_.set_initial_view(session_->RenderState());
   view_bytes_ = record_.initial_view().size();
-  record_.set_started_unix_ms(NowUnixMs());
+  record_.set_started_unix_ms(absl::ToUnixMillis(absl::Now()));
 
-  // Observers hold a weak reference: seats_ owns the handles, so a strong one
-  // would be a cycle that never frees the game.
+  // Weak: seats_ owns the handles, so a strong reference would be a cycle.
   for (int seat = 0; seat < 2; ++seat) {
     if (!seats_[seat].client) {
       continue;
@@ -84,13 +64,6 @@ void GameRun::Begin() {
         self->WakeStrand();
       }
     });
-  }
-
-  // Tell remote clients the game started.
-  for (int seat = 0; seat < 2; ++seat) {
-    if (!seats_[seat].client) {
-      continue;
-    }
     proto::ServerMessage msg;
     auto *start = msg.mutable_game_start();
     start->set_game_id(game_id_);
@@ -110,7 +83,7 @@ bool GameRun::SendYourTurn(int seat, std::chrono::milliseconds allowed) {
   auto *turn = msg.mutable_your_turn();
   turn->set_state(session_->SerializeState());
   turn->set_move_number(session_->MoveCount());
-  turn->set_deadline_unix_ms(NowUnixMs() + allowed.count());
+  turn->set_deadline_unix_ms(absl::ToUnixMillis(absl::Now()) + allowed.count());
   return seats_[seat].client->Send(msg);
 }
 
@@ -123,8 +96,7 @@ void GameRun::ArmTurnTimer(std::chrono::milliseconds delay) {
     }
     // Hop to the strand; the timer thread must never touch game state.
     self->strand_->Post([self, epoch] {
-      // The epoch is the correctness backstop: Cancel() is best effort, so
-      // a timer already being dispatched still fires and must be ignored.
+      // Cancel() is best effort: the epoch catches a timer that fired anyway.
       if (self->concluded_ || epoch != self->turn_epoch_) {
         return;
       }
@@ -139,10 +111,8 @@ void GameRun::ArmTurnTimer(std::chrono::milliseconds delay) {
 }
 
 void GameRun::CancelTurnTimer() {
-  if (turn_timer_ != 0) {
-    timer_->Cancel(turn_timer_);
-    turn_timer_ = 0;
-  }
+  timer_->Cancel(turn_timer_);
+  turn_timer_ = 0;
   ++turn_epoch_;  // invalidate anything already in flight
 }
 
@@ -176,12 +146,9 @@ void GameRun::Step() {
                  "opponent_disconnect");
         return;
       }
-      // Ask once per turn, before consuming anything: a client that pipelined
-      // an action still gets its YourTurn, exactly as the blocking loop did.
+      // Once per turn, before consuming: a pipelined action gets its YourTurn.
       if (waiting_seat_ != seat) {
-        // The turn timeout bounds one move; the game budget bounds the whole
-        // game. The deadline is whichever runs out first, and which one it was
-        // decides the reason reported if it fires.
+        // Whichever of turn_timeout and the game budget runs out first.
         std::chrono::milliseconds allowed = config_.turn_timeout;
         turn_budget_bound_ = false;
         if (config_.game_time_budget.count() > 0) {
@@ -215,8 +182,6 @@ void GameRun::Step() {
       CancelTurnTimer();
       action_bytes = std::move(*action);
     } else {
-      // Runs on a pool worker. This is the CPU bound that replaced an
-      // unbounded thread per game.
       action_bytes = seats_[seat].builtin(session_->SerializeState(), gen_);
     }
 
@@ -264,7 +229,7 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
     record_step->set_view(std::move(views_[i]));
   }
   record_.set_termination_reason(reason);
-  record_.set_finished_unix_ms(NowUnixMs());
+  record_.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
   const double score0 =
       outcome.is_draw ? 0.5 : (outcome.winning_player == 0 ? 1.0 : 0.0);
   record_.set_result(outcome.is_draw ? proto::GameRecord::DRAW
@@ -304,8 +269,7 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
     Task done = std::move(on_finished_);
     std::move(done)();
   }
-  // Last: the enclosing strand task still holds a reference, so this never
-  // destroys the object mid-method.
+  // Last; the running strand task still holds a reference.
   self_.reset();
 }
 

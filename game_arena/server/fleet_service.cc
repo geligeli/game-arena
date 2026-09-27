@@ -62,8 +62,6 @@ void StreamFleetWorker::WriterLoop() {
       outbox_.pop_front();
     }
     if (!stream_->Write(msg)) {
-      // The reader loop will see the stream break too and detach the worker;
-      // stopping here just avoids piling up writes that cannot land.
       std::lock_guard lock(mutex_);
       stopping_ = true;
       return;
@@ -102,14 +100,11 @@ grpc::Status FleetService::Attach(
       LOG(INFO) << "Worker '" << hello.worker_id() << "' order "
                 << msg.progress().order_id() << ": "
                 << proto::OrderProgress::Phase_Name(msg.progress().phase());
-      // Recorded as well as logged, so GetJob can say which phase a running
-      // job is in rather than only that it is running.
       scheduler_->OnProgress(msg.progress());
     }
   }
 
-  // Detach before stopping the writer, so the scheduler stops handing this
-  // worker orders it can no longer deliver.
+  // Detach first, so the scheduler stops handing it orders it cannot deliver.
   scheduler_->RemoveWorker(hello.worker_id());
   worker->Stop();
   return grpc::Status::OK;

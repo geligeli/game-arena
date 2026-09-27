@@ -1,20 +1,9 @@
 #ifndef GAME_ARENA_GAME_ARENA_SANDBOX_EXEC_ENGINE_H
 #define GAME_ARENA_GAME_ARENA_SANDBOX_EXEC_ENGINE_H
 
-// Running a job in a sandbox, with no idea what the job is for.
-//
-// One interface, two implementations: a container engine that is a security
-// boundary, and a process engine that is resource limits and timeouts. A
-// caller states what to run (sandbox_job.proto) and reads back what happened;
-// it never spells a docker flag, mounts an overlay, or decides how to kill a
-// process tree.
-//
-// What this deliberately does not know: orders, candidates, submissions,
-// games, referees, ELO, metrics, or bazel. A step is argv plus an
-// environment; that the argv happens to start with "bazel" is the caller's
-// business.
+// Runs a job in a sandbox. No order, game or bazel semantics belong in exec/.
 
-#include <functional>
+#include <filesystem>
 #include <map>
 #include <string>
 
@@ -22,21 +11,11 @@
 
 namespace sandbox_exec {
 
-// What an engine can promise, so a caller can refuse a job this engine cannot
-// contain without having to ask what the engine is called.
 struct Capabilities {
-  // A security boundary, not merely resource limits. A caller that runs
-  // submitted code which may execute at build time must require this.
-  bool isolates = false;
-  // The steps of a phase can reach each other.
-  bool shared_network = false;
-  // A peer is addressable before it starts, so argv can name it up front
-  // rather than discovering an address at runtime.
-  bool stable_peer_names = false;
+  bool isolates = false;  // a security boundary; submitted code requires it
+  bool stable_peer_names = false;  // a peer is reachable by name, no discovery
 };
 
-// Progress, in the engine's own vocabulary. A caller maps these onto whatever
-// phases mean to it; the engine does not know that "build" is a build.
 class Observer {
  public:
   virtual ~Observer() = default;
@@ -46,65 +25,44 @@ class Observer {
     (void)job_id;
     (void)phase;
   }
-  virtual void OnStepStarted(const std::string &job_id,
-                             const std::string &phase,
-                             const std::string &step) {
-    (void)job_id;
-    (void)phase;
-    (void)step;
-  }
 };
 
-// The sandbox a step runs in, named from the job and the step. One rule, in
-// one place, because Cancel has to be able to derive these names from a job
-// it was handed rather than from bookkeeping it hopes is up to date.
+// Deterministic, so a redelivered job can reap what a killed attempt left.
 std::string SandboxName(const std::string &job_id,
                         const std::string &step_name);
 
-// The placeholders a step's argv and environment may carry, which only the
-// engine running it can resolve. The list is closed on purpose: a job that
-// spells one wrong gets it through verbatim rather than silently blank.
-//
-//   {{scratch}}       the writable directory a step may collect files from
-//   {{port_file}}     where a step should publish the port it bound
-//   {{peer:<name>}}   the address another step of this phase is reachable at
+// Resolved by the engine: {{scratch}} (where collect_files are read from),
+// {{port_file}} and {{peer:<name>}} (process engine only). Unknown ones stay.
 inline constexpr char kScratchPlaceholder[] = "{{scratch}}";
 inline constexpr char kPortFilePlaceholder[] = "{{port_file}}";
 
-// |step| with every occurrence of each key in |replacements| replaced, in its
-// argv and in its environment. Applied to both because a graded run names its
-// report path in the environment and a bot names its peer in argv, and an
-// engine that substituted only one of them would work until it didn't.
+// In argv and env both: a report path travels in env, a peer in argv.
 proto::Step Substituted(const proto::Step &step,
                         const std::map<std::string, std::string> &replacements);
+
+// Sets |status|; always false.
+bool Fail(proto::Status *status, proto::Status::Code code,
+          const std::string &message);
+
+// Wholesale, never per field: half-overridden isolation looks tight and isn't.
+proto::Isolation Merge(const proto::Isolation &base,
+                       const proto::Isolation &override_with);
+
+// A started step's result, its output read from <log_dir>/<name>.{out,err}.
+proto::StepResult *AddStepResult(proto::PhaseResult *phase,
+                                 const std::string &name,
+                                 const std::filesystem::path &log_dir);
 
 class Engine {
  public:
   virtual ~Engine() = default;
 
-  virtual std::string name() const = 0;
   virtual Capabilities capabilities() const = 0;
 
-  // Prepares what |lanes| concurrent jobs will need, so the first job does
-  // not pay for it: the directories a bind mount would otherwise conjure up
-  // empty. |prototype| carries the paths with
-  // "{lane}" still in them.
-  virtual bool Prepare(const proto::Workspace &prototype, int lanes,
-                       std::string *error) {
-    (void)prototype;
-    (void)lanes;
-    (void)error;
-    return true;
-  }
-
-  // Runs |job| to completion. Called from the caller's own thread; safe to
-  // call concurrently for jobs with different ids.
+  // Safe to call concurrently for jobs with different ids.
   virtual proto::JobResult Run(const proto::Job &job, Observer *observer) = 0;
 
-  // Aborts |job_id| if this engine is running it. Called from another thread
-  // while Run is in flight, so it must be safe against the job finishing
-  // concurrently -- killing what has already exited is a no-op, and that is
-  // the race to design for rather than lock against.
+  // From another thread, racing Run's exit: killing what exited is a no-op.
   virtual void Cancel(const std::string &job_id) = 0;
 };
 

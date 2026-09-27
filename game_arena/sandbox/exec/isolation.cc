@@ -14,8 +14,6 @@ std::vector<std::string> IsolationArgs(const proto::Isolation &isolation) {
     args.insert(args.end(), {"--security-opt", "no-new-privileges"});
   }
   if (!isolation.writable_rootfs()) {
-    // Writable only where it must be. The overlay merge and the mounts stay
-    // writable because they are bind mounts; everything else is not.
     args.emplace_back("--read-only");
   }
   for (const proto::Tmpfs &tmpfs : isolation.tmpfs()) {
@@ -24,8 +22,7 @@ std::vector<std::string> IsolationArgs(const proto::Isolation &isolation) {
                           ? tmpfs.target()
                           : tmpfs.target() + ":" + tmpfs.options());
   }
-  // Granted on top of the drop above, which is strictly tighter than not
-  // dropping at all.
+  // On top of the drop, which is tighter than not dropping.
   for (const std::string &capability : isolation.add_capabilities()) {
     args.insert(args.end(), {"--cap-add", capability});
   }
