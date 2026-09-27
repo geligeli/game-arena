@@ -21,9 +21,25 @@ namespace sandbox_exec {
 namespace {
 
 using sandbox_common::ReadFile;
+using sandbox_common::StepResult;
 using sandbox_common::TailOf;
 
 constexpr int kDefaultDrainTimeoutS = 60;
+
+StepResult Docker(const std::string &docker,
+                  const std::vector<std::string> &args,
+                  const std::filesystem::path &log_dir, const std::string &tag,
+                  int timeout_s = 60) {
+  return sandbox_common::RunStep(docker, args, /*cwd=*/{}, log_dir, tag,
+                                 std::chrono::seconds(timeout_s));
+}
+
+// Cleanup is best effort; its complaints would only clutter the worker's log.
+void Quiet(const std::string &docker, const std::vector<std::string> &args) {
+  process::RunCommand(docker, args,
+                      {.stdout_path = "/dev/null", .stderr_path = "/dev/null"},
+                      std::chrono::seconds(60));
+}
 
 proto::Isolation Merge(const proto::Isolation &base,
                        const proto::Isolation &override_with) {
@@ -31,10 +47,6 @@ proto::Isolation Merge(const proto::Isolation &base,
   // field by field. Half-overridden isolation is the kind of thing that reads
   // as tight and is not.
   return override_with.ByteSizeLong() > 0 ? override_with : base;
-}
-
-std::chrono::seconds TimeoutOf(const proto::Step &step) {
-  return std::chrono::seconds(step.timeout_s());
 }
 
 // The job's own volumes: the tree, the staged files, and scratch.
@@ -209,8 +221,8 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
   // the last attempt left in it.
   RemoveVolumes(job);
   for (const std::string &volume : JobVolumes(job)) {
-    const sandbox_common::StepResult made = sandbox_common::CreateVolume(
-        config_.docker, volume, log_dir, "volume_" + volume);
+    const StepResult made = Docker(config_.docker, {"volume", "create", volume},
+                                   log_dir, "volume_" + volume);
     if (!made.run.started) {
       Fail(status, proto::Status::TOOL_MISSING,
            "cannot run docker ('" + config_.docker + "' not found)", "", "");
@@ -285,46 +297,44 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
   }
 
   const std::string loader = LoaderName(job);
-  sandbox_common::RemoveContainer(config_.docker, loader);
-  const auto fail_load = [&](const std::string &what,
-                             const sandbox_common::StepResult &step) {
+  Quiet(config_.docker, {"rm", "-f", loader});
+  const auto fail_load = [&](const std::string &what, const StepResult &step) {
     Fail(status, proto::Status::WORKSPACE_FAILED,
          what + ": " + TailOf(step.output, 1000), "", "");
-    sandbox_common::RemoveContainer(config_.docker, loader);
+    Quiet(config_.docker, {"rm", "-f", loader});
     return false;
   };
 
-  const sandbox_common::StepResult created = sandbox_common::RunStep(
-      config_.docker, sandbox_common::DockerRunArgs(spec), /*cwd=*/{}, log_dir,
-      "load_create", std::chrono::seconds(120));
+  const StepResult created =
+      Docker(config_.docker, sandbox_common::DockerRunArgs(spec), log_dir,
+             "load_create", 120);
   if (!created.run.started || created.run.exit_code != 0) {
     return fail_load("cannot create the workspace loader", created);
   }
 
   if (!ws.staging_dir().empty() && !ws.staged_files().empty()) {
-    const sandbox_common::StepResult copied = sandbox_common::RunStep(
-        config_.docker,
-        {"cp", ws.staging_dir() + "/.",
-         loader + ":" + sandbox_common::kPatchMount},
-        /*cwd=*/{}, log_dir, "load_patches", std::chrono::seconds(120));
+    const StepResult copied =
+        Docker(config_.docker,
+               {"cp", ws.staging_dir() + "/.",
+                loader + ":" + sandbox_common::kPatchMount},
+               log_dir, "load_patches", 120);
     if (!copied.run.started || copied.run.exit_code != 0) {
       return fail_load("cannot load the staged files into the sandbox", copied);
     }
   }
 
-  const sandbox_common::StepResult ran = sandbox_common::RunStep(
-      config_.docker, {"start", "-a", loader}, /*cwd=*/{}, log_dir,
-      "load_start", std::chrono::seconds(600));
+  const StepResult ran = Docker(config_.docker, {"start", "-a", loader},
+                                log_dir, "load_start", 600);
   if (!ran.run.started || ran.run.exit_code != 0) {
     return fail_load("the workspace loader failed", ran);
   }
-  sandbox_common::RemoveContainer(config_.docker, loader);
+  Quiet(config_.docker, {"rm", "-f", loader});
   return true;
 }
 
 void ContainerEngine::RemoveVolumes(const proto::Job &job) {
   for (const std::string &volume : JobVolumes(job)) {
-    sandbox_common::RemoveVolume(config_.docker, volume);
+    Quiet(config_.docker, {"volume", "rm", "-f", volume});
   }
 }
 
@@ -354,11 +364,10 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
 
   const auto teardown = [&] {
     for (const proto::Step *step : steps) {
-      sandbox_common::RemoveContainer(config_.docker,
-                                      SandboxName(job.id(), step->name()));
+      Quiet(config_.docker, {"rm", "-f", SandboxName(job.id(), step->name())});
     }
     if (!network.empty()) {
-      sandbox_common::RemoveNetwork(config_.docker, network);
+      Quiet(config_.docker, {"network", "rm", network});
     }
   };
   // A worker killed mid-job leaves containers behind under these exact names;
@@ -380,9 +389,9 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   }
 
   if (!network.empty()) {
-    const sandbox_common::StepResult made =
-        sandbox_common::CreateInternalNetwork(config_.docker, network, log_dir,
-                                              phase.name() + "_network");
+    const StepResult made =
+        Docker(config_.docker, {"network", "create", "--internal", network},
+               log_dir, phase.name() + "_network");
     if (!made.run.started) {
       Fail(status, proto::Status::TOOL_MISSING,
            "cannot run docker ('" + config_.docker + "' not found)",
@@ -437,16 +446,13 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     if (observer != nullptr) {
       observer->OnStepStarted(job.id(), phase.name(), step.name());
     }
-    const process::Options opts = {
-        .stdout_path = log_dir / (step.name() + "_start.out"),
-        .stderr_path = log_dir / (step.name() + "_start.err")};
-    const process::RunResult started = process::RunCommand(
-        config_.docker, container_args(step, /*detached=*/true), opts,
-        std::chrono::seconds(120));
-    if (!started.started || started.exit_code != 0) {
+    const StepResult started =
+        Docker(config_.docker, container_args(step, /*detached=*/true), log_dir,
+               step.name() + "_start", 120);
+    if (!started.run.started || started.run.exit_code != 0) {
       Fail(status, proto::Status::START_FAILED,
            "cannot start " + step.name() + ": " +
-               TailOf(ReadFile(opts.stderr_path), 1000),
+               TailOf(ReadFile(log_dir / (step.name() + "_start.err")), 1000),
            phase.name(), step.name());
       teardown();
       return false;
@@ -457,9 +463,9 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   if (observer != nullptr) {
     observer->OnStepStarted(job.id(), phase.name(), foreground.name());
   }
-  const sandbox_common::StepResult ran = sandbox_common::RunStep(
-      config_.docker, container_args(foreground, /*detached=*/false),
-      /*cwd=*/{}, log_dir, foreground.name(), TimeoutOf(foreground));
+  const StepResult ran =
+      Docker(config_.docker, container_args(foreground, /*detached=*/false),
+             log_dir, foreground.name(), foreground.timeout_s());
 
   proto::StepResult *foreground_result = result->add_steps();
   foreground_result->set_name(foreground.name());
@@ -480,8 +486,7 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
   if (ran.run.timed_out) {
     // The timeout killed the docker *client*; the container belongs to the
     // daemon and has to be stopped by name.
-    sandbox_common::KillContainer(config_.docker,
-                                  SandboxName(job.id(), foreground.name()));
+    Quiet(config_.docker, {"kill", SandboxName(job.id(), foreground.name())});
     foreground_result->set_timed_out(true);
     // 124, as timeout(1) reports it, so a numeric-only consumer is not lied
     // to about why this ended.
@@ -498,11 +503,9 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
                                   : kDefaultDrainTimeoutS;
   for (const proto::Step &step : phase.background()) {
     const std::string container = SandboxName(job.id(), step.name());
-    sandbox_common::WaitForContainer(config_.docker, container,
-                                     std::chrono::seconds(drain_timeout_s),
-                                     log_dir, step.name() + "_wait");
-    sandbox_common::ContainerLogs(config_.docker, container, log_dir,
-                                  step.name());
+    Docker(config_.docker, {"wait", container}, log_dir, step.name() + "_wait",
+           drain_timeout_s);
+    Docker(config_.docker, {"logs", container}, log_dir, step.name());
     proto::StepResult *background_result = result->add_steps();
     background_result->set_name(step.name());
     background_result->set_started(true);
@@ -529,14 +532,12 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
       std::error_code ec;
       std::filesystem::create_directories(local.parent_path(), ec);
       std::filesystem::remove(local, ec);
-      sandbox_common::RunStep(
-          config_.docker,
-          {"cp",
-           SandboxName(job.id(), step->name()) + ":" +
-               std::string(sandbox_common::kScratch) + "/" + file,
-           local.string()},
-          /*cwd=*/{}, log_dir, "collect_" + step->name(),
-          std::chrono::seconds(120));
+      Docker(config_.docker,
+             {"cp",
+              SandboxName(job.id(), step->name()) + ":" +
+                  std::string(sandbox_common::kScratch) + "/" + file,
+              local.string()},
+             log_dir, "collect_" + step->name(), 120);
       const std::string content = ReadFile(local);
       if (!content.empty()) {
         (*step_result.mutable_collected())[file] = content;
@@ -565,12 +566,12 @@ void ContainerEngine::Cancel(const std::string &job_id) {
   // race worth designing for rather than locking against: the job's own
   // thread may be finishing while this runs.
   for (const std::string &container : containers) {
-    sandbox_common::KillContainer(config_.docker, container);
+    Quiet(config_.docker, {"kill", container});
   }
   // The network too. Before this engine, a cancelled match left one behind
   // per order: teardown only ran on Run's own exit paths.
   for (const std::string &network : networks) {
-    sandbox_common::RemoveNetwork(config_.docker, network);
+    Quiet(config_.docker, {"network", "rm", network});
   }
 }
 

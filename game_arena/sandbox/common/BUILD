@@ -60,17 +60,10 @@ cc_test(
     ],
 )
 
-# Docker mechanics: container naming, bind-mount syntax, the fixed
-# in-container mount points, entrypoint script preludes, lifecycle helpers,
-# and the one shape a `docker run` argv takes.
 cc_library(
     name = "docker",
     srcs = ["docker.cc"],
     hdrs = ["docker.h"],
-    deps = [
-        ":step",
-        "//game_arena/common/process",
-    ],
 )
 
 cc_test(
