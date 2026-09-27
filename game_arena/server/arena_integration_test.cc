@@ -59,7 +59,8 @@ class ArenaIntegrationTest : public ::testing::Test {
     SchedulerConfig config;
     config.add_placement_opponents("builtin:random");
     config.set_placement_games(2);
-    config.set_referee_target("//game_arena/referee:match_referee");
+    config.mutable_order()->set_referee_target(
+        "//game_arena/referee:match_referee");
     config.add_build_targets("//game_arena/candidates/{submission_id}:bot");
     config.set_bot_target("//game_arena/candidates/{submission_id}:bot");
     standings_ =

@@ -187,12 +187,13 @@ TEST_F(SchedulerTest, EveryOrderCarriesTheProblemsSandboxAndTree) {
   SchedulerConfig config;
   config.add_placement_opponents("builtin:random");
   config.set_placement_games(2);
-  config.add_bazel_flags("--config=native");
-  config.set_turn_timeout_ms(5000);
-  config.set_game_time_budget_ms(60000);
-  config.set_max_moves_per_game(100);
-  config.mutable_sandbox()->set_image("registry/arena-build:1");
-  config.mutable_sandbox()->set_memory_limit_mb(2048);
+  config.mutable_order()->add_bazel_flags("--config=native");
+  config.mutable_order()->set_turn_timeout_ms(5000);
+  config.mutable_order()->set_game_time_budget_ms(60000);
+  config.mutable_order()->set_max_moves_per_game(100);
+  config.mutable_order()->mutable_sandbox()->set_image(
+      "registry/arena-build:1");
+  config.mutable_order()->mutable_sandbox()->set_memory_limit_mb(2048);
   EloStandings standings(elo_.get(), store_.get(), "risk2");
   Scheduler scheduler(config, store_.get(), &standings);
 
