@@ -55,6 +55,7 @@ cc_test(
         "//game_arena/referee:client_handle",
         "//game_arena/referee:game_registry",
         "//game_arena/referee:game_run",
+        "//game_arena/referee:matchmaker",
         "//game_arena/referee:worker_pool",
         "//game_arena/standings:game_history",
         "@googletest//:gtest_main",

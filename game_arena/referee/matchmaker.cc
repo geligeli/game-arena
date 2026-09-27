@@ -16,9 +16,9 @@ namespace {
 constexpr std::string_view kBuiltinPrefix = "builtin:";
 constexpr std::string_view kPlayerPrefix = "player:";
 
-// Order-independent, so both sides of a rendezvous compute the same key.
-std::string RendezvousKey(const std::string& game, const std::string& a,
-                          const std::string& b) {
+// Order-independent, so both sides of a pairing compute the same key.
+std::string PairingKey(const std::string& game, const std::string& a,
+                       const std::string& b) {
   const std::string& lo = a < b ? a : b;
   const std::string& hi = a < b ? b : a;
   return game + "\t" + lo + "\t" + hi;
@@ -75,7 +75,7 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
     Seat bot{.display_name = std::string(kBuiltinPrefix) + std::string(spec),
              .client = nullptr,
              .builtin = std::move(*builtin)};
-    StartGame(descriptor, std::move(remote), std::move(bot));
+    StartPairedGame(descriptor, std::move(remote), std::move(bot));
     return true;
   }
 
@@ -100,9 +100,8 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
 bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
                                 const std::string& game,
                                 const std::string& wanted, std::string* error) {
-  const std::string key = RendezvousKey(game, client->name(), wanted);
+  const std::string key = PairingKey(game, client->name(), wanted);
   std::shared_ptr<ClientHandle> partner;
-  uint64_t pair_games = 0;
   {
     std::lock_guard lock(mutex_);
     if (stopping_) {
@@ -131,23 +130,34 @@ bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
     }
     partner = it->second.client;
     rendezvous_.erase(it);
-    pair_games = rendezvous_games_[key]++;
   }
 
-  const GameDescriptor& descriptor = GameRegistry().at(game);
   Seat waiting{.display_name = partner->name(),
                .client = std::move(partner),
                .builtin = nullptr};
   Seat arriving{.display_name = client->name(),
                 .client = std::move(client),
                 .builtin = nullptr};
-  // Who parked first is a race between two workers; it must not pick seat 0.
-  if (pair_games % 2 == 0) {
-    StartGame(descriptor, std::move(waiting), std::move(arriving));
-  } else {
-    StartGame(descriptor, std::move(arriving), std::move(waiting));
-  }
+  StartPairedGame(GameRegistry().at(game), std::move(waiting),
+                  std::move(arriving));
   return true;
+}
+
+void Matchmaker::StartPairedGame(const GameDescriptor& descriptor, Seat a,
+                                 Seat b) {
+  const std::string key =
+      PairingKey(descriptor.name, a.display_name, b.display_name);
+  uint64_t played = 0;
+  {
+    std::lock_guard lock(mutex_);
+    played = pairing_games_[key]++;
+  }
+  // By name, then by the pairing's game count: neither who arrived first nor
+  // which side is a builtin decides who moves first.
+  if ((a.display_name > b.display_name) != (played % 2 == 1)) {
+    std::swap(a, b);
+  }
+  StartGame(descriptor, std::move(a), std::move(b));
 }
 
 void Matchmaker::StartGame(const GameDescriptor& descriptor, Seat seat0,

@@ -14,7 +14,8 @@ message Hello {
   string player_name = 1;  // identity, used for ELO and the leaderboard
   string game = 2;         // game registry key
   // "builtin:<spec>", or "player:<name>" to pair with the player naming this
-  // one. Seats alternate across a series; a no-show times out.
+  // one (a no-show times out). Either way seats alternate across the games
+  // the two sides play each other.
   string opponent = 3;
 }
 

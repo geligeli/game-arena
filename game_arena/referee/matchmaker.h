@@ -66,7 +66,10 @@ class Matchmaker {
     std::chrono::steady_clock::time_point deadline;
   };
 
-  // Seat 0 moves first.
+  // Every game starts here, whatever its seats are: seat 0 alternates between
+  // the two sides across the games they play each other.
+  void StartPairedGame(const GameDescriptor& descriptor, Seat a, Seat b);
+  // Seat 0 moves first. Only StartPairedGame() decides who that is.
   void StartGame(const GameDescriptor& descriptor, Seat seat0, Seat seat1);
   // Precondition: |wanted| is non-empty and not the client's own name.
   bool JoinRendezvous(std::shared_ptr<ClientHandle> client,
@@ -77,11 +80,12 @@ class Matchmaker {
   const MatchmakerConfig config_;
   GameHistory* history_;  // not owned
 
-  mutable std::mutex mutex_;  // guards rendezvous_*, running_, stopping_
-  // By RendezvousKey(), so a collision means each side named the other.
+  // guards rendezvous_, pairing_games_, running_, stopping_
+  mutable std::mutex mutex_;
+  // By PairingKey(), so a collision means each side named the other.
   std::map<std::string, Parked> rendezvous_;
-  // Games played per key, so a pair alternates seats whoever parks first.
-  std::map<std::string, uint64_t> rendezvous_games_;
+  // Games started per PairingKey(), a builtin being one side like any other.
+  std::map<std::string, uint64_t> pairing_games_;
   // Weak: only for Shutdown() to reach games, never to keep one alive.
   std::map<uint64_t, std::weak_ptr<GameRun>> running_;
   bool stopping_ = false;

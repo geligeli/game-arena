@@ -21,6 +21,7 @@
 
 #include "game_arena/referee/game_registry.h"
 #include "game_arena/referee/game_run.h"
+#include "game_arena/referee/matchmaker.h"
 #include "game_arena/testgame/nim.h"
 #include "gtest/gtest.h"
 
@@ -43,14 +44,14 @@ class FakeClient final : public ClientHandle {
       : name_(std::move(name)), mode_(mode), delay_(delay) {}
 
   ~FakeClient() override {
-    for (std::thread &t : threads_) {
+    for (std::thread& t : threads_) {
       t.join();
     }
   }
 
   std::string name() const override { return name_; }
 
-  bool Send(const proto::ServerMessage &msg) override {
+  bool Send(const proto::ServerMessage& msg) override {
     {
       std::lock_guard lock(mu_);
       if (disconnected_) {
@@ -62,8 +63,13 @@ class FakeClient final : public ClientHandle {
       game_over_ = msg.game_over();
       return true;
     }
+    if (msg.has_game_start()) {
+      std::lock_guard lock(mu_);
+      seat_ = msg.game_start().seat();
+      return true;
+    }
     if (!msg.has_your_turn()) {
-      return true;  // game_start
+      return true;
     }
     switch (mode_) {
       case Mode::kSilent:
@@ -128,6 +134,11 @@ class FakeClient final : public ClientHandle {
     return closed_;
   }
 
+  std::optional<int> seat() const {
+    std::lock_guard lock(mu_);
+    return seat_;
+  }
+
  private:
   void Deliver(std::string action) {
     {
@@ -160,6 +171,7 @@ class FakeClient final : public ClientHandle {
   std::vector<std::string> inbox_;
   std::function<void()> observer_;
   std::optional<proto::GameOver> game_over_;
+  std::optional<int> seat_;
   bool disconnected_ = false;
   bool closed_ = false;
 };
@@ -182,12 +194,12 @@ class NimGameRunTest : public ::testing::Test {
     std::filesystem::remove_all(dir_);
   }
 
-  static Seat MakeSeat(const std::shared_ptr<FakeClient> &client) {
+  static Seat MakeSeat(const std::shared_ptr<FakeClient>& client) {
     return Seat{
         .display_name = client->name(), .client = client, .builtin = nullptr};
   }
 
-  static Seat MakeBuiltinSeat(const std::string &spec) {
+  static Seat MakeBuiltinSeat(const std::string& spec) {
     std::string error;
     auto builtin = GameRegistry().at("nim").make_builtin(spec, &error);
     EXPECT_TRUE(builtin.has_value()) << error;
@@ -264,7 +276,7 @@ TEST_F(NimGameRunTest, IllegalActionLosesTheGame) {
 TEST_F(NimGameRunTest, RecordsAViewOfEveryState) {
   std::optional<proto::GameRecord> record;
   GameRunConfig config;
-  config.on_record = [&record](const proto::GameRecord &r) { record = r; };
+  config.on_record = [&record](const proto::GameRecord& r) { record = r; };
   auto alice =
       std::make_shared<FakeClient>("alice", FakeClient::Mode::kPlayValid);
   auto bob = std::make_shared<FakeClient>("bob", FakeClient::Mode::kPlayValid);
@@ -281,7 +293,7 @@ TEST_F(NimGameRunTest, StopsRecordingViewsPastTheCap) {
   std::optional<proto::GameRecord> record;
   GameRunConfig config;
   config.max_view_bytes = 10;
-  config.on_record = [&record](const proto::GameRecord &r) { record = r; };
+  config.on_record = [&record](const proto::GameRecord& r) { record = r; };
   auto alice =
       std::make_shared<FakeClient>("alice", FakeClient::Mode::kPlayValid);
   auto bob = std::make_shared<FakeClient>("bob", FakeClient::Mode::kPlayValid);
@@ -319,6 +331,68 @@ TEST_F(NimGameRunTest, BuiltinSeatPlaysAGameThrough) {
   ASSERT_TRUE(human->game_over().has_value());
   EXPECT_EQ(human->game_over()->reason(), "normal");
   EXPECT_EQ(history_->RecentGames(10).size(), 1u);
+}
+
+// Seat 0 alternates across the games two sides play each other, and the
+// same code decides it whether the other side is a builtin or a player.
+class NimMatchmakerTest : public NimGameRunTest {
+ protected:
+  // One game per stream: a new connection for each.
+  int PlayOne(Matchmaker& matchmaker, const std::string& name,
+              const std::string& opponent) {
+    auto client =
+        std::make_shared<FakeClient>(name, FakeClient::Mode::kPlayValid);
+    proto::Hello hello;
+    hello.set_player_name(name);
+    hello.set_game("nim");
+    hello.set_opponent(opponent);
+    std::string error;
+    EXPECT_TRUE(matchmaker.Join(client, hello, &error)) << error;
+    matchmaker.Drain();
+    EXPECT_TRUE(client->game_over().has_value());
+    return client->seat().value_or(-1);
+  }
+};
+
+TEST_F(NimMatchmakerTest, SeatsAlternateAgainstABuiltin) {
+  Matchmaker matchmaker(MatchmakerConfig{}, history_.get());
+  std::vector<int> seats;
+  for (int game = 0; game < 4; ++game) {
+    seats.push_back(PlayOne(matchmaker, "alice", "builtin:random"));
+  }
+  EXPECT_EQ(seats, (std::vector<int>{0, 1, 0, 1}));
+  // Its own series: another builtin starts over.
+  EXPECT_EQ(PlayOne(matchmaker, "alice", "builtin:optimal"), 0);
+}
+
+TEST_F(NimMatchmakerTest, SeatsAlternateBetweenPlayersWhoeverArrivesFirst) {
+  Matchmaker matchmaker(MatchmakerConfig{}, history_.get());
+  std::vector<int> alice_seats;
+  for (int game = 0; game < 4; ++game) {
+    // The side that parks first alternates too, so it is not what decides.
+    const bool alice_first = game % 3 == 0;
+    auto alice =
+        std::make_shared<FakeClient>("alice", FakeClient::Mode::kPlayValid);
+    auto bob =
+        std::make_shared<FakeClient>("bob", FakeClient::Mode::kPlayValid);
+    std::string error;
+    for (const auto& [client, partner] :
+         alice_first ? std::array{std::pair{alice, "player:bob"},
+                                  std::pair{bob, "player:alice"}}
+                     : std::array{std::pair{bob, "player:alice"},
+                                  std::pair{alice, "player:bob"}}) {
+      proto::Hello hello;
+      hello.set_player_name(client->name());
+      hello.set_game("nim");
+      hello.set_opponent(partner);
+      ASSERT_TRUE(matchmaker.Join(client, hello, &error)) << error;
+    }
+    matchmaker.Drain();
+    ASSERT_TRUE(alice->seat().has_value() && bob->seat().has_value());
+    EXPECT_NE(*alice->seat(), *bob->seat());
+    alice_seats.push_back(*alice->seat());
+  }
+  EXPECT_EQ(alice_seats, (std::vector<int>{0, 1, 0, 1}));
 }
 
 }  // namespace
