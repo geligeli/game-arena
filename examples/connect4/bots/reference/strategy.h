@@ -1,12 +1,8 @@
 #ifndef CONNECT4_BOTS_REFERENCE_STRATEGY_H
 #define CONNECT4_BOTS_REFERENCE_STRATEGY_H
 
-// The starting point for a submission. Copy this directory, rename it, change
-// ChooseColumn, submit.
-//
-// This one takes a win if it has one, denies the opponent's if they do, and
-// otherwise plays toward the centre. It beats builtin:random comfortably and
-// loses to anything that searches -- which is the interesting part.
+// The starting point: copy this directory, rename it, change ChooseColumn,
+// submit. Takes a win, denies one, else plays toward the centre.
 
 #include <algorithm>
 #include <random>

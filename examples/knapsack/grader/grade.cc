@@ -1,17 +1,5 @@
-// The grader: runs a submission over every case, checks it, and reports a
-// score.
-//
-// This is the whole of what a graded problem has to provide. The arena builds
-// the submission, runs this command in the sandbox, and reads the numbers back
-// from $ARENA_REPORT; how those numbers are arrived at is entirely here.
-//
-// Two rules worth copying into any grader:
-//
-//   - Check feasibility yourself. A submission is not a collaborator, and the
-//     score has to be something it cannot claim without earning.
-//   - A submission that crashes, hangs or answers nonsense scores zero for that
-//     case and the run continues. Only the grader failing is a failed run --
-//     otherwise one bad case looks like a broken problem.
+// Runs a submission over every case, checks each answer itself, and reports a
+// score. A bad answer scores zero for its case; only the grader failing fails.
 
 #include <algorithm>
 #include <cstdlib>
@@ -65,9 +53,7 @@ auto ReadBest(const std::filesystem::path &path, int *best) -> bool {
   return static_cast<bool>(in >> *best) && *best > 0;
 }
 
-// Scores one answer, or returns nullopt if it is not a legal packing. The
-// distinction matters: an infeasible answer is not a low score, it is no score,
-// and a submitter is better served by being told which.
+// An infeasible answer is no score, not a low one: nullopt, and |why|.
 auto ScoreAnswer(const Instance &instance, const std::string &answer,
                  std::string *why) -> std::optional<int> {
   std::istringstream in(answer);
@@ -160,8 +146,7 @@ auto main(int argc, char **argv) -> int {
         solution, {path.string()},
         {.stdout_path = out_path,
          .stderr_path = scratch / (path.stem().string() + ".err"),
-         // Without a cap, a submission that allocates without bound takes the
-         // whole worker down with it rather than failing its own case.
+         // Without a cap, a runaway allocation takes the worker down with it.
          .address_space_limit_bytes = std::size_t{2} << 30},
         std::chrono::seconds(absl::GetFlag(FLAGS_per_case_timeout_s)));
     if (!result.started || result.timed_out || result.exit_code != 0) {
@@ -198,8 +183,7 @@ auto main(int argc, char **argv) -> int {
 
   std::string error;
   if (!grader::WriteReportToArenaPath(metrics, &error)) {
-    // Outside the arena there is nowhere to put the report, which is normal
-    // when running this by hand. Print it and succeed.
+    // Run by hand, outside the arena: print the report instead.
     std::cerr << error << "\n";
     std::cout << grader::RenderReport(metrics);
     return 0;

@@ -1,14 +1,7 @@
 #ifndef CONNECT4_GAME_CONNECT4_H
 #define CONNECT4_GAME_CONNECT4_H
 
-// Connect Four as an arena game.
-//
-// The entire contract with the arena is tournament_broker::GameSession: turn a
-// state into bytes, say whose turn it is, validate and apply an action, report
-// an outcome. Nothing here knows about gRPC, sandboxes or leaderboards, and the
-// arena knows nothing about columns and discs.
-//
-// Wire format, deliberately human-readable so a failing test is legible:
+// Connect Four as a tournament_broker::GameSession. Wire format:
 //   state  42 cells row-major from the top, then ":<player to move>"
 //          e.g. "..........................................:0"
 //          cells are '.', 'X' (player 0) or 'O' (player 1)

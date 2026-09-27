@@ -1,13 +1,5 @@
-// The harness every submission is compiled into.
-//
-// It owns the whole protocol so a submitter does not have to: the arena's
-// play_loop runs the Play stream, this file turns the bytes into a bot::Board,
-// and CANDIDATE_ENTRY_HEADER supplies ChooseColumn. The submission never sees
-// gRPC.
-//
-// The coordinator generates a BUILD per submission that compiles exactly this
-// source with CANDIDATE_ENTRY_HEADER pointing at the submitted header -- see
-// submission.harness in problem.textproto.
+// The harness every submission is compiled into, with CANDIDATE_ENTRY_HEADER
+// naming the submitted header (submission.harness in problem.textproto).
 
 #include <grpcpp/grpcpp.h>
 
@@ -38,8 +30,7 @@ ABSL_FLAG(int, games, 1, "Number of games to play");
 auto main(int argc, char **argv) -> int {
   absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
-  // Without this the per-game result lines are compiled in but never shown,
-  // and a submitter iterating locally sees an empty terminal.
+  // Otherwise the per-game result lines never reach a submitter's terminal.
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
 
   const std::string name = absl::GetFlag(FLAGS_name);

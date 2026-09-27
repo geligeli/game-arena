@@ -1,22 +1,17 @@
 load("@game_arena//game_arena/rules:problem.bzl", "arena_problem")
 
-# The whole tournament, from one call: the referee linked from
-# //game:registry, a config test, `bazel run //:tournament`, `//:kit` and
-# `//:sandbox_image`, and `bazel build //:connect4` for every binary a
-# tournament needs. See @game_arena//game_arena/rules:problem.bzl.
+# The whole tournament: @game_arena//game_arena/rules:problem.bzl lists the targets.
 arena_problem(
     name = "connect4",
     config = "problem.textproto",
     registry = "//game:registry",
     kit_base = "@kit_agents",
-    # What a participant receives: the rules (so a bot can search them), the
-    # harness and the reference bot. Not the config, not the tournament.
+    # The rules (so a bot can search them), the harness and the reference bot.
     kit_files = [
         "//bots:kit",
         "//bots/reference:kit",
         "//game:kit",
     ],
-    # The rest of the tree a submission is built on, package by package.
     tree = [
         "//bots:tree",
         "//game:tree",

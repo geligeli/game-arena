@@ -1,2 +1,1 @@
-# bazel's own symlinks are not part of the tree.
 ignore_directories(["bazel-*"])

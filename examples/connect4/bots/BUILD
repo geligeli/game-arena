@@ -2,24 +2,17 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
-# The submission contract: what an entrant writes, and the harness compiled
-# unchanged around it.
-
-# The board type and helpers a strategy is written against.
 cc_library(
     name = "bot_api",
     hdrs = ["bot_api.h"],
     deps = ["//game:connect4"],
 )
 
-# Exported as a source, not wrapped in a cc_library, because the per-submission
-# BUILD the coordinator generates has to compile it *itself*: the entry header
-# arrives as a local_define, and those do not propagate from a dependency.
+# A source, not a cc_library: the generated BUILD compiles it with the entry
+# header as a local_define, which does not propagate from a dependency.
 exports_files(["bot.cc"])
 
-# What the generated per-submission binary links. Named here so
-# problem.textproto's submission.harness can point at one label instead of
-# repeating the list.
+# What the generated per-submission binary links (submission.harness.bot_deps).
 cc_library(
     name = "bot_deps",
     deps = [
@@ -36,9 +29,7 @@ cc_library(
     ],
 )
 
-# What a participant receives: the API and the harness compiled around every
-# submission. Each participant is a directory here -- reference/ is the one to
-# start from -- with the BUILD the arena generates.
+# Each participant is a directory here, with the BUILD the arena generates.
 filegroup(
     name = "kit",
     srcs = glob([
@@ -48,8 +39,7 @@ filegroup(
     ]),
 )
 
-# Everything here, for the sandbox image: a glob does not cross packages, so
-# each one exports its own (arena_problem's `tree`).
+# A glob does not cross packages, so each exports its own (arena_problem's `tree`).
 filegroup(
     name = "tree",
     srcs = glob(["**"]),

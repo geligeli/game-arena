@@ -1,10 +1,4 @@
-# A tournament problem: write a Connect Four bot, get rated against everyone
-# else's.
-#
-# Every label below is relative to THIS directory: it is the tree the sandbox
-# image carries, and a worker runs bazel at its root.
-#
-#   bazel run //:play                              # see BUILD
+# Every label is relative to this directory, where a worker runs bazel.
 
 problem_id: "connect4"
 display_name: "Connect Four"
@@ -24,51 +18,35 @@ description:
   "matched against other submissions.\n"
 
 submission {
-  # A strategy is one header. A patch far larger than that is a mistake worth
-  # catching before it reaches the fleet.
   max_patch_bytes: 262144
   max_files: 16
   allow_paths: "bots/{submission_id}/**"
 
-  # Solutions are new files in their own directory, so agents may submit that
-  # shape directly and the coordinator turns it into an add-only patch --
-  # generated BUILD included, which is what keeps the dependency list below
-  # enforceable. A hand-written patch is still accepted, under the same
-  # allow_paths.
+  # The generated BUILD is what keeps allowed_dep_prefixes enforceable.
   files_submit_dir: "bots"
   harness {
-    # These are this repo's labels. The arena has no opinion about them; it
-    # writes exactly these into the BUILD it generates per submission.
     api_dep: "//bots:bot_api"
     main_src: "//bots:bot.cc"
     bot_deps: "//bots:bot_deps"
   }
 
-  # A strategy may reach for the rules and nothing else. Not the arena, not the
-  # referee, not another submission.
+  # The rules and nothing else: not the arena, the referee or another submission.
   allowed_dep_prefixes: "//game:connect4"
 }
 
 build {
-  # The bot -- the target naming {submission_id} is what the worker starts
-  # against the referee -- and the referee beside it: a submission that
-  # somehow breaks the rules library fails to build rather than reaching a
-  # match.
+  # The referee too: a submission that breaks the rules fails to build.
   targets: "//bots/{submission_id}:bot"
   targets: "//:match_referee"
   timeout_s: 1200
 }
 
 sandbox {
-  # What a worker asks its daemon for, by exactly this name: this tree on the
-  # arena's base with every dependency it resolves vendored into it, as
-  # `bazel run //:sandbox_image_issue` makes it. `play` and deploy.sh issue
-  # it here under this name; quickstart.sh pushes it.
+  # What a worker asks its daemon for, as `bazel run //:sandbox_image_issue` makes it.
   image: "registry.takumi.city/connect4-sandbox:latest"
   # So a build needs no network, and a submitted genrule cannot exfiltrate.
   allow_build_network: false
-  # The user the image's primed cache belongs to, which fills a worker's
-  # empty cache volume.
+  # Owns the image's primed cache, which fills a worker's empty cache volume.
   run_as_user: "1000:1000"
   memory_limit_mb: 4096
 }
@@ -80,15 +58,13 @@ match {
   placement_opponents: "builtin:random"
   placement_opponents: "builtin:greedy"
   turn_timeout_ms: 5000
-  # Without a whole-game budget the per-turn clock bounds nothing: a slow
-  # strategy can burn the full turn budget on every one of 42 moves.
+  # Without it, a slow strategy can spend the full turn budget on each of 42 moves.
   game_time_budget_ms: 60000
   max_moves_per_game: 100
   timeout_s: 900
 }
 
-# The participant everyone starts as: copied to <submit dir>/<your name>/ the
-# first time, which is then what `arena_cli submit` sends.
+# Copied to <submit dir>/<your name>/ the first time.
 kit {
   starter_dir: "bots/reference"
 }

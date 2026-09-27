@@ -1,8 +1,5 @@
-// The reference solution, and the shape a submission takes.
-//
-// Reads the instance named by argv[1] and prints the indices of the items it
-// packs. This one is exact (a textbook DP), so it scores 100 and exists to show
-// the contract rather than to be beaten.
+// The shape of a submission: prints the indices of the items it packs from the
+// instance at argv[1]. Exact (a DP), so it scores 100.
 
 #include <fstream>
 #include <iostream>
