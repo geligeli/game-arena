@@ -42,11 +42,6 @@ std::string EntrypointScript(const proto::Workspace &workspace,
   // is a HOME bazel can write to.
   script += sandbox_common::ScratchPrelude();
 
-  if (step.applies_patches() &&
-      workspace.patch() == proto::Workspace::PATCH_COPY_IN_ENTRYPOINT) {
-    script += std::string("cp -a ") + sandbox_common::kPatchMount + "/. " +
-              sandbox_common::kWorkspace + "/\n";
-  }
   script += "cd " + WorkDirOf(workspace, step) + "\n";
 
   if (step.applies_patches() &&

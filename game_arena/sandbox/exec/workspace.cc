@@ -26,10 +26,6 @@ std::string GitOf(const proto::Workspace &ws) {
   return ws.git().empty() ? "git" : ws.git();
 }
 
-std::string TarOf(const proto::Workspace &ws) {
-  return ws.tar().empty() ? "tar" : ws.tar();
-}
-
 bool WriteStagedFiles(const proto::Workspace &ws, proto::Status *status) {
   if (ws.staging_dir().empty()) {
     return true;
@@ -123,28 +119,6 @@ bool PrepareWorkspace(const proto::Workspace &ws,
   if (ws.patch() == proto::Workspace::PATCH_HOST &&
       !ApplyHostPatches(ws, log_dir, status)) {
     return false;
-  }
-  return true;
-}
-
-bool ExportTree(const proto::Workspace &ws,
-                const std::filesystem::path &archive,
-                const std::filesystem::path &log_dir, proto::Status *status) {
-  std::error_code ec;
-  std::filesystem::create_directories(archive.parent_path(), ec);
-  // Without .git, if the tree happens to be a checkout: the sandbox builds a
-  // tree, it does not need the history.
-  const sandbox_common::StepResult exported = sandbox_common::RunStep(
-      TarOf(ws),
-      {"--exclude=./.git", "-cf", archive.string(), "-C", ws.tree_dir(), "."},
-      /*cwd=*/{}, log_dir, "export", std::chrono::seconds(600));
-  if (!exported.run.started) {
-    return Fail(status, proto::Status::TOOL_MISSING,
-                "cannot run tar ('" + TarOf(ws) + "' not found)");
-  }
-  if (exported.run.exit_code != 0) {
-    return Fail(status, proto::Status::WORKSPACE_FAILED,
-                "cannot export the tree: " + TailOf(exported.output, 1000));
   }
   return true;
 }

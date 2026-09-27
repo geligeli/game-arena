@@ -301,23 +301,6 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
     return fail_load("cannot create the workspace loader", created);
   }
 
-  if (!ws.tree_dir().empty()) {
-    const std::filesystem::path archive = log_dir / "tree.tar";
-    if (!ExportTree(ws, archive, log_dir, status)) {
-      sandbox_common::RemoveContainer(config_.docker, loader);
-      return false;
-    }
-    // `docker cp -` takes the tar on stdin: the client reads it, the daemon
-    // unpacks it, and no path has to be visible to both.
-    const sandbox_common::StepResult copied = sandbox_common::RunStep(
-        config_.docker, {"cp", "-", loader + ":" + sandbox_common::kWorkspace},
-        /*cwd=*/{}, log_dir, "load_tree", std::chrono::seconds(600), archive);
-    std::error_code ec;
-    std::filesystem::remove(archive, ec);
-    if (!copied.run.started || copied.run.exit_code != 0) {
-      return fail_load("cannot load the tree into the sandbox", copied);
-    }
-  }
   if (!ws.staging_dir().empty() && !ws.staged_files().empty()) {
     const sandbox_common::StepResult copied = sandbox_common::RunStep(
         config_.docker,

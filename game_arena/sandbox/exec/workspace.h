@@ -28,13 +28,6 @@ bool PrepareWorkspace(const proto::Workspace &ws,
                       const std::filesystem::path &log_dir,
                       proto::Status *status);
 
-// Writes |ws.tree_dir| as a tar archive at |archive|, without its .git: what
-// a container engine loads into the sandbox's workspace. Returns false with
-// *status filled in.
-bool ExportTree(const proto::Workspace &ws,
-                const std::filesystem::path &archive,
-                const std::filesystem::path &log_dir, proto::Status *status);
-
 }  // namespace sandbox_exec
 
 #endif  // GAME_ARENA_GAME_ARENA_SANDBOX_EXEC_WORKSPACE_H

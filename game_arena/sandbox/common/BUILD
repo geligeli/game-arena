@@ -3,10 +3,7 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# Mechanics shared by the standalone sandbox runner (sandbox/runner) and the
-# fleet worker's backends (sandbox/worker), so the two cannot drift into
-# spelling the same step, mount or container differently: a patch staged for
-# one means the same thing to the other.
+# Docker and file mechanics shared by sandbox/exec and sandbox/worker.
 
 cc_library(
     name = "files",

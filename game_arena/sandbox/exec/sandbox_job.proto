@@ -90,13 +90,10 @@ message StagedFile {
 //
 // A container engine never bind-mounts it. Every job gets a fresh volume at
 // the workspace's mount point, and docker fills a fresh volume from what the
-// image has there: so a tree the image carries needs nothing from here. A
-// tree_dir is exported with tar and copied into that volume through the
-// daemon instead. A process engine runs in tree_dir directly.
+// image has there. A process engine runs in tree_dir directly.
 message Workspace {
-  string tree_dir = 2;  // the tree; empty: the image's own
+  string tree_dir = 2;  // process engines only
   string git = 4;       // empty -> "git"; applies the patches
-  string tar = 5;       // empty -> "tar"; how a container engine exports it
 
   // Process engines: the writable directory a step collects files from.
   // Container engines keep scratch in a volume and ignore this.
@@ -113,9 +110,6 @@ message Workspace {
     // git apply inside the entrypoint, before the step runs. The staged
     // files reach the sandbox read-only at /patches.
     PATCH_IN_ENTRYPOINT = 2;
-    // cp -a the staging tree over the workspace, for files that are not a
-    // diff.
-    PATCH_COPY_IN_ENTRYPOINT = 3;
   }
   Patch patch = 12;
   repeated string patch_files = 13;  // names under staging_dir, in order
@@ -189,7 +183,7 @@ message Step {
   // inherit the patched tree through the overlay, which is why a graded run's
   // container does not re-apply what its build container already did.
   //
-  // Only meaningful for PATCH_IN_ENTRYPOINT and PATCH_COPY_IN_ENTRYPOINT --
+  // Only meaningful for PATCH_IN_ENTRYPOINT --
   // PATCH_HOST has already happened before any step starts.
   bool applies_patches = 11;
 

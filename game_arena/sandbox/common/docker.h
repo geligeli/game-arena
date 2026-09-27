@@ -1,15 +1,8 @@
 #ifndef GAME_ARENA_GAME_ARENA_SANDBOX_COMMON_DOCKER_H
 #define GAME_ARENA_GAME_ARENA_SANDBOX_COMMON_DOCKER_H
 
-// Docker mechanics shared by the standalone sandbox runner (sandbox/runner)
-// and the fleet worker's docker backend (sandbox/worker): how a container is
-// named, how a bind mount is spelled, the fixed mount points inside the
-// container, the shell prelude every entrypoint script starts with, and the
-// one shape a `docker run` argv takes.
-//
-// One home so the two cannot drift into spelling the same container
-// differently: the runner and a worker slot mount the same repository the
-// same way, and a patch staged for one means the same thing to the other.
+// Docker mechanics: container names, mount spellings, fixed mount points,
+// the entrypoint prelude and the one shape a `docker run` argv takes.
 
 #include <chrono>
 #include <filesystem>

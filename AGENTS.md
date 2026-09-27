@@ -17,7 +17,7 @@ game_arena/standings/  rating, history and the leaderboard page -- the referee
                        in a kit links part of it, so it depends on nothing in
                        server/
 game_arena/sandbox/    exec/ (the execution engine), common/ (docker mechanics),
-                       worker/ (the fleet's own policy), runner/ (dev tool)
+                       worker/ (the fleet's own policy)
 game_arena/referee/    match loop + broker protocol; entry points as libraries
 game_arena/client/     the generic reference client
 game_arena/testgame/   Nim: the arena's own game and reference registry
@@ -82,10 +82,7 @@ above it, in `sandbox/worker/order_job.h` (an order becomes a job),
 gates), written once for both engines.
 
 Isolation is one function, `exec/isolation.h`, and no path through the
-container engine builds a `docker run` without it. That is what keeps the
-claims in `ARENA.md` true of the dev runner as well as the fleet; before it,
-the hardening was a private method of one backend and the runner was the
-un-hardened counterexample.
+container engine builds a `docker run` without it.
 
 The container engine never bind-mounts anything of its own: the tree and the
 patches are loaded into per-job volumes through the daemon and the caches
@@ -280,9 +277,8 @@ Or the pieces `play` runs: `bazel run //:tournament` in one shell,
   read is a decision, not a dependency fix.
 - Do not bump proto field numbers or "fix" them: `proto/` is the contract with
   every deployed worker and client. That rule is about the contract, not the
-  directory: `sandbox/exec/sandbox_job.proto` and
-  `sandbox/runner/sandbox_service.proto` pass between libraries in one process
-  and are free to change.
+  directory: `sandbox/exec/sandbox_job.proto` passes between libraries in one
+  process and is free to change.
 - Do not use `#pragma once`, do not hand-write a guard without the
   `GAME_ARENA_` prefix, do not commit unformatted code (pre-commit handles it).
 - Do not commit `bazel-*` symlinks/outputs, `compile_commands.json`, `.cache`,

@@ -212,10 +212,7 @@ holding a slot and producing no game.
 Both backends are the same engine now, differently configured:
 `game_arena/sandbox/exec` runs a job of phases and steps and knows nothing
 about orders, and `sandbox/worker/order_job.h` is what turns an order into
-one. The dev runner (`sandbox/runner`) runs on it too, which is how it stopped
-being the un-hardened counterexample -- it passed `--cap-add SYS_ADMIN` with
-no network restriction while the fleet dropped every capability. Isolation is
-one function that every container goes through.
+one. Isolation is one function that every container goes through.
 
 The process backend gives **resource limits and timeouts, not a security
 boundary**: whatever it runs is compiled and run as the user running it. No
