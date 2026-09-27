@@ -8,9 +8,9 @@
 
 namespace tournament_broker {
 
-GameRun::GameRun(const GameDescriptor &descriptor, GameRunConfig config,
+GameRun::GameRun(const GameDescriptor& descriptor, GameRunConfig config,
                  std::array<Seat, 2> seats, uint64_t game_counter,
-                 GameHistory *history, WorkerPool *pool, Timer *timer,
+                 GameHistory* history, WorkerPool* pool, Timer* timer,
                  Task on_finished)
     : descriptor_(descriptor),
       config_(config),
@@ -46,7 +46,7 @@ void GameRun::Abort(std::string reason) {
 void GameRun::Begin() {
   record_.set_game_id(game_id_);
   record_.set_game(descriptor_.name);
-  for (const Seat &seat : seats_) {
+  for (const Seat& seat : seats_) {
     record_.add_player_names(seat.display_name);
   }
   record_.set_initial_state(session_->SerializeState());
@@ -65,7 +65,7 @@ void GameRun::Begin() {
       }
     });
     proto::ServerMessage msg;
-    auto *start = msg.mutable_game_start();
+    auto* start = msg.mutable_game_start();
     start->set_game_id(game_id_);
     start->set_seat(seat);
     start->set_opponent_name(seats_[1 - seat].display_name);
@@ -80,7 +80,7 @@ void GameRun::Begin() {
 
 bool GameRun::SendYourTurn(int seat, std::chrono::milliseconds allowed) {
   proto::ServerMessage msg;
-  auto *turn = msg.mutable_your_turn();
+  auto* turn = msg.mutable_your_turn();
   turn->set_state(session_->SerializeState());
   turn->set_move_number(session_->MoveCount());
   turn->set_deadline_unix_ms(absl::ToUnixMillis(absl::Now()) + allowed.count());
@@ -144,7 +144,7 @@ void GameRun::Step() {
     std::string action_bytes;
 
     if (seats_[seat].client != nullptr) {
-      ClientHandle &client = *seats_[seat].client;
+      ClientHandle& client = *seats_[seat].client;
       if (client.disconnected()) {
         Conclude(GameOutcome{.winning_player = 1 - seat},
                  "opponent_disconnect");
@@ -200,13 +200,19 @@ void GameRun::Step() {
   }
 }
 
+// Captions count against the budget too: a long game's would otherwise
+// outgrow the one gRPC message its record travels in.
 void GameRun::CaptureViews() {
-  while (views_.size() < session_->Steps().size()) {
-    std::string view = view_bytes_ < config_.max_view_bytes
-                           ? session_->RenderState()
-                           : std::string();
-    view_bytes_ += view.size();
-    views_.push_back(std::move(view));
+  while (captured_.size() < session_->Steps().size()) {
+    Captured step;
+    if (view_bytes_ < config_.max_view_bytes) {
+      step.caption = session_->RenderLastStep();
+      step.view = session_->RenderState();
+      view_bytes_ += step.caption.size() + step.view.size();
+    } else if (!record_.has_views_cut_at()) {
+      record_.set_views_cut_at(static_cast<int32_t>(captured_.size()));
+    }
+    captured_.push_back(std::move(step));
   }
 }
 
@@ -228,20 +234,21 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
   CancelTurnTimer();
 
   // Drop the observers so nothing reaches back into a finished game.
-  for (Seat &seat : seats_) {
+  for (Seat& seat : seats_) {
     if (seat.client) {
       seat.client->SetObserver(nullptr);
     }
   }
 
   CaptureViews();
-  const std::vector<RecordedStep> &steps = session_->Steps();
+  const std::vector<RecordedStep>& steps = session_->Steps();
   for (std::size_t i = 0; i < steps.size(); ++i) {
-    auto *record_step = record_.add_steps();
+    auto* record_step = record_.add_steps();
     record_step->set_player(steps[i].player);
     record_step->set_action(steps[i].action_bytes);
     record_step->set_unix_ms(steps[i].unix_ms);
-    record_step->set_view(std::move(views_[i]));
+    record_step->set_view(std::move(captured_[i].view));
+    record_step->set_caption(std::move(captured_[i].caption));
   }
   record_.set_termination_reason(reason);
   record_.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
@@ -265,9 +272,9 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
     if (!seats_[seat].client) {
       continue;
     }
-    ClientHandle &client = *seats_[seat].client;
+    ClientHandle& client = *seats_[seat].client;
     proto::ServerMessage msg;
-    auto *over = msg.mutable_game_over();
+    auto* over = msg.mutable_game_over();
     if (outcome.is_draw) {
       over->set_result(proto::GameOver::DRAW);
     } else if (outcome.winning_player == seat) {

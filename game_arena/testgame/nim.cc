@@ -12,15 +12,15 @@
 namespace arena_testgame {
 namespace {
 
-bool ParseInt(std::string_view text, int *out) {
-  const char *end = text.data() + text.size();
+bool ParseInt(std::string_view text, int* out) {
+  const char* end = text.data() + text.size();
   const std::from_chars_result result = std::from_chars(text.data(), end, *out);
   return result.ec == std::errc{} && result.ptr == end;
 }
 
 }  // namespace
 
-bool ParseState(std::string_view bytes, int *remaining, int *player) {
+bool ParseState(std::string_view bytes, int* remaining, int* player) {
   const std::size_t colon = bytes.find(':');
   if (colon == std::string_view::npos) {
     return false;
@@ -36,12 +36,12 @@ std::string NimSession::SerializeState() const {
   return std::to_string(remaining_) + ":" + std::to_string(player_);
 }
 
-void NimSession::ApplyChanceAction(std::mt19937 & /*gen*/) {
+void NimSession::ApplyChanceAction(std::mt19937& /*gen*/) {
   CHECK(false) << "Nim has no chance nodes";
 }
 
 bool NimSession::ApplySerializedAction(std::string_view bytes,
-                                       std::string *error) {
+                                       std::string* error) {
   int take = 0;
   if (!ParseInt(bytes, &take)) {
     *error = "action bytes do not parse as an integer";
@@ -66,6 +66,14 @@ bool NimSession::ApplySerializedAction(std::string_view bytes,
   return true;
 }
 
+std::string NimSession::RenderLastStep() const {
+  if (Steps().empty()) {
+    return {};
+  }
+  const tournament_broker::RecordedStep& step = Steps().back();
+  return "seat " + std::to_string(step.player) + " takes " + step.action_bytes;
+}
+
 std::optional<tournament_broker::GameOutcome> NimSession::Outcome() const {
   if (winner_ < 0) {
     return std::nullopt;
@@ -75,14 +83,14 @@ std::optional<tournament_broker::GameOutcome> NimSession::Outcome() const {
 }
 
 std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec,
-                                                        std::string *error) {
+                                                        std::string* error) {
   if (spec != "random" && spec != "optimal") {
     *error =
         "unknown builtin '" + std::string(spec) + "' (want random|optimal)";
     return std::nullopt;
   }
   return [optimal = spec == "optimal"](std::string_view state_bytes,
-                                       std::mt19937 &gen) -> std::string {
+                                       std::mt19937& gen) -> std::string {
     int remaining = 0;
     int player = 0;
     if (!ParseState(state_bytes, &remaining, &player) || remaining <= 0) {

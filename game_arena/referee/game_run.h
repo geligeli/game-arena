@@ -31,7 +31,7 @@ struct GameRunConfig {
   std::size_t max_view_bytes = 1 << 20;
 
   // On the game's strand, right after the record is stored.
-  std::function<void(const proto::GameRecord &)> on_record;
+  std::function<void(const proto::GameRecord&)> on_record;
 };
 
 struct Seat {
@@ -43,9 +43,9 @@ struct Seat {
 class GameRun : public std::enable_shared_from_this<GameRun> {
  public:
   // Construct through std::make_shared: Start() needs shared_from_this().
-  GameRun(const GameDescriptor &descriptor, GameRunConfig config,
+  GameRun(const GameDescriptor& descriptor, GameRunConfig config,
           std::array<Seat, 2> seats, uint64_t game_counter,
-          GameHistory *history, WorkerPool *pool, Timer *timer,
+          GameHistory* history, WorkerPool* pool, Timer* timer,
           Task on_finished);
 
   // Posts the opening work. Call exactly once.
@@ -68,10 +68,10 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   // --- any thread ---
   void WakeStrand();
 
-  const GameDescriptor &descriptor_;  // static registry entry; outlives us
+  const GameDescriptor& descriptor_;  // static registry entry; outlives us
   const GameRunConfig config_;
-  GameHistory *history_;  // not owned
-  Timer *timer_;          // not owned
+  GameHistory* history_;  // not owned
+  Timer* timer_;          // not owned
   Task on_finished_;
 
   std::shared_ptr<Strand> strand_;
@@ -81,7 +81,11 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   std::unique_ptr<GameSession> session_;
   proto::GameRecord record_;
   std::mt19937 gen_;
-  std::vector<std::string> views_;
+  struct Captured {
+    std::string caption;
+    std::string view;
+  };
+  std::vector<Captured> captured_;
   std::size_t view_bytes_ = 0;
 
   // Keeps the game alive between events; released in Conclude().

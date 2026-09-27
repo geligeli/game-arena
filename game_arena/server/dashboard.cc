@@ -253,16 +253,23 @@ std::string ResultText(int64_t result, int64_t winner,
   return "-";
 }
 
+// A frame is one step; it shows its own view, or the last one before it.
 constexpr std::string_view kReplayScript = R"(<script>
-var frames=document.querySelectorAll('.f'),at=0,timer=null;
+var frames=document.querySelectorAll('.f'),views=document.querySelectorAll('.v'),
+at=0,timer=null;
 function go(i){at=Math.max(0,Math.min(frames.length-1,i));
 frames.forEach(function(f,j){f.hidden=j!=at});
+var v=+frames[at].dataset.v;views.forEach(function(e,k){e.hidden=k!=v});
 document.getElementById('slider').value=at}
-function play(){if(timer){clearInterval(timer);timer=null;return}
-timer=setInterval(function(){if(at>=frames.length-1){clearInterval(timer);
-timer=null}else{go(at+1)}},400)}
-document.onkeydown=function(e){if(e.key=='ArrowLeft')go(at-1);
-if(e.key=='ArrowRight')go(at+1)};
+function seek(d){for(var i=at+d;i>=0&&i<frames.length;i+=d){
+if(frames[i].dataset.own){go(i);return}}go(d<0?0:frames.length-1)}
+function play(){if(timer){clearTimeout(timer);timer=null;return}
+(function tick(){timer=setTimeout(function(){if(at>=frames.length-1){timer=null;
+return}go(at+1);tick()},+document.getElementById('speed').value)})()}
+document.onkeydown=function(e){var k={ArrowLeft:function(){go(at-1)},
+ArrowRight:function(){go(at+1)},ArrowUp:function(){seek(-1)},
+ArrowDown:function(){seek(1)},' ':play,Home:function(){go(0)},
+End:function(){go(frames.length-1)}}[e.key];if(k){e.preventDefault();k()}};
 go(0);
 </script>)";
 
@@ -506,35 +513,77 @@ std::optional<std::string> Dashboard::ReplayPage(
        << Time(record->started_unix_ms()) << " to "
        << Time(record->finished_unix_ms()) << "</p>"
        << "<p><button onclick=\"go(0)\">first</button> "
+          "<button onclick=\"seek(-1)\">prev view</button> "
           "<button onclick=\"go(at-1)\">back</button> "
           "<button onclick=\"play()\">play</button> "
           "<button onclick=\"go(at+1)\">forward</button> "
+          "<button onclick=\"seek(1)\">next view</button> "
           "<button onclick=\"go(frames.length-1)\">last</button> "
+          "<select id=\"speed\"><option value=\"100\">0.1 s</option>"
+          "<option value=\"250\">0.25 s</option>"
+          "<option value=\"400\" selected>0.4 s</option>"
+          "<option value=\"1000\">1 s</option>"
+          "<option value=\"2000\">2 s</option></select> "
           "<input id=\"slider\" type=\"range\" min=\"0\" max=\""
        << record->steps_size()
-       << "\" value=\"0\" oninput=\"go(+this.value)\"></p>";
+       << "\" value=\"0\" oninput=\"go(+this.value)\"> "
+          "<small>&larr;&rarr; step, &uarr;&darr; view, space play</small></p>";
 
+  // Each view once; a frame points at its own or the latest before it, so a
+  // step that leaves the view unchanged costs no bytes here either.
+  std::vector<std::string> views;
   // A game recorded before views existed shows its state instead.
-  html << "<div class=\"f\"><p>Start</p><pre>"
-       << (record->initial_view().empty() ? Readable(record->initial_state())
-                                          : ViewHtml(record->initial_view()))
-       << "</pre></div>";
+  views.push_back(record->initial_view().empty()
+                      ? Readable(record->initial_state())
+                      : ViewHtml(record->initial_view()));
+  std::ostringstream frames;
+  frames << "<div class=\"f\" data-v=\"0\" data-own=\"1\"><p>Start</p></div>";
+  const int cut_at = record->has_views_cut_at() ? record->views_cut_at()
+                                                : record->steps_size();
+  int cut_view = -1;
   for (int i = 0; i < record->steps_size(); ++i) {
     const GameRecord::Step& step = record->steps(i);
-    html << "<div class=\"f\"><p>Move " << i + 1 << ": ";
+    bool own = false;
+    if (i >= cut_at) {
+      if (cut_view < 0) {
+        views.push_back("(no view: past the budget for views)");
+        cut_view = static_cast<int>(views.size()) - 1;
+        own = true;
+      }
+    } else if (!step.view().empty()) {
+      views.push_back(ViewHtml(step.view()));
+      own = true;
+    }
+    frames << "<div class=\"f\" data-v=\""
+           << (i >= cut_at ? cut_view : static_cast<int>(views.size()) - 1)
+           << "\"" << (own ? " data-own=\"1\"" : "") << "><p>Move " << i + 1
+           << ": ";
     if (step.player() >= 0 &&
         step.player() < static_cast<int>(players.size())) {
-      html << "seat " << step.player() << " ("
-           << HtmlEscape(players[step.player()]) << ") played";
+      frames << "seat " << step.player() << " ("
+             << HtmlEscape(players[step.player()]) << ")";
     } else {
-      html << "chance:";
+      frames << "chance";
     }
-    html << " <code>" << Readable(step.action()) << "</code></p>";
-    if (!step.view().empty()) {
-      html << "<pre>" << ViewHtml(step.view()) << "</pre>";
+    if (!step.caption().empty()) {
+      frames << ": " << ViewHtml(step.caption()) << "</p></div>";
+    } else {
+      frames << (step.player() >= 0 ? " played" : ":") << " <code>"
+             << Readable(step.action()) << "</code></p></div>";
     }
-    html << "</div>";
   }
+  // The tallest view holds the controls in place while stepping.
+  std::size_t lines = 1;
+  for (const std::string& view : views) {
+    lines = std::max(
+        lines, static_cast<std::size_t>(std::ranges::count(view, '\n')) + 1);
+  }
+  html << frames.str() << "<div style=\"min-height:" << lines * 1.25 + 1
+       << "em\">";
+  for (std::size_t k = 0; k < views.size(); ++k) {
+    html << "<pre class=\"v\" hidden>" << views[k] << "</pre>";
+  }
+  html << "</div>";
   html << kReplayScript << kPageEnd;
   return html.str();
 }

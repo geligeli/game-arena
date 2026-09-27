@@ -24,10 +24,11 @@ class NimSession final : public tournament_broker::GameSession {
   std::string SerializeState() const override;
   int CurrentPlayer() const override { return player_; }
   bool IsChanceNode() const override { return false; }
-  void ApplyChanceAction(std::mt19937 &gen) override;
+  void ApplyChanceAction(std::mt19937& gen) override;
   bool ApplySerializedAction(std::string_view bytes,
-                             std::string *error) override;
+                             std::string* error) override;
   std::optional<tournament_broker::GameOutcome> Outcome() const override;
+  std::string RenderLastStep() const override;
 
  private:
   int remaining_ = kStartingStones;
@@ -36,11 +37,11 @@ class NimSession final : public tournament_broker::GameSession {
 };
 
 // False on anything malformed: these bytes come off the wire.
-bool ParseState(std::string_view bytes, int *remaining, int *player);
+bool ParseState(std::string_view bytes, int* remaining, int* player);
 
 // "random", or "optimal" so a test can assert that the stronger side wins.
 std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec,
-                                                        std::string *error);
+                                                        std::string* error);
 
 tournament_broker::GameDescriptor Descriptor();
 

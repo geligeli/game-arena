@@ -169,7 +169,7 @@ TEST_F(DashboardTest, AReplayHasAFrameForTheStartAndEveryMove) {
   EXPECT_EQ(frames, 4u);
   EXPECT_THAT(html, HasSubstr("3 stones &lt;start&gt;"));
   EXPECT_THAT(html, HasSubstr("seat 1 (builtin:random) played <code>1</code>"));
-  EXPECT_THAT(html, HasSubstr("<pre>0 stones</pre>"));
+  EXPECT_THAT(html, HasSubstr(">0 stones</pre>"));
   EXPECT_THAT(html, HasSubstr("<a href=\"/participants/alice\">alice</a> won"));
 }
 
@@ -192,6 +192,39 @@ TEST_F(DashboardTest, AReplayShowsAnsiColouredViewsAsSpans) {
   EXPECT_THAT(html, HasSubstr("<span style=\"background:#c33;\">&lt;red&gt;"
                               "</span> plain"));
   EXPECT_THAT(html, HasSubstr("(10 bytes, not text)"));
+}
+
+// A caption replaces the action's bytes, an empty view keeps showing the one
+// before it, and steps past the budget say so.
+TEST_F(DashboardTest, AReplayShowsCaptionsAndKeepsTheLastView) {
+  GameRecord record;
+  record.set_game_id("o1_1-g3_0");
+  record.set_game("nim");
+  record.add_player_names("alice");
+  record.add_player_names("builtin:random");
+  record.set_initial_view("board 0");
+  for (const auto& [caption, view] :
+       {std::pair{"alice takes 2", "board 1"}, std::pair{"random takes 1", ""},
+        std::pair{"", ""}}) {
+    GameRecord::Step* step = record.add_steps();
+    step->set_player(0);
+    step->set_action("\xff");
+    step->set_caption(caption);
+    step->set_view(view);
+  }
+  record.set_views_cut_at(2);
+  record.set_result(GameRecord::WIN);
+  games_->Store(record);
+
+  const std::string html = Page("/games/o1_1-g3_0");
+  EXPECT_THAT(html, HasSubstr("seat 0 (alice): alice takes 2</p>"));
+  EXPECT_THAT(html, Not(HasSubstr("not text")));
+  // Step 2 has no view of its own: it shows step 1's.
+  EXPECT_THAT(html, HasSubstr("data-v=\"1\" data-own=\"1\"><p>Move 1:"));
+  EXPECT_THAT(html, HasSubstr("data-v=\"1\"><p>Move 2:"));
+  EXPECT_THAT(html, HasSubstr("(no view: past the budget for views)"));
+  EXPECT_THAT(html, HasSubstr("id=\"speed\""));
+  EXPECT_THAT(html, HasSubstr("seek(1)"));
 }
 
 TEST_F(DashboardTest, UnknownAndUnsafeTargetsAreNotFound) {

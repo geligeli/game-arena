@@ -286,7 +286,9 @@ TEST_F(NimGameRunTest, RecordsAViewOfEveryState) {
   EXPECT_EQ(record->initial_view(), "21:0");
   ASSERT_EQ(record->steps_size(), 21);
   EXPECT_EQ(record->steps(0).view(), "20:1");
+  EXPECT_EQ(record->steps(0).caption(), "seat 0 takes 1");
   EXPECT_EQ(record->steps(20).view(), "0:0");
+  EXPECT_FALSE(record->has_views_cut_at());
 }
 
 TEST_F(NimGameRunTest, StopsRecordingViewsPastTheCap) {
@@ -300,8 +302,12 @@ TEST_F(NimGameRunTest, StopsRecordingViewsPastTheCap) {
   RunToCompletion({MakeSeat(alice), MakeSeat(bob)}, config);
 
   ASSERT_TRUE(record.has_value());
-  EXPECT_EQ(record->steps(1).view(), "19:0");
-  EXPECT_EQ(record->steps(2).view(), "");
+  // Captions count too: "21:0" + "seat 0 takes 1" + "20:1" is past 10.
+  EXPECT_EQ(record->steps(0).view(), "20:1");
+  EXPECT_EQ(record->steps(1).view(), "");
+  EXPECT_EQ(record->steps(1).caption(), "");
+  ASSERT_TRUE(record->has_views_cut_at());
+  EXPECT_EQ(record->views_cut_at(), 1);
 }
 
 TEST_F(NimGameRunTest, DrawGoesToTheFasterSeat) {

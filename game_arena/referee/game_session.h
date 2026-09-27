@@ -29,29 +29,34 @@ struct RecordedStep {
 
 // State bytes to action bytes; the action is validated like a remote client's.
 using BuiltinFn =
-    std::function<std::string(std::string_view state_bytes, std::mt19937 &gen)>;
+    std::function<std::string(std::string_view state_bytes, std::mt19937& gen)>;
 
 // nullopt, with *error set, for an unknown spec.
 using BuiltinFactory = std::function<std::optional<BuiltinFn>(
-    std::string_view spec, std::string *error)>;
+    std::string_view spec, std::string* error)>;
 
 class GameSession {
  public:
   virtual ~GameSession() = default;
 
   virtual std::string SerializeState() const = 0;
-  // The state as text for a person: what a replay shows, one per step.
+  // The state as text for a person: what a replay shows, one per step. Empty
+  // after a step means unchanged: the replay keeps showing the last view. May
+  // be ANSI-coloured (SGR only).
   virtual std::string RenderState() const { return SerializeState(); }
+  // The last step, as one line for a person: the replay's caption for it.
+  // Empty shows the action's bytes instead. May be ANSI-coloured.
+  virtual std::string RenderLastStep() const { return {}; }
   virtual int CurrentPlayer() const = 0;  // seat index
   virtual bool IsChanceNode() const = 0;
   // Precondition: IsChanceNode(). Records the step.
-  virtual void ApplyChanceAction(std::mt19937 &gen) = 0;
+  virtual void ApplyChanceAction(std::mt19937& gen) = 0;
   // On failure sets *error and leaves the state untouched.
   virtual bool ApplySerializedAction(std::string_view bytes,
-                                     std::string *error) = 0;
+                                     std::string* error) = 0;
   virtual std::optional<GameOutcome> Outcome() const = 0;
 
-  const std::vector<RecordedStep> &Steps() const { return steps_; }
+  const std::vector<RecordedStep>& Steps() const { return steps_; }
   int MoveCount() const { return static_cast<int>(steps_.size()); }
 
  protected:
