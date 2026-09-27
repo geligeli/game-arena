@@ -22,16 +22,12 @@ bazel run //game_arena/server:problem_server -- \
 // tournament problem only if you never hardcode one of them.
 
 #include <grpcpp/grpcpp.h>
-#include <unistd.h>
+#include <signal.h>
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
-#include <csignal>
 #include <filesystem>
-#include <fstream>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <system_error>
 
@@ -78,26 +74,6 @@ ABSL_FLAG(int, shutdown_grace_s, 5,
           "cancelling them");
 
 namespace {
-
-std::mutex g_shutdown_mutex;
-std::condition_variable g_shutdown_cv;
-bool g_shutdown_requested = false;
-
-// Runs in signal context, so it does the least it can: set a flag and wake the
-// main thread, which does the actual shutdown.
-extern "C" void OnShutdownSignal(int /*signum*/) {
-  {
-    std::lock_guard lock(g_shutdown_mutex);
-    g_shutdown_requested = true;
-  }
-  g_shutdown_cv.notify_all();
-}
-
-// Blocks until SIGINT/SIGTERM.
-void WaitForShutdownSignal() {
-  std::unique_lock lock(g_shutdown_mutex);
-  g_shutdown_cv.wait(lock, [] { return g_shutdown_requested; });
-}
 
 // Turns the problem's evaluation spec into the scheduler's knobs. The scheduler
 // stays problem-agnostic: it knows about orders and timeouts, not about games
@@ -166,6 +142,14 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
 }  // namespace
 
 int main(int argc, char **argv) {
+  // Blocked before any thread starts, so every thread inherits the mask and
+  // only the sigwait below ever sees them.
+  sigset_t shutdown_signals;
+  sigemptyset(&shutdown_signals);
+  sigaddset(&shutdown_signals, SIGINT);
+  sigaddset(&shutdown_signals, SIGTERM);
+  pthread_sigmask(SIG_BLOCK, &shutdown_signals, nullptr);
+
   absl::ParseCommandLine(argc, argv);
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
@@ -314,9 +298,6 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  std::signal(SIGINT, OnShutdownSignal);
-  std::signal(SIGTERM, OnShutdownSignal);
-
   LOG(INFO) << "Problem '" << problem->problem_id() << "' ("
             << (problem->has_match() ? "match" : "grade")
             << ") on :" << absl::GetFlag(FLAGS_grpc_port) << ", leaderboard on "
@@ -334,7 +315,8 @@ int main(int argc, char **argv) {
               << ": the default is that every participant reads every "
                  "submission";
   }
-  WaitForShutdownSignal();
+  int signum = 0;
+  sigwait(&shutdown_signals, &signum);
   LOG(INFO) << "Shutting down";
 
   // The grace period is a backstop for stragglers -- an arena RPC mid-flight, a
