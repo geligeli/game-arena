@@ -65,6 +65,7 @@ def arena_problem(
         registry = None,
         kit_files = [],
         tree = [],
+        exclude = [],
         kit_base = None,
         visibility = None):
     """Defines the tournament targets for one problem. See the module docstring.
@@ -73,6 +74,8 @@ def arena_problem(
       registry: the alwayslink cc_library defining GameRegistry(); None for a graded problem.
       kit_files: every file a participant receives, all source files of this repository.
       tree: one `filegroup(srcs = glob(["**"]))` per package outside the root one.
+      exclude: glob patterns kept out of the root package's share of the sandbox tree. That
+        share is every file on disk there, git-ignored ones included, e.g. compile_commands.json.
       kit_base: in place of the arena's kit_base; build it on that one and keep its uid 1000.
     """
     if registry:
@@ -94,7 +97,10 @@ def arena_problem(
     # manual, like every target that carries a base: `//...` must not need a registry.
     sandbox_tree(
         name = "sandbox_tree",
-        srcs = native.glob(["**"], exclude = [".arena/**", ".bazelrc.local", "bazel-*/**"]) + tree,
+        srcs = native.glob(
+            ["**"],
+            exclude = [".arena/**", ".bazelrc.local", "bazel-*/**"] + exclude,
+        ) + tree,
         prefix = "workspace",
         tags = ["manual"],
         visibility = visibility,
