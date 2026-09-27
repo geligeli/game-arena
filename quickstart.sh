@@ -1,4 +1,5 @@
 #!/usr/bin/bash
+set -euo pipefail
 TAG=latest
 REGISTRY=registry.takumi.city/connect4-kit
 NAME_P1=alice
@@ -8,6 +9,27 @@ NAME_P2=bob
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 SESSION="game-arena-c4"
 TARGET_DIR=${DIR}/examples/connect4
+
+# The base images, built, pushed and pinned where they are used, by digest: the
+# base in the arena's MODULE.bazel and the agents' FROM, the agents in
+# connect4's MODULE.bazel. An unchanged Dockerfile is a docker cache hit and
+# the same digest, so a pin only moves when its Dockerfile does: commit it then.
+repin() {  # <old digest> <pushed tag> <files...>
+  local new
+  new=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$2" \
+    | grep "^${2%:*}@" | cut -d@ -f2)
+  sed -i "s/$1/$new/" "${@:3}"
+}
+BAZEL=$(cat ${DIR}/.bazelversion)
+BASE=registry.takumi.city/game-arena-base:noble-bazel${BAZEL}-nano
+docker build --provenance=false --sbom=false --push \
+ --build-arg BAZEL_VERSION=${BAZEL} -t ${BASE} ${DIR}/docker/base
+repin $(grep -o 'sha256:[0-9a-f]*' ${DIR}/docker/coding-agents/Dockerfile) ${BASE} \
+ ${DIR}/MODULE.bazel ${DIR}/docker/coding-agents/Dockerfile
+AGENTS=registry.takumi.city/game-arena-kit-agents:latest
+docker build --provenance=false --sbom=false --push -t ${AGENTS} ${DIR}/docker/coding-agents
+repin $(grep -A2 'name = "kit_agents"' ${TARGET_DIR}/MODULE.bazel | grep -o 'sha256:[0-9a-f]*') \
+ ${AGENTS} ${TARGET_DIR}/MODULE.bazel
 
 cd $TARGET_DIR
 
@@ -47,6 +69,7 @@ tmux split-window -vf -t $SESSION -c $TARGET_DIR "docker run \
  -e ARENA_SERVER=localhost:50051 \
  -e ARENA_NAME=${NAME_P1} \
  -e ARENA_TOKEN=${TOKEN_P1} \
+ -e ARENA_RESTORE=1 \
  -e CLAUDE_CODE_OAUTH_TOKEN \
  ${REGISTRY}:${TAG}
 "
@@ -59,6 +82,7 @@ tmux split-window -h -t $SESSION -c $TARGET_DIR "docker run \
  -e ARENA_SERVER=localhost:50051 \
  -e ARENA_NAME=${NAME_P2} \
  -e ARENA_TOKEN=${TOKEN_P2} \
+ -e ARENA_RESTORE=1 \
  ${REGISTRY}:${TAG}
 "
 
