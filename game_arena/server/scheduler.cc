@@ -150,7 +150,7 @@ auto Scheduler::TryReserve(const std::string &client_id,
   return reservation;
 }
 
-bool Scheduler::FillSideLocked(const proto::Candidate &candidate,
+void Scheduler::FillSideLocked(const proto::Candidate &candidate,
                                proto::Side *side) const {
   side->set_candidate_id(candidate.candidate_id());
   *side->mutable_params() = candidate.params();
@@ -160,10 +160,6 @@ bool Scheduler::FillSideLocked(const proto::Candidate &candidate,
   // shared filesystem.
   // From the candidate as handed over, not looked up by id: a resubmit is
   // staged beside the entry it replaces, and the two share one.
-  if (candidate.patch().empty()) {
-    LOG(ERROR) << "Candidate " << candidate.candidate_id() << " has no patch";
-    return false;
-  }
   side->set_patch(candidate.patch());
 
   // "{submission_id}" is expanded here, so the worker never sees a template and
@@ -174,7 +170,6 @@ bool Scheduler::FillSideLocked(const proto::Candidate &candidate,
   }
   side->set_bot_target(
       ExpandSubmissionId(config_.bot_target(), candidate.candidate_id()));
-  return true;
 }
 
 std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
@@ -188,9 +183,7 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
   order.set_opponent_spec(opponent);
   order.set_num_games(games);
 
-  if (!FillSideLocked(candidate, order.mutable_candidate())) {
-    return std::nullopt;
-  }
+  FillSideLocked(candidate, order.mutable_candidate());
 
   if (order.has_grade()) {
     // A graded order has no opponent: running the command *is* the whole
@@ -216,9 +209,7 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
     return std::nullopt;
   }
   order.set_opponent_spec(std::string(kPlayerPrefix) + rival->candidate_id());
-  if (!FillSideLocked(*rival, order.mutable_opponent())) {
-    return std::nullopt;
-  }
+  FillSideLocked(*rival, order.mutable_opponent());
   return order;
 }
 
@@ -321,14 +312,6 @@ std::vector<std::string> Scheduler::LadderLocked(
   return ladder;
 }
 
-int Scheduler::FreeSlotsLocked() const {
-  int free = 0;
-  for (const auto &[id, state] : workers_) {
-    free += state.worker->slots() - static_cast<int>(state.in_flight.size());
-  }
-  return free;
-}
-
 void Scheduler::DispatchLocked() {
   bool progress = true;
   while (progress) {
@@ -344,23 +327,16 @@ void Scheduler::DispatchLocked() {
 
       // The emptiest worker first, so work spreads across hosts instead of
       // filling one before touching the next.
-      WorkerState *best = nullptr;
-      for (auto &[id, state] : workers_) {
-        const int room =
-            state.worker->slots() - static_cast<int>(state.in_flight.size());
-        if (room <= 0) {
-          continue;
-        }
-        if (best == nullptr ||
-            room > best->worker->slots() -
-                       static_cast<int>(best->in_flight.size())) {
-          best = &state;
-        }
-      }
-      if (best == nullptr) {
+      const auto room = [](const auto &entry) {
+        return entry.second.worker->slots() -
+               static_cast<int>(entry.second.in_flight.size());
+      };
+      const auto emptiest = std::ranges::max_element(workers_, {}, room);
+      if (emptiest == workers_.end() || room(*emptiest) <= 0) {
         ++queued;
         continue;
       }
+      WorkerState *best = &emptiest->second;
 
       proto::WorkOrder order = std::move(job.pending.front());
       proto::FleetMessage msg;

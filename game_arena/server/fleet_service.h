@@ -26,9 +26,7 @@
 namespace tournament_arena {
 
 // A FleetWorker backed by one Attach stream.
-class StreamFleetWorker
-    : public FleetWorker,
-      public std::enable_shared_from_this<StreamFleetWorker> {
+class StreamFleetWorker : public FleetWorker {
  public:
   using Stream =
       grpc::ServerReaderWriter<proto::FleetMessage, proto::WorkerMessage>;

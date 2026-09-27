@@ -35,7 +35,6 @@
 #include "game_arena/server/fleet_worker.h"
 #include "game_arena/server/job_log.h"
 #include "game_arena/server/scheduler_config.pb.h"
-#include "game_arena/standings/elo_store.h"
 #include "game_arena/standings/game_history.h"
 #include "game_arena/standings/standings.h"
 
@@ -144,15 +143,13 @@ class Scheduler {
   // Caller holds mutex_.
   std::vector<std::string> LadderLocked(const std::string &self) const;
   // Builds the whole order, opponent sources included. Returns nullopt when the
-  // named rival cannot play (unknown, not ready, wrong game). Not const: each
-  // call consumes an order id.
+  // named rival cannot play (unknown or not ready). Not const: each call
+  // consumes an order id.
   std::optional<proto::WorkOrder> MakeOrderLocked(
       const proto::Candidate &candidate, const std::string &opponent, int games,
       const std::string &job_id);
   // Fills one side of an order: its patch and its expanded bazel targets.
-  // Returns false when the patch cannot be read, which makes the order
-  // unrunnable rather than silently short.
-  bool FillSideLocked(const proto::Candidate &candidate,
+  void FillSideLocked(const proto::Candidate &candidate,
                       proto::Side *side) const;
   std::string EnqueueLocked(const proto::Candidate &candidate,
                             const std::vector<std::string> &opponents,
@@ -165,7 +162,6 @@ class Scheduler {
   void ConcludeJobLocked(Job *job);
   // Writes |job|'s record to job_log_. Caller holds mutex_.
   void PersistLocked(Job *job);
-  int FreeSlotsLocked() const;
 
   const SchedulerConfig config_;
   CandidateStore *candidates_;               // not owned

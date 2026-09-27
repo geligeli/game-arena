@@ -30,10 +30,6 @@ void NormalizeDeps(std::vector<std::string> *deps) {
 
 }  // namespace
 
-std::string CandidateBinaryName(const proto::CandidateHarness &harness) {
-  return harness.binary_name().empty() ? "bot" : harness.binary_name();
-}
-
 std::string GenerateCandidateBuild(const proto::CandidateHarness &harness,
                                    const std::vector<std::string> &file_paths,
                                    const std::string &entry_header,
@@ -108,7 +104,9 @@ std::string GenerateCandidateBuild(const proto::CandidateHarness &harness,
   // the entry header are local_defines, and those do not reach a prebuilt
   // library.
   build << "cc_binary(\n"
-        << "    name = \"" << CandidateBinaryName(harness) << "\",\n"
+        << "    name = \""
+        << (harness.binary_name().empty() ? "bot" : harness.binary_name())
+        << "\",\n"
         << "    srcs = [\"" << harness.main_src() << "\"],\n"
         << "    local_defines = [\n"
         << "        r'CANDIDATE_ENTRY_HEADER=\\\"' + package_name() + r'/"

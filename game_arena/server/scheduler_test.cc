@@ -60,16 +60,16 @@ class SchedulerTest : public ::testing::Test {
            ("scheduler_" + std::to_string(::getpid()) + "_" +
             std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
     std::filesystem::remove_all(dir_);
-    SubmissionRules rules;
-    rules.files_submit_dir = "solutions";
-    rules.policy.add_allowed_dep_prefixes("//problem/lib:");
-    rules.policy.add_allowed_dep_prefixes("//problem/lib:");
-    rules.policy.add_allowed_dep_prefixes("//problem/game:");
-    rules.policy.add_allowed_dep_prefixes("//problem/strategies:");
-    rules.policy.add_allowed_dep_prefixes("@abseil-cpp//");
-    rules.harness.set_api_dep("//problem/harness:api");
-    rules.harness.set_main_src("//problem/harness:main.cc");
-    rules.policy.add_allow_paths("solutions/**");
+    proto::SubmissionPolicy rules;
+    rules.set_files_submit_dir("solutions");
+    rules.add_allowed_dep_prefixes("//problem/lib:");
+    rules.add_allowed_dep_prefixes("//problem/lib:");
+    rules.add_allowed_dep_prefixes("//problem/game:");
+    rules.add_allowed_dep_prefixes("//problem/strategies:");
+    rules.add_allowed_dep_prefixes("@abseil-cpp//");
+    rules.mutable_harness()->set_api_dep("//problem/harness:api");
+    rules.mutable_harness()->set_main_src("//problem/harness:main.cc");
+    rules.add_allow_paths("solutions/**");
     store_ = std::make_unique<CandidateStore>(dir_ / "candidates",
                                               CandidateLimits{}, rules);
     elo_ = std::make_unique<tournament_broker::EloStore>(dir_ / "ratings.pb",

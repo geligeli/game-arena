@@ -2,8 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <boost/json/object.hpp>
-#include <boost/json/serialize.hpp>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -117,8 +115,9 @@ std::string Slugify(const std::string &display_name) {
 }
 
 CandidateStore::CandidateStore(std::filesystem::path dir,
-                               CandidateLimits limits, SubmissionRules rules)
-    : dir_(std::move(dir)), limits_(limits), rules_(std::move(rules)) {
+                               CandidateLimits limits,
+                               proto::SubmissionPolicy policy)
+    : dir_(std::move(dir)), limits_(limits), policy_(std::move(policy)) {
   std::error_code ec;
   std::filesystem::create_directories(dir_, ec);
   if (ec) {
@@ -213,7 +212,7 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
   if (request.patch().empty()) {
     // The structured form is a convenience over the patch form, so it is
     // checked here and then converted; everything below applies to the result.
-    if (rules_.files_submit_dir.empty()) {
+    if (policy_.files_submit_dir().empty()) {
       *error =
           "this problem takes patches, not file lists: send a unified diff in "
           "the patch field";
@@ -251,7 +250,7 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
                "' is not among the submitted files";
       return false;
     }
-    const auto &allowed_prefixes = rules_.policy.allowed_dep_prefixes();
+    const auto &allowed_prefixes = policy_.allowed_dep_prefixes();
     for (const std::string &dep : request.extra_deps()) {
       const bool allowed =
           std::any_of(allowed_prefixes.begin(), allowed_prefixes.end(),
@@ -278,11 +277,10 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
   if (!patch.has_value()) {
     return false;
   }
-  const proto::SubmissionPolicy &policy = rules_.policy;
-  if (policy.max_patch_bytes() > 0 &&
-      patch->size() > policy.max_patch_bytes()) {
+  if (policy_.max_patch_bytes() > 0 &&
+      patch->size() > policy_.max_patch_bytes()) {
     *error = "patch is too large (" + std::to_string(patch->size()) +
-             " bytes, max " + std::to_string(policy.max_patch_bytes()) + ")";
+             " bytes, max " + std::to_string(policy_.max_patch_bytes()) + ")";
     return false;
   }
 
@@ -290,20 +288,20 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
   if (!ParseUnifiedDiff(*patch, &parsed, error)) {
     return false;
   }
-  if (policy.max_files() > 0 && parsed.files.size() > policy.max_files()) {
+  if (policy_.max_files() > 0 && parsed.files.size() > policy_.max_files()) {
     *error =
         "patch touches too many files: " + std::to_string(parsed.files.size()) +
-        " (max " + std::to_string(policy.max_files()) + ")";
+        " (max " + std::to_string(policy_.max_files()) + ")";
     return false;
   }
-  if (policy.max_hunks() > 0 &&
-      static_cast<uint32_t>(parsed.total_hunks) > policy.max_hunks()) {
+  if (policy_.max_hunks() > 0 &&
+      static_cast<uint32_t>(parsed.total_hunks) > policy_.max_hunks()) {
     *error = "patch has too many hunks: " + std::to_string(parsed.total_hunks) +
-             " (max " + std::to_string(policy.max_hunks()) + ")";
+             " (max " + std::to_string(policy_.max_hunks()) + ")";
     return false;
   }
   for (const std::string &path : TouchedPaths(parsed)) {
-    if (!PathAllowed(policy, id, path, error)) {
+    if (!PathAllowed(policy_, id, path, error)) {
       return false;
     }
   }
@@ -322,12 +320,8 @@ std::optional<std::string> CandidateStore::PatchForLocked(
   if (!request.patch().empty()) {
     return std::string(request.patch());
   }
-  if (rules_.files_submit_dir.empty()) {
-    *error = "this problem takes patches, not file lists";
-    return std::nullopt;
-  }
 
-  const std::string root = rules_.files_submit_dir + "/" + candidate_id;
+  const std::string root = policy_.files_submit_dir() + "/" + candidate_id;
   std::vector<NewFile> files;
   std::vector<std::string> paths;
   for (const proto::SourceFile &file : request.files()) {
@@ -338,7 +332,7 @@ std::optional<std::string> CandidateStore::PatchForLocked(
   // The BUILD is generated, never submitted: a submitter who could write their
   // own could write a genrule, and a genrule runs arbitrary code at build time.
   const std::string build = GenerateCandidateBuild(
-      rules_.harness, paths, request.entry_header(),
+      policy_.harness(), paths, request.entry_header(),
       {request.extra_deps().begin(), request.extra_deps().end()});
   if (build.empty()) {
     *error =
@@ -385,24 +379,6 @@ bool CandidateStore::WriteManifestLocked(
     return false;
   }
   return true;
-}
-
-void CandidateStore::AppendIndexLocked(
-    const proto::Candidate &candidate) const {
-  std::ofstream index(dir_ / "index.jsonl", std::ios::app);
-  if (!index) {
-    LOG(ERROR) << "Could not append to candidate index in " << dir_;
-    return;
-  }
-  index << boost::json::serialize(boost::json::object{
-               {"candidate_id", candidate.candidate_id()},
-               {"display_name", candidate.display_name()},
-               {"author", candidate.author()},
-               {"game", candidate.game()},
-               {"parent_id", candidate.parent_id()},
-               {"submitted_unix_ms", candidate.submitted_unix_ms()},
-           })
-        << "\n";
 }
 
 std::optional<proto::Candidate> CandidateStore::Create(
@@ -501,7 +477,6 @@ std::optional<proto::Candidate> CandidateStore::Create(
     *error = "cannot write manifest";
     return std::nullopt;
   }
-  AppendIndexLocked(candidate);
   (staged ? staged_ : candidates_)[candidate.candidate_id()] = candidate;
   LOG(INFO) << "Candidate " << candidate.candidate_id() << " submitted by '"
             << candidate.author() << "' (" << patch->size() << " byte patch, "

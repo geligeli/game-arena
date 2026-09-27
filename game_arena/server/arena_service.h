@@ -29,7 +29,6 @@ namespace tournament_arena {
 
 class ArenaService final : public proto::Arena::Service {
  public:
-  // |graded| is what GetProblem reports.
   // |game| is the problem's game (empty for a graded problem): one server
   // runs one problem, so a submission that does not name a game gets this
   // one -- the game is not the submitter's to state.
@@ -37,9 +36,9 @@ class ArenaService final : public proto::Arena::Service {
   // client registry has nobody to authenticate against. The startup log says
   // so, loudly.
   ArenaService(CandidateStore *candidates, Scheduler *scheduler,
-               Standings *standings, bool graded, std::string game,
+               Standings *standings, std::string game,
                proto::ProblemInfo problem_info = {},
-               ClientRegistry *clients = nullptr, int default_list_limit = 50);
+               ClientRegistry *clients = nullptr);
 
   grpc::Status Submit(grpc::ServerContext *context,
                       const proto::SubmitRequest *request,
@@ -96,12 +95,10 @@ class ArenaService final : public proto::Arena::Service {
   CandidateStore *candidates_;  // not owned
   Scheduler *scheduler_;        // not owned
   Standings *standings_;        // not owned
-  const bool graded_;
   const std::string game_;
   // Served verbatim by GetProblem; built once at startup from the config.
   const proto::ProblemInfo problem_info_;
   ClientRegistry *clients_;  // not owned, may be null
-  const int default_list_limit_;
 };
 
 }  // namespace tournament_arena

@@ -8,7 +8,6 @@
 //   <dir>/<candidate_id>/manifest.pb    the Candidate proto
 //   <dir>/<candidate_id>/patch.diff     the submission itself
 //   <dir>/<candidate_id>/src/<path>     files the patch adds, extracted
-//   <dir>/index.jsonl                   one line per submission, append-only
 //
 // A submission *is* a patch. A structured submission (a list of files plus an
 // entry header) is converted into an add-only patch here, at submit time, so
@@ -49,25 +48,11 @@ struct CandidateLimits {
   std::size_t max_build_error_bytes = 8 * 1024;
 };
 
-// What the store needs from the problem to turn a submission into a patch and
-// decide whether to accept it. Filled from ProblemConfig; passed rather than
-// read from a global so the store stays testable without a config file.
-struct SubmissionRules {
-  proto::SubmissionPolicy policy;
-  // Directory a structured submission's files are placed under, as
-  // <files_submit_dir>/<candidate_id>/<path>. Empty rejects the structured
-  // form, requiring every submission to arrive as a patch.
-  std::string files_submit_dir;
-  // What the generated BUILD compiles a structured submission against. Comes
-  // from the problem config: the arena does not know what a solution links.
-  proto::CandidateHarness harness;
-};
-
 class CandidateStore : public CandidateView {
  public:
   explicit CandidateStore(std::filesystem::path dir,
                           CandidateLimits limits = {},
-                          SubmissionRules rules = {});
+                          proto::SubmissionPolicy policy = {});
 
   // Rebuilds the in-memory index from disk. Call once at startup.
   void Load();
@@ -112,7 +97,6 @@ class CandidateStore : public CandidateView {
   // Writes manifest.pb for |candidate| into |root|. Caller holds mutex_.
   bool WriteManifestLocked(const std::filesystem::path &root,
                            const proto::Candidate &candidate) const;
-  void AppendIndexLocked(const proto::Candidate &candidate) const;
 
   // Builds the patch a request will be stored as: the request's own when it
   // sent one, otherwise a synthesized add-only patch under the problem's
@@ -123,7 +107,7 @@ class CandidateStore : public CandidateView {
 
   const std::filesystem::path dir_;
   const CandidateLimits limits_;
-  const SubmissionRules rules_;
+  const proto::SubmissionPolicy policy_;
 
   mutable std::mutex mutex_;
   // candidate_id -> manifest. Small (hundreds), and every lookup is on the

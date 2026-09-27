@@ -26,9 +26,6 @@
 
 namespace tournament_arena {
 
-// The name of the generated binary: harness.binary_name, or "bot".
-std::string CandidateBinaryName(const proto::CandidateHarness &harness);
-
 // The BUILD file contents. Returns an empty string when the submission is
 // unusable: no files, an entry header that is not one of them, or a harness
 // that does not say what to compile against.

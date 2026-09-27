@@ -200,12 +200,9 @@ int main(int argc, char **argv) {
   // by the leaderboard's /api/games.
   tournament_broker::GameHistory history(data_dir / "games");
 
-  tournament_arena::SubmissionRules rules;
-  rules.policy = problem->submission();
-  rules.files_submit_dir = problem->submission().files_submit_dir();
-  rules.harness = problem->submission().harness();
   tournament_arena::CandidateStore candidates(
-      data_dir / "candidates", tournament_arena::CandidateLimits{}, rules);
+      data_dir / "candidates", tournament_arena::CandidateLimits{},
+      problem->submission());
   candidates.Load();
 
   // How this problem is scored. Everything above it -- the scheduler, the
@@ -278,6 +275,7 @@ int main(int argc, char **argv) {
           tournament_arena::proto::ProblemInfo::SOURCE_ALL);
       break;
   }
+  info.set_graded(graded);
   if (graded) {
     const auto *primary = tournament_arena::PrimaryMetric(*problem);
     info.set_lower_is_better(primary->direction() ==
@@ -285,7 +283,7 @@ int main(int argc, char **argv) {
   }
 
   tournament_arena::ArenaService arena(
-      &candidates, &scheduler, standings.get(), graded,
+      &candidates, &scheduler, standings.get(),
       problem->has_match() ? problem->match().game() : "", std::move(info),
       clients.get());
   tournament_arena::FleetService fleet(&scheduler);

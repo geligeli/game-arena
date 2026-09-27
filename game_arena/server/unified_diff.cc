@@ -114,10 +114,6 @@ bool ParseUnifiedDiff(std::string_view diff, Patch *out, std::string *error) {
       current.is_new = true;
       continue;
     }
-    if (StartsWith(line, "deleted file mode")) {
-      current.is_delete = true;
-      continue;
-    }
     if (StartsWith(line, "--- ")) {
       // A bare `diff -u` has no "diff --git" line, so the ---/+++ pair is what
       // starts a file. Only treat it as a new entry when one is not open.
@@ -132,9 +128,6 @@ bool ParseUnifiedDiff(std::string_view diff, Patch *out, std::string *error) {
     }
     if (StartsWith(line, "+++ ")) {
       current.new_path = CleanPath(line.substr(4));
-      if (current.new_path.empty()) {
-        current.is_delete = true;
-      }
       continue;
     }
     if (StartsWith(line, "@@")) {
@@ -142,7 +135,6 @@ bool ParseUnifiedDiff(std::string_view diff, Patch *out, std::string *error) {
         *error = "a hunk appears before any file header";
         return false;
       }
-      ++current.hunks;
       ++out->total_hunks;
       collecting = current.is_new;
       continue;

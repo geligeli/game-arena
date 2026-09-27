@@ -30,8 +30,6 @@ struct PatchFile {
   std::string old_path;
   std::string new_path;
   bool is_new = false;
-  bool is_delete = false;
-  int hunks = 0;
   // The added file's contents, rebuilt from its '+' lines. Only populated for
   // an added file, so the leaderboard can show a submission's source without
   // checking anything out.

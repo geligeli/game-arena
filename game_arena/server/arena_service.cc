@@ -10,18 +10,20 @@
 
 namespace tournament_arena {
 
+namespace {
+constexpr int kDefaultListLimit = 50;
+}  // namespace
+
 ArenaService::ArenaService(CandidateStore *candidates, Scheduler *scheduler,
-                           Standings *standings, bool graded, std::string game,
+                           Standings *standings, std::string game,
                            proto::ProblemInfo problem_info,
-                           ClientRegistry *clients, int default_list_limit)
+                           ClientRegistry *clients)
     : candidates_(candidates),
       scheduler_(scheduler),
       standings_(standings),
-      graded_(graded),
       game_(std::move(game)),
       problem_info_(std::move(problem_info)),
-      clients_(clients),
-      default_list_limit_(default_list_limit) {}
+      clients_(clients) {}
 
 bool ArenaService::Authenticate(grpc::ServerContext *context,
                                 ClientIdentity *identity,
@@ -95,7 +97,6 @@ grpc::Status ArenaService::GetProblem(
   // Filled here rather than at startup: the score label belongs to the
   // standings, and asking them keeps one source of truth for it.
   response->set_score_label(standings_->score_label());
-  response->set_graded(graded_);
   return grpc::Status::OK;
 }
 
@@ -255,8 +256,7 @@ grpc::Status ArenaService::ListCandidates(
                      });
   }  // NEWEST: CandidateStore::List already returns newest first.
 
-  const int limit =
-      request->limit() > 0 ? request->limit() : default_list_limit_;
+  const int limit = request->limit() > 0 ? request->limit() : kDefaultListLimit;
   if (static_cast<int>(rows.size()) > limit) {
     rows.resize(limit);
   }
@@ -283,8 +283,7 @@ grpc::Status ArenaService::Leaderboard(grpc::ServerContext *context,
                                        const proto::LeaderboardRequest *request,
                                        proto::LeaderboardResponse *response) {
   const std::string reader = Reader(context);
-  const int limit =
-      request->limit() > 0 ? request->limit() : default_list_limit_;
+  const int limit = request->limit() > 0 ? request->limit() : kDefaultListLimit;
   // The ordering is the standings' to decide: lower is better for a runtime,
   // higher for a rating, and this has no business knowing which.
   response->set_score_label(standings_->score_label());

@@ -122,7 +122,6 @@ cc_library(
         "//game_arena/proto:arena_cc_proto",
         "//game_arena/proto:problem_cc_proto",
         "@abseil-cpp//absl/log",
-        "@boost.json",
     ],
 )
 
@@ -220,7 +219,6 @@ cc_library(
     hdrs = ["scheduler.h"],
     deps = [
         ":candidate_store",
-        "//game_arena/standings:elo_store",
         ":fleet_worker",
         ":job_log",
         ":problem_config",
@@ -253,7 +251,6 @@ cc_library(
     deps = [
         ":candidate_store",
         ":client_registry",
-        "//game_arena/standings:elo_store",
         ":scheduler",
         "//game_arena/proto:arena_cc_grpc",
         "@abseil-cpp//absl/log",
