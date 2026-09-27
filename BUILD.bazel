@@ -1,14 +1,6 @@
 exports_files(["cpp_format.yaml"])
 
-# The arena a participant's kit builds against: the packages a kit's own
-# targets reach, and nothing else. `arena_tournament kit` copies these into
-# <kit>/arena and points the kit's MODULE.bazel at them, so a participant gets
-# the game side of the arena without the coordinator, the fleet, the sandbox,
-# or the tools that decide their score.
-#
-# Each package here is closed under dependency -- its only in-repo deps are the
-# others -- which is what makes this list checkable rather than hopeful:
-# //game_arena:kit_surface_test asserts it.
+# What a kit vendors as ./arena. Closed under dependency: //game_arena:kit_surface_test.
 filegroup(
     name = "kit_surface",
     srcs = [
@@ -25,9 +17,7 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-# The arena a sandbox image carries, which its bazelrc overrides game_arena
-# to: what a participant's kit has, the macro a problem's root BUILD loads, and
-# what a graded problem's grader builds with.
+# What a sandbox image carries at the path its bazelrc overrides game_arena to.
 filegroup(
     name = "sandbox_surface",
     srcs = [

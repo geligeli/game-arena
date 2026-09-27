@@ -1,9 +1,5 @@
 # syntax=docker/dockerfile:1.7
-#
-# Needs BuildKit (the default since Docker 23) for the cache mounts below: apt's
-# package lists and .debs, and the downloaded release binaries, live in build
-# caches instead of in the image. A rebuild after a cache-busting edit
-# re-downloads nothing, and none of it ships in the final layers.
+# Needs BuildKit for the cache mounts: downloads live in build caches, not layers.
 
 FROM ubuntu:24.04
 
@@ -12,37 +8,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# The base image ships /etc/apt/apt.conf.d/docker-clean, which deletes the
-# package cache after every install and so defeats a cache mount. Keep the
-# downloads instead -- they are in a cache mount, not in the image.
+# docker-clean would empty the package cache after each install, defeating the cache mount.
 RUN rm -f /etc/apt/apt.conf.d/docker-clean \
  && printf 'Binary::apt::APT::Keep-Downloaded-Packages "true";\n' \
       > /etc/apt/apt.conf.d/keep-cache
 
-# One apt layer, --no-install-recommends, lists and .debs in cache mounts.
-#
-# No compiler: bazel's is the hermetic-llvm module in MODULE.bazel, and .bazelrc
-# sets BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN so it never looks for a host one. A g++
-# or clang here could only hide a build that is not hermetic. For the same
-# reason there is no clang-tidy: it depends on a whole clang-18, and linting is
-# cpp_format's job (tools/cpp_format.sh). What is left of LLVM is the two tools
-# that run outside bazel: clang-format for the pre-commit hook, and clangd,
-# which reads the hermetic toolchain's flags and headers out of the
-# compile_commands.json that `tools/cpp_format.sh compile_commands` writes.
-#
-# --no-install-recommends means anything the tooling needs has to be named here
-# explicitly. The non-obvious entries:
-#   less, patch,   git recommendations the tooling actually relies on: pagers,
-#   openssh-client bazel's patch fallback for single_version_override, and
-#                  git-over-SSH.
-#   python3        outside bazel only (the hermetic rules_python toolchain
-#                  covers the build): pre-commit's fix_guards hook,
-#                  scripts/new_problem.sh, and process_test, which spawns
-#                  /usr/bin/python3.
-#
-# The docker CLI is deliberately absent: the docker-outside-of-docker feature in
-# devcontainer.json installs it (plus buildx and compose), so installing
-# docker-ce-cli here only duplicated it and added a second apt repo to set up.
+# No compiler: one here could only hide a build that is not hermetic (the toolchain is
+# hermetic-llvm). python3 is for fix_guards, new_problem.sh and process_test. The docker
+# CLI comes from devcontainer.json's docker-outside-of-docker feature.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update \
@@ -68,15 +41,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       unzip \
  && localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
 
-# Pinned tool versions, declared here rather than at the top of the file: an ARG
-# is part of the cache key of every RUN it is in scope for, so declaring these
-# above the apt layer made a version bump re-run the apt install too.
+# Declared below the apt layer: an ARG is in the cache key of every RUN in its scope.
 ARG BAZEL_VERSION=8.7.0
 ARG BUILDIFIER_VERSION=8.2.1
 
-# Release binaries, one layer, downloads kept in a cache mount so a version bump
-# only fetches the binary that changed. curl gets -f so an HTTP error fails the
-# build instead of installing an HTML error page as an executable.
+# curl -f, so an HTTP error fails the build instead of installing an error page.
 RUN --mount=type=cache,target=/var/cache/download,sharing=locked \
     set -eux; \
     dl() { \
@@ -98,18 +67,14 @@ USER ubuntu
 WORKDIR /home/ubuntu
 ENV PATH="/home/ubuntu/.local/bin:/home/ubuntu/.kimi-code/bin:/home/ubuntu/.opencode/bin:${PATH}"
 
-# Generating the completion script runs bazel, which extracts its ~195MB install
-# base into ~/.cache. devcontainer.json bind-mounts the host's ~/.cache over that
-# at runtime, so it was dead weight in the image -- drop it in the same layer.
+# The install base bazel unpacks into ~/.cache is shadowed by devcontainer.json's mount.
 RUN set -eux; \
     bazel help completion bash > /home/ubuntu/.bazel-complete.bash; \
     echo 'source /home/ubuntu/.bazel-complete.bash' >> /home/ubuntu/.bashrc; \
     bazel shutdown || true; \
     rm -rf /home/ubuntu/.cache
 
-# Agent CLIs last: they install whatever is current, so they are the layers most
-# likely to be rebuilt, and nothing below them would stay cached. One RUN each so
-# re-running one does not re-download the other two.
+# Agent CLIs last and one RUN each: they install whatever is current.
 RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
 RUN curl -fsSL https://opencode.ai/install | bash

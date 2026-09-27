@@ -6,11 +6,6 @@
 !/docker/coding-agents/home/.claude
 __pycache__
 compile_commands.json
-
-# Local tournament state written by arena_tournament (data dirs, kits).
 .arena/
-
-# Machine-local bazel settings (see .bazelrc).
 .bazelrc.local
-
 index.*
