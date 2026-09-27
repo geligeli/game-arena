@@ -1,25 +1,4 @@
-// The problem server: one process per problem, and a pure coordinator.
-/*
-bazel run //game_arena/server:problem_server -- \
-    --problem_config=game_arena/problems/nim.textproto \
-    --data_dir=tournament_data
-*/
-//
-// It accepts submissions, stores them, schedules their evaluation onto the
-// sandbox fleet, and publishes the standings. It does not build anything, run
-// anything, or referee anything -- all of that happens on a worker, in a
-// container, behind the SandboxFleet stream that workers dial in on.
-//
-// That is not a stylistic claim, it is a build-time one: this binary links no
-// game and no problem code, and
-// //game_arena/server:no_problem_code_test fails the build if
-// it ever does. The rules of any particular problem live in
-// //game_arena/referee, which only workers depend on.
-//
-// What the problem is comes from --problem_config (see proto/problem.proto).
-// Everything that used to be a flag here about *how a game is played* now lives
-// in that file, because it is the same question for a graded problem and a
-// tournament problem only if you never hardcode one of them.
+// The coordinator. It links no problem code (:no_problem_code_test).
 
 #include <grpcpp/grpcpp.h>
 #include <signal.h>
@@ -75,9 +54,6 @@ ABSL_FLAG(int, shutdown_grace_s, 5,
 
 namespace {
 
-// Turns the problem's evaluation spec into the scheduler's knobs. The scheduler
-// stays problem-agnostic: it knows about orders and timeouts, not about games
-// or benchmarks.
 tournament_arena::SchedulerConfig SchedulerConfigFor(
     const tournament_arena::proto::ProblemConfig &problem) {
   tournament_arena::SchedulerConfig config;
@@ -105,11 +81,8 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
     order->set_game_time_budget_ms(match.game_time_budget_ms());
     order->set_max_moves_per_game(match.max_moves_per_game());
     *order->mutable_registry_options() = match.registry_options();
-    // Kept under the worker's own run timeout, so a stuck match comes back as a
-    // partial tally rather than an order-level failure.
+    // Under the run timeout, so a stuck match comes back as a partial tally.
     order->set_match_deadline_s(std::max(1, order->run_timeout_s() - 30));
-    // The bot is the build target named per submission; a problem that builds
-    // nothing per submission plays with the first target it builds.
     const auto &targets = config.build_targets();
     const auto bot = std::find_if(
         targets.begin(), targets.end(), [](const std::string &target) {
@@ -119,7 +92,6 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
       config.set_bot_target(bot != targets.end() ? *bot : targets[0]);
     }
   } else {
-    // A graded problem has no opponents: one order is the whole evaluation.
     const auto &grade = problem.grade();
     config.set_placement_games(static_cast<int>(grade.repeats()));
     order->set_run_timeout_s(static_cast<int>(grade.timeout_s()));
@@ -142,8 +114,7 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
 }  // namespace
 
 int main(int argc, char **argv) {
-  // Blocked before any thread starts, so every thread inherits the mask and
-  // only the sigwait below ever sees them.
+  // Before any thread starts, so only the sigwait below sees them.
   sigset_t shutdown_signals;
   sigemptyset(&shutdown_signals);
   sigaddset(&shutdown_signals, SIGINT);
@@ -177,8 +148,6 @@ int main(int argc, char **argv) {
   tournament_broker::EloStore elo_store(data_dir / "ratings.pb",
                                         absl::GetFlag(FLAGS_k_factor));
   elo_store.Load();
-  // Every game the fleet played, as each order's referee recorded it; served
-  // by the leaderboard's /api/games.
   tournament_broker::GameHistory history(data_dir / "games");
 
   tournament_arena::CandidateStore candidates(
@@ -186,8 +155,6 @@ int main(int argc, char **argv) {
       problem->submission());
   candidates.Load();
 
-  // How this problem is scored. Everything above it -- the scheduler, the
-  // Arena service, the HTTP table -- sees rows, not ratings or milliseconds.
   std::unique_ptr<tournament_arena::Standings> standings;
   std::unique_ptr<tournament_arena::MetricStandings> metric_standings;
   const bool graded = problem->has_grade();
@@ -204,8 +171,6 @@ int main(int argc, char **argv) {
         &elo_store, &candidates, problem->problem_id());
   }
 
-  // Who may submit, and how much. Reread on an unknown token so adding a client
-  // does not mean a restart that drops every attached worker mid-order.
   std::unique_ptr<tournament_arena::ClientRegistry> clients;
   if (!absl::GetFlag(FLAGS_clients).empty()) {
     clients = std::make_unique<tournament_arena::ClientRegistry>(
@@ -220,14 +185,11 @@ int main(int argc, char **argv) {
                     "the caller says it is";
   }
 
-  // Every job, with its submission and each build's output, for the
-  // dashboard: the candidate store keeps only a participant's latest code.
   tournament_arena::JobLog job_log(data_dir / "jobs");
   tournament_arena::Scheduler scheduler(SchedulerConfigFor(*problem),
                                         &candidates, standings.get(), &history,
                                         &job_log);
-  // What an agent needs to know about the problem, curated from the config:
-  // the operator's image names and timeouts are not a submitter's business.
+  // Curated: the operator's image names and timeouts are not a submitter's.
   tournament_arena::proto::ProblemInfo info;
   info.set_problem_id(problem->problem_id());
   info.set_display_name(problem->display_name());
@@ -262,10 +224,7 @@ int main(int argc, char **argv) {
   builder.AddListeningPort(
       "0.0.0.0:" + std::to_string(absl::GetFlag(FLAGS_grpc_port)),
       grpc::InsecureServerCredentials());
-  // Reclaim connections whose peer disappeared without closing the socket. A
-  // worker host that is powered off mid-order leaves no FIN behind, so without
-  // keepalive its Attach stream stays open until the OS gives up on the TCP
-  // connection, which can be hours.
+  // A host powered off mid-order sends no FIN; keepalive reclaims its stream.
   const int keepalive_ms = absl::GetFlag(FLAGS_keepalive_s) * 1000;
   builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIME_MS, keepalive_ms);
   builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 20000);
@@ -281,8 +240,6 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Jobs, participants and game replays beside the leaderboard. As
-  // unauthenticated as it, so source shows only where everyone may read it.
   const tournament_arena::Dashboard dashboard(
       &candidates, &job_log, &history, standings.get(),
       problem->source().visibility() ==
@@ -319,9 +276,7 @@ int main(int argc, char **argv) {
   sigwait(&shutdown_signals, &signum);
   LOG(INFO) << "Shutting down";
 
-  // The grace period is a backstop for stragglers -- an arena RPC mid-flight, a
-  // worker's Attach stream. Cancelled calls surface in their handlers, which
-  // always finish the RPC. The no-argument Shutdown() would wait forever.
+  // With no deadline, Shutdown() would wait forever on a worker's Attach.
   server->Shutdown(std::chrono::system_clock::now() +
                    std::chrono::seconds(absl::GetFlag(FLAGS_shutdown_grace_s)));
   leaderboard.Stop();

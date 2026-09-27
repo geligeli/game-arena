@@ -21,8 +21,7 @@ namespace tournament_arena {
 
 namespace {
 
-// Equal-length, data-independent comparison. A byte-at-a-time early return
-// would let a caller with a stopwatch learn a valid hash one byte at a time.
+// Constant-time, or a stopwatch would reveal a valid hash a byte at a time.
 bool ConstantTimeEquals(std::string_view a, std::string_view b) {
   return a.size() == b.size() &&
          CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
@@ -39,7 +38,7 @@ std::string HashToken(std::string_view token) {
 }
 
 std::string MintToken() {
-  // random_device is the right source here and nowhere near a hot path.
+  // The system CSPRNG, never a seeded PRNG: this is a credential.
   std::random_device entropy;
   std::string bytes(32, '\0');
   for (char &byte : bytes) {
@@ -64,8 +63,7 @@ proto::Client MakeClient(std::string_view client_id,
 }
 
 std::string ClientBlockText(const proto::Client &client) {
-  // Printed through the registry message, so the block is exactly the shape
-  // Load() parses -- one "clients { ... }" entry.
+  // Printed through the registry message: exactly the shape Load() parses.
   proto::ClientRegistry one;
   *one.add_clients() = client;
   std::string text;
@@ -186,8 +184,6 @@ bool ClientRegistry::Load(std::string *error) {
     }
   }
 
-  // Only swapped in once the whole file is known good, so a typo during a
-  // reload leaves the running set intact rather than locking everyone out.
   {
     std::lock_guard lock(mutex_);
     registry_ = std::move(parsed);

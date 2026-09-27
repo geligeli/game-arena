@@ -8,8 +8,7 @@ namespace tournament_arena {
 
 namespace {
 
-// Sorts and de-duplicates everything after the first entry, which is the
-// harness dep and stays pinned at the top where a reader expects it.
+// Sorts and de-duplicates all but the first entry, the harness dep.
 void NormalizeDeps(std::vector<std::string> *deps) {
   std::sort(deps->begin() + 1, deps->end());
   deps->erase(std::unique(deps->begin(), deps->end()), deps->end());
@@ -28,9 +27,6 @@ std::string GenerateCandidateBuild(const proto::CandidateHarness &harness,
       file_paths.end()) {
     return {};
   }
-  // Without these there is nothing to compile a submission against. That is a
-  // misconfigured problem rather than a bad submission, but the answer is the
-  // same: do not emit a BUILD that cannot work.
   if (harness.api_dep().empty() || harness.main_src().empty()) {
     return {};
   }
@@ -82,9 +78,7 @@ std::string GenerateCandidateBuild(const proto::CandidateHarness &harness,
   }
   build << ")\n\n";
 
-  // The harness main is compiled here rather than depended on: the game and
-  // the entry header are local_defines, and those do not reach a prebuilt
-  // library.
+  // main is compiled here: local_defines do not reach a prebuilt library.
   build << "cc_binary(\n"
         << "    name = \""
         << (harness.binary_name().empty() ? "bot" : harness.binary_name())

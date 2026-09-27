@@ -4,22 +4,16 @@ package tournament_arena;
 
 import "game_arena/proto/arena.proto";
 
-// The scheduler's knobs, from the problem config (see SchedulerConfigFor in
-// problem_server.cc). Never leaves the coordinator, so it is not in proto/.
+// From the problem config (SchedulerConfigFor). Coordinator-only.
 message SchedulerConfig {
-  // Every order starts as a copy of this: the referee, the sandbox, the build
-  // flags and the timeouts, all on every order because a worker has none of
-  // its own to disagree with. grade.argv still carries "{submission_id}".
+  // Every order starts as a copy; grade.argv still has "{submission_id}".
   optional proto.WorkOrder order = 17;
-  // From ProblemConfig.build.targets, still carrying "{submission_id}"; the
-  // scheduler expands it per submission.
+  // Still carrying "{submission_id}", expanded per submission.
   repeated string build_targets = 3;
-  // The target whose binary plays a match, likewise templated. Empty for a
-  // graded problem, which runs a command rather than a bot.
+  // Likewise templated. Empty for a graded problem.
   optional string bot_target = 4;
-  // Opponents a freshly submitted candidate is placed against.
   repeated string placement_opponents = 12;
   optional int32 placement_games = 13 [default = 4];
-  // How many rated rivals a placement also plays, spread across the board.
+  // Rated rivals a placement also plays, spread across the board.
   optional int32 ladder_size = 14 [default = 3];
 }

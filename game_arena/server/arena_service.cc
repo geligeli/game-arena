@@ -29,7 +29,7 @@ bool ArenaService::Authenticate(grpc::ServerContext *context,
                                 ClientIdentity *identity,
                                 grpc::Status *status) const {
   if (clients_ == nullptr) {
-    return true;  // no registry: nobody to authenticate, nothing to meter
+    return true;
   }
   const auto &metadata = context->client_metadata();
   const auto it = metadata.find("x-arena-token");
@@ -49,8 +49,7 @@ bool ArenaService::Authenticate(grpc::ServerContext *context,
     }
   }
   if (!resolved.has_value()) {
-    // Deliberately the same message for "unknown" and "disabled": which one it
-    // is tells a caller whether they have guessed a real token.
+    // One message for both, or it would confirm a guessed token.
     *status = {grpc::StatusCode::UNAUTHENTICATED,
                "unknown or disabled client token"};
     return false;
@@ -74,8 +73,7 @@ bool ArenaService::MayReadSource(const proto::Candidate &candidate,
     case proto::ProblemInfo::SOURCE_NONE:
       return false;
     case proto::ProblemInfo::SOURCE_OWN:
-      // An unauthenticated caller has no own candidates, and neither does a
-      // candidate with no recorded author: no token, no match, no read.
+      // Empty must not match an authorless candidate: no token, no read.
       return !reader.empty() && candidate.author() == reader;
     default:
       return true;
@@ -94,8 +92,6 @@ grpc::Status ArenaService::GetProblem(
     const proto::GetProblemRequest * /*request*/,
     proto::ProblemInfo *response) {
   *response = problem_info_;
-  // Filled here rather than at startup: the score label belongs to the
-  // standings, and asking them keeps one source of truth for it.
   response->set_score_label(standings_->score_label());
   return grpc::Status::OK;
 }
@@ -104,8 +100,6 @@ proto::CandidateStanding ArenaService::StandingFor(
     const proto::Candidate &candidate) const {
   proto::CandidateStanding standing;
   *standing.mutable_candidate() = candidate;
-  // Whatever this problem scores by. For a match problem that is ELO and W/D/L;
-  // for a graded one, the ranked metric with the rest carried alongside.
   const Standing row = standings_->Get(candidate.candidate_id());
   standing.set_score(row.score);
   standing.set_wins(row.wins);
@@ -129,9 +123,7 @@ grpc::Status ArenaService::Submit(grpc::ServerContext *context,
     return status;
   }
 
-  // Reserve before storing. A refused submission must leave nothing on disk,
-  // and the check has to be part of the same locked step as the claim or two
-  // concurrent submits both pass.
+  // Reserve before storing, so a refused submission leaves nothing on disk.
   std::string error;
   auto reservation = scheduler_->TryReserve(identity.client_id, identity.quota,
                                             request->cancel_running(), &error);
@@ -139,26 +131,21 @@ grpc::Status ArenaService::Submit(grpc::ServerContext *context,
     return {grpc::StatusCode::RESOURCE_EXHAUSTED, error};
   }
 
-  // Attribution comes from the token, never the request: a quota you can
-  // enforce beside a credit you cannot is only half a system.
+  // Attribution comes from the token, never the request.
   proto::SubmitRequest attributed = *request;
   if (!identity.client_id.empty()) {
     attributed.set_author(identity.client_id);
-    // Unnamed, a submission is called what its token says its author is.
     if (attributed.display_name().empty()) {
       attributed.set_display_name(identity.client_id);
     }
   }
-  // One server runs one problem, so the game is the problem's, not the
-  // submitter's: an empty one would otherwise reach the referee as --game="".
+  // The game is the problem's; an empty one would reach the referee as "".
   if (attributed.game().empty()) {
     attributed.set_game(game_);
   }
 
   const auto candidate = candidates_->Create(attributed, &error);
   if (!candidate.has_value()) {
-    // Rejections are the agent's to fix, so the message is the whole payload.
-    // The reservation goes back when it falls out of scope here.
     return {grpc::StatusCode::INVALID_ARGUMENT, error};
   }
   response->set_candidate_id(candidate->candidate_id());
@@ -180,8 +167,6 @@ grpc::Status ArenaService::GetCandidate(
             "unknown candidate '" + request->candidate_id() + "'"};
   }
   *response = *candidate;
-  // The manifest is public -- who submitted what, and how it scored. The
-  // patch on it is source, and follows the same rule GetSource does.
   Redact(reader, response);
   return grpc::Status::OK;
 }
@@ -189,8 +174,7 @@ grpc::Status ArenaService::GetCandidate(
 grpc::Status ArenaService::GetSource(grpc::ServerContext *context,
                                      const proto::GetSourceRequest *request,
                                      proto::SourceFile *response) {
-  // Strict, unlike the listings: this serves source and nothing else, so "you
-  // are nobody, so you may read nothing" is worth saying as UNAUTHENTICATED.
+  // Strict, unlike the listings: an anonymous caller is UNAUTHENTICATED.
   ClientIdentity reader;
   grpc::Status status;
   if (problem_info_.source_visibility() == proto::ProblemInfo::SOURCE_OWN &&
@@ -203,8 +187,7 @@ grpc::Status ArenaService::GetSource(grpc::ServerContext *context,
             "unknown candidate '" + request->candidate_id() + "'"};
   }
   if (!MayReadSource(*candidate, reader.client_id)) {
-    // Named, not hidden: the candidate is on the leaderboard either way, and
-    // "no such candidate" would only send an agent looking for a typo.
+    // Not NOT_FOUND: the candidate is on the leaderboard either way.
     return {grpc::StatusCode::PERMISSION_DENIED,
             problem_info_.source_visibility() == proto::ProblemInfo::SOURCE_OWN
                 ? "this tournament serves only your own submissions' source"
@@ -237,9 +220,7 @@ grpc::Status ArenaService::ListCandidates(
   }
 
   if (request->order() == proto::ListCandidatesRequest::BEST_FIRST) {
-    // The standings already know which end is better, so take their order
-    // rather than re-deriving it here and getting it backwards for a metric
-    // where lower wins.
+    // The standings know which end is better; for some metrics lower wins.
     std::vector<std::string> ranked;
     for (const Standing &row : standings_->Rank(0)) {
       ranked.push_back(row.candidate_id);
@@ -284,14 +265,12 @@ grpc::Status ArenaService::Leaderboard(grpc::ServerContext *context,
                                        proto::LeaderboardResponse *response) {
   const std::string reader = Reader(context);
   const int limit = request->limit() > 0 ? request->limit() : kDefaultListLimit;
-  // The ordering is the standings' to decide: lower is better for a runtime,
-  // higher for a rating, and this has no business knowing which.
   response->set_score_label(standings_->score_label());
   for (const Standing &row : standings_->Rank(limit)) {
     const auto candidate = candidates_->Get(row.candidate_id);
     if (!candidate.has_value() ||
         candidate->status() != proto::Candidate::READY) {
-      continue;  // A leaderboard is for things that actually ran.
+      continue;
     }
     proto::CandidateStanding standing = StandingFor(*candidate);
     Redact(reader, standing.mutable_candidate());

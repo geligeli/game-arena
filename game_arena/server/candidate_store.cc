@@ -23,9 +23,7 @@ int64_t NowUnixMs() {
       .count();
 }
 
-// Only sources the generated BUILD knows how to compile. A submission that
-// smuggles in a shell script or a BUILD file of its own would otherwise run
-// with the worker's privileges at build time.
+// Only what the generated BUILD compiles: a submitted BUILD or script runs.
 constexpr std::array<std::string_view, 5> kAllowedExtensions = {
     ".h", ".hpp", ".cc", ".cpp", ".inl"};
 
@@ -51,9 +49,7 @@ bool ValidateSourcePath(const std::string &path, std::string *error) {
     *error = "file path must be relative, got '" + path + "'";
     return false;
   }
-  // Checked on the raw string rather than via std::filesystem, because
-  // lexically_normal() would silently resolve "a/../../b" into something that
-  // looks fine.
+  // On the raw string: lexically_normal() would quietly resolve "a/../../b".
   if (path.find("..") != std::string::npos) {
     *error = "file path must not contain '..': '" + path + "'";
     return false;
@@ -146,11 +142,7 @@ void CandidateStore::Load() {
 
 namespace {
 
-// A path passes when it matches some allow pattern (or there are none) and no
-// deny pattern. Deny wins, so a broad allow can be narrowed without rewriting
-// it.
-// "{submission_id}" in a pattern is the submitter's own id, which is how a
-// problem confines a patch to its participant's directory.
+// Deny wins; no allow pattern allows all; {submission_id} is the submitter's.
 bool PathAllowed(const proto::SubmissionPolicy &policy, const std::string &id,
                  const std::string &path, std::string *error) {
   for (const std::string &pattern : policy.deny_paths()) {
@@ -176,7 +168,6 @@ bool PathAllowed(const proto::SubmissionPolicy &policy, const std::string &id,
 
 }  // namespace
 
-// A participant is one entry: its id is who submitted it.
 static std::string CandidateIdFor(const proto::SubmitRequest &request) {
   return Slugify(request.author().empty() ? request.display_name()
                                           : request.author());
@@ -194,8 +185,6 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
   }
 
   if (request.patch().empty()) {
-    // The structured form is a convenience over the patch form, so it is
-    // checked here and then converted; everything below applies to the result.
     if (policy_.files_submit_dir().empty()) {
       *error =
           "this problem takes patches, not file lists: send a unified diff in "
@@ -253,9 +242,7 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
     }
   }
 
-  // From here on there is only a patch, whichever form arrived. Validating the
-  // synthesized one too is deliberate: the generator is code, and a policy that
-  // only checked hand-written patches would not check what actually gets built.
+  // A synthesized patch is checked too: it is what actually gets built.
   const std::string id = CandidateIdFor(request);
   const std::optional<std::string> patch = PatchForLocked(request, id, error);
   if (!patch.has_value()) {
@@ -313,8 +300,7 @@ std::optional<std::string> CandidateStore::PatchForLocked(
     paths.push_back(file.path());
   }
 
-  // The BUILD is generated, never submitted: a submitter who could write their
-  // own could write a genrule, and a genrule runs arbitrary code at build time.
+  // Generated, never submitted: a submitter's own BUILD could hold a genrule.
   const std::string build = GenerateCandidateBuild(
       policy_.harness(), paths, request.entry_header(),
       {request.extra_deps().begin(), request.extra_deps().end()});
@@ -346,8 +332,7 @@ bool CandidateStore::WriteManifestLocked(
   proto::CandidateManifest manifest;
   *manifest.mutable_candidate() = candidate;
   const std::filesystem::path path = root / "manifest.pb";
-  // Written via a temp file and renamed, so a crash mid-write cannot leave a
-  // half-parsed manifest that Load() would then skip.
+  // Temp file and rename: Load() would skip a manifest a crash half-wrote.
   const std::filesystem::path tmp = path.string() + ".tmp";
   {
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
@@ -428,10 +413,7 @@ std::optional<proto::Candidate> CandidateStore::Create(
     }
   }
 
-  // Files the patch adds are also written out plainly, so a rival's source can
-  // be read and grepped without reconstructing it from a diff. A patch that
-  // only modifies existing files adds none, and GetSource then has nothing to
-  // serve for it -- which is honest: those lines live in the repo, not here.
+  // Added files are also written out plainly, for GetSource and grep.
   for (const PatchFile &file : parsed.files) {
     if (!file.is_new || file.added_content.empty()) {
       continue;
@@ -491,9 +473,6 @@ std::optional<std::string> CandidateStore::ReadSource(
     }
     candidate = it->second;
   }
-  // Matched against the manifest rather than re-validated: only paths that
-  // were accepted at submit time can be read back, so there is no second
-  // parser to keep in agreement with the first.
   const auto &paths = candidate.file_paths();
   if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
     *error = "candidate '" + candidate_id + "' has no file '" + path + "'";

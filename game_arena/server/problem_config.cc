@@ -24,8 +24,6 @@ namespace tournament_arena {
 
 namespace {
 
-// Collects every parse diagnostic instead of only the first, so a config with
-// three typos takes one edit round rather than three.
 class CollectingErrors final : public google::protobuf::io::ErrorCollector {
  public:
   void RecordError(int line, google::protobuf::io::ColumnNumber column,
@@ -64,9 +62,7 @@ std::optional<proto::ProblemConfig> ParseProblemConfigText(
   CollectingErrors errors;
   google::protobuf::TextFormat::Parser parser;
   parser.RecordErrorsTo(&errors);
-  // An unknown field is a typo or a config written against a newer server. Both
-  // are worth failing on: silently ignoring it would apply a default the author
-  // believed they had overridden.
+  // Ignoring a typo'd field would apply a default the author meant to override.
   parser.AllowUnknownField(false);
   if (!parser.ParseFromString(std::string(text), &config)) {
     *error =
@@ -77,17 +73,14 @@ std::optional<proto::ProblemConfig> ParseProblemConfigText(
 }
 
 void ApplyProblemDefaults(proto::ProblemConfig *config) {
-  // Unset and "explicitly zero" are the same thing for a proto3 scalar, which
-  // is exactly right here: every field defaulted below is a limit where zero
-  // would be nonsense anyway. So the config is merged onto the defaults.
+  // proto3: unset is zero, never a sane limit, so the config merges onto these.
   proto::ProblemConfig defaults;
   google::protobuf::TextFormat::ParseFromString(
       R"pb(
         submission { max_patch_bytes: 2097152 max_files: 64 max_hunks: 512 }
         build { timeout_s: 1800 }
         sandbox { memory_limit_mb: 4096 pids_limit: 512 }
-        # No sentinel for "unlimited", deliberately: a quota that can be
-        # switched off is a quota nobody notices is off.
+        # No "unlimited": a quota that can be switched off goes unnoticed off.
         clients {
           default_quota { max_active_evaluations: 1 max_queued_jobs: 8 }
         }
@@ -122,9 +115,7 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
     return false;
   }
   if (config.sandbox().image().empty()) {
-    // Submitted code is built and run in a container, always. A problem with
-    // no image is a problem whose submissions would have to run as the
-    // worker's own user, and the arena has no mode that does that.
+    // Without one a submission would run as the worker's user: no such mode.
     *error =
         "sandbox.image is required: every submission is built and run in a "
         "container";
@@ -162,9 +153,7 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
         *error = "match.referee_target is required";
         return false;
       }
-      // These ride to the referee as a "k=v,k2=v2" flag, so a key or value
-      // carrying a separator would arrive as something else entirely. Caught
-      // here, at load, rather than as a puzzling referee on a worker.
+      // They ride to the referee as one "k=v,k2=v2" flag.
       for (const auto &[key, value] : match.registry_options()) {
         if (!kv_options::IsValidKey(key)) {
           *error =
@@ -189,8 +178,6 @@ bool ValidateProblemConfig(const proto::ProblemConfig &config,
       return false;
   }
 
-  // Ranking and evaluation have to agree, or the leaderboard reads a score that
-  // is never written.
   if (config.ranking().kind() == proto::RankingSpec::ELO &&
       !config.has_match()) {
     *error = "ranking.kind ELO requires a match evaluation";

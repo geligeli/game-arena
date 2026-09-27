@@ -14,8 +14,7 @@ namespace tournament_arena {
 
 namespace {
 
-// Splits on '\n', keeping empty lines. A trailing newline does not produce a
-// final empty line, so a diff ending in "\n" has no phantom entry.
+// Keeps empty lines, but a trailing newline makes no final empty one.
 std::vector<std::string_view> SplitLines(std::string_view text) {
   std::vector<std::string_view> lines = absl::StrSplit(text, '\n');
   if (lines.back().empty()) {
@@ -24,8 +23,7 @@ std::vector<std::string_view> SplitLines(std::string_view text) {
   return lines;
 }
 
-// Strips the "a/" or "b/" git prepends, and trims the trailing tab-timestamp a
-// plain `diff -u` leaves behind.
+// Drops git's "a/" or "b/" and the tab-timestamp a plain `diff -u` appends.
 std::string CleanPath(std::string_view raw) {
   const std::size_t tab = raw.find('\t');
   if (tab != std::string_view::npos) {
@@ -40,9 +38,6 @@ std::string CleanPath(std::string_view raw) {
   return std::string(raw);
 }
 
-// The same rules the store applies to any path it writes under: relative, no
-// '..', no absolute escape. Checked here because a patch header is the one
-// place a path arrives as free text.
 bool IsUsablePath(const std::string &path, std::string *error) {
   if (path.empty()) {
     *error = "a patch entry has an empty path";
@@ -71,8 +66,7 @@ bool ParseUnifiedDiff(std::string_view diff, Patch *out, std::string *error) {
 
   PatchFile current;
   bool in_file = false;
-  // Whether the hunk being read belongs to a newly added file, in which case
-  // its '+' lines are the file's contents.
+  // In a hunk of an added file, whose '+' lines are its contents.
   bool collecting = false;
 
   const auto flush = [&] {
@@ -95,8 +89,7 @@ bool ParseUnifiedDiff(std::string_view diff, Patch *out, std::string *error) {
       continue;
     }
     if (line.starts_with("--- ")) {
-      // A bare `diff -u` has no "diff --git" line, so the ---/+++ pair is what
-      // starts a file.
+      // A bare `diff -u` has no "diff --git" line to start a file.
       in_file = true;
       current.old_path = CleanPath(line.substr(4));
       if (current.old_path.empty()) {
@@ -123,8 +116,7 @@ bool ParseUnifiedDiff(std::string_view diff, Patch *out, std::string *error) {
       continue;
     }
     if (collecting && line.starts_with("\\ No newline at end of file")) {
-      // The '+' line before this one did end the file, so undo the newline
-      // this parser added for it.
+      // Undo the newline added for the '+' line before, which ended the file.
       if (!current.added_content.empty()) {
         current.added_content.pop_back();
       }
@@ -180,8 +172,7 @@ std::string MakeAddOnlyPatch(const std::vector<NewFile> &files) {
       absl::StrAppend(&diff, "+", line, "\n");
     }
     if (!ends_with_newline && !lines.empty()) {
-      // git records this explicitly, and without it the applied file gains a
-      // newline the submitter did not write.
+      // Or the applied file gains a newline the submitter did not write.
       absl::StrAppend(&diff, "\\ No newline at end of file\n");
     }
   }
@@ -189,8 +180,6 @@ std::string MakeAddOnlyPatch(const std::vector<NewFile> &files) {
 }
 
 bool PathMatchesGlob(std::string_view path, std::string_view pattern) {
-  // Recursive descent over the two strings. Patterns are short and come from a
-  // config file, so the simple form is the right one.
   if (pattern.empty()) {
     return path.empty();
   }
