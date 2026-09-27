@@ -2,42 +2,21 @@ syntax = "proto3";
 
 package tournament_arena.proto;
 
-// The kit's own config: what arena_cli does when you do not tell it.
-//
-// Written into a kit by `arena_tournament kit` as arena.textproto, read by
-// arena_cli from $ARENA_KIT or from the nearest enclosing directory that has
-// one. It steers this binary and nothing else, so it is yours to edit --
-// point it at another coordinator, widen what `submit` sends, move where
-// pulled sources land.
-//
-// Editing it does not widen what the tournament accepts. The coordinator
-// enforces the problem's own policy on everything that arrives: a file
-// outside what the problem allows is refused there, whatever this file says.
-// That is the whole reason it is safe to hand a participant a config they can
-// change.
-//
-// Deliberately free-standing: no import, nothing about orders, sandboxes or
-// scheduling. It is the one schema a participant is expected to read.
+// A kit's arena.textproto: arena_cli's defaults, from $ARENA_KIT or the nearest
+// enclosing directory. Yours to edit: the coordinator enforces its own policy.
 message KitConfig {
-  // The Arena service, host:port. $ARENA_SERVER wins over this, --server over
-  // both -- so the same kit runs against another coordinator with one
-  // environment variable.
+  // host:port of the Arena service; $ARENA_SERVER overrides it, --server both.
   string server = 2;
-  // Who the kit's token says you are. Display only: the coordinator derives
-  // the author of a submission from the token, never from what is sent.
+  // Display only: the coordinator takes the author from the token.
   string client_id = 4;
 
-  // Where every participant's implementation lives, one directory each, named
-  // after them: yours is <submit_dir>/<your name>, which is what `submit`
-  // sends, and `source <name>` puts a rival's beside it.
+  // Yours is <submit_dir>/<your name>; `source <name>` puts a rival's by it.
   string submit_dir = 9;
   // The directory yours is copied from the first time, relative to the kit.
   string starter_dir = 10;
 
-  // For `spar`, which plays yours against a rival's here: the binary a
-  // participant's directory builds, the game the referee is asked for, and
-  // the flags that bound a game the way the tournament bounds a rated one.
-  // |game| empty: a graded problem, with no opponent to spar with.
+  // For `spar`: the binary a participant's directory builds, the referee's
+  // game (empty: graded, no spar) and flags bounding a game like a rated one.
   string bot_binary = 11;
   string game = 12;
   repeated string referee_flags = 13;

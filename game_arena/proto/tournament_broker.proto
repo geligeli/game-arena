@@ -2,34 +2,24 @@ syntax = "proto3";
 
 package tournament_broker.proto;
 
-// Game-agnostic wire protocol for the tournament broker. Game states and
-// actions travel as opaque bytes: the serialized per-game protos from
-// mcts::GameSerializationTraits (e.g. risk_game.proto.RiskState for game
-// "risk2", tictactoe.proto.TicTacToeState for "tictactoe"). The broker proto
-// therefore stays stable when a game's state/action schema changes.
+// Game-agnostic: states and actions travel as opaque bytes.
 
 service TournamentBroker {
-  // One bidirectional stream per player connection. The first client message
-  // must be `hello`; the server then drives a single game with `game_start`,
-  // repeated `your_turn` (answered by the client with `action`), and a final
-  // `game_over`, after which the server closes the stream.
+  // One game per stream: `hello` first, then `game_start`, `your_turn`s each
+  // answered with an `action`, and `game_over`, after which the server closes.
   rpc Play(stream ClientMessage) returns (stream ServerMessage);
 }
 
 message Hello {
   string player_name = 1;  // identity, used for ELO and the leaderboard
-  string game = 2;         // game registry key, e.g. "risk2" or "tictactoe"
-  // "builtin:<spec>": play a built-in strategy immediately (e.g.
-  // "builtin:random", "builtin:mcts", "builtin:minimax").
-  // "player:<name>": wait for that one named player, who must ask for this
-  // connection's player_name in return. Both sides are paired as soon as the
-  // second one arrives; seats alternate across a series. A partner that never
-  // shows up closes this stream after the server's rendezvous timeout.
+  string game = 2;         // game registry key
+  // "builtin:<spec>", or "player:<name>" to pair with the player naming this
+  // one. Seats alternate across a series; a no-show times out.
   string opponent = 3;
 }
 
 message ActionMsg {
-  bytes action = 1;  // serialized per-game action proto
+  bytes action = 1;  // serialized action
 }
 
 message ClientMessage {
@@ -43,11 +33,11 @@ message GameStart {
   string game_id = 1;
   int32 seat = 2;  // this connection's player index (0 or 1)
   string opponent_name = 3;
-  bytes initial_state = 4;  // serialized game state proto
+  bytes initial_state = 4;  // serialized state
 }
 
 message YourTurn {
-  bytes state = 1;  // serialized game state proto; it is your seat's move
+  bytes state = 1;  // serialized state; your seat moves
   uint64 move_number = 2;
   int64 deadline_unix_ms = 3;  // server-side wall-clock turn deadline
 }
@@ -72,24 +62,19 @@ message ServerMessage {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Persistence (not part of the RPC surface)
-// ---------------------------------------------------------------------------
-
-// One completed game, written to <data_dir>/games/<game_id>.pb.
+// One finished game: <data_dir>/games/<game_id>.pb, and in a MatchReport.
 message GameRecord {
   string game_id = 1;
   string game = 2;
   repeated string player_names = 3;  // indexed by seat
   bytes initial_state = 4;
-  // GameSession::RenderState() of the initial state, and of the state after
-  // each step: what a replay shows. Bytes, because the default is the
-  // serialized state. Empty past the referee's per-game budget for them.
+  // RenderState() of the initial state, as Step.view is after each step: what
+  // a replay shows. Empty past the referee's per-game budget.
   bytes initial_view = 11;
 
   message Step {
     int32 player = 1;    // deciding player; -1 for chance resolutions
-    bytes action = 2;    // serialized per-game action proto
+    bytes action = 2;    // serialized action
     int64 unix_ms = 3;
     bytes view = 4;
   }
@@ -107,14 +92,12 @@ message GameRecord {
   int64 finished_unix_ms = 10;
 }
 
-// What a referee leaves at --report: every game it finished. The tally is
-// counted from these, so a match has one account of itself, not two.
+// What a referee leaves at --report; the tally is counted from it.
 message MatchReport {
   repeated GameRecord games = 1;
 }
 
-// Persistent ELO store, written to <data_dir>/ratings.pb. Ratings are tracked
-// per (game, player name) pair.
+// <data_dir>/ratings.pb.
 message RatingStore {
   map<string, Rating> ratings = 1;  // key: game + "\t" + player_name
 }
