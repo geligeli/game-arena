@@ -124,11 +124,15 @@ void GameRun::Step() {
   for (;;) {
     CaptureViews();
     if (const auto terminal = session_->Outcome()) {
-      Conclude(*terminal, "normal");
+      if (terminal->is_draw) {
+        ConcludeDraw("normal");
+      } else {
+        Conclude(*terminal, "normal");
+      }
       return;
     }
     if (session_->MoveCount() >= config_.max_moves_per_game) {
-      Conclude(GameOutcome{.is_draw = true}, "max_moves");
+      ConcludeDraw("max_moves");
       return;
     }
     if (session_->IsChanceNode()) {
@@ -158,7 +162,7 @@ void GameRun::Step() {
             return;
           }
           if (remaining < allowed) {
-            allowed = remaining;
+            allowed = std::chrono::ceil<std::chrono::milliseconds>(remaining);
             turn_budget_bound_ = true;
           }
         }
@@ -176,13 +180,14 @@ void GameRun::Step() {
       if (!action.has_value()) {
         return;  // Resumes from the observer or the deadline.
       }
-      time_used_[seat] += std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::steady_clock::now() - turn_started_);
+      time_used_[seat] += std::chrono::steady_clock::now() - turn_started_;
       waiting_seat_ = -1;
       CancelTurnTimer();
       action_bytes = std::move(*action);
     } else {
+      const auto started = std::chrono::steady_clock::now();
       action_bytes = seats_[seat].builtin(session_->SerializeState(), gen_);
+      time_used_[seat] += std::chrono::steady_clock::now() - started;
     }
 
     std::string error;
@@ -203,6 +208,16 @@ void GameRun::CaptureViews() {
     view_bytes_ += view.size();
     views_.push_back(std::move(view));
   }
+}
+
+// A draw goes to whoever thought less; exactly equal time stays a draw.
+void GameRun::ConcludeDraw(std::string reason) {
+  if (time_used_[0] == time_used_[1]) {
+    Conclude(GameOutcome{.is_draw = true}, std::move(reason));
+    return;
+  }
+  Conclude(GameOutcome{.winning_player = time_used_[0] < time_used_[1] ? 0 : 1},
+           "time_tiebreak");
 }
 
 void GameRun::Conclude(GameOutcome outcome, std::string reason) {

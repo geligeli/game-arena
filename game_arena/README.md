@@ -52,8 +52,10 @@ One bidirectional `TournamentBroker.Play` stream per game
    than the per-turn limit that ran out); an invalid action loses with
    `"illegal_action"`; disconnecting loses with `"opponent_disconnect"`.
 4. The game ends with `game_over` (result and reason), after which
-   the server closes the stream itself. Clients may half-close at any point;
-   they no longer have to in order for the server to release the call.
+   the server closes the stream itself. A draw goes to the seat that used
+   less total thinking time (`reason="time_tiebreak"`). Clients may
+   half-close at any point; they no longer have to in order for the server to
+   release the call.
 
 **Draining before `Finish()`.** A client whose deadline expires mid-think will
 find its next write rejected, because the server has already finished the call.

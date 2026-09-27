@@ -50,7 +50,7 @@ message GameOver {
   }
   Result result = 1;
   // "normal" | "timeout" | "time_budget" | "opponent_disconnect" |
-  // "illegal_action" | "max_moves"
+  // "illegal_action" | "max_moves" | "time_tiebreak"
   string reason = 2;
 }
 

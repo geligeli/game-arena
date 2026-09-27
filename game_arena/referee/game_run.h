@@ -59,6 +59,7 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   void Begin();
   void Step();
   void Conclude(GameOutcome outcome, std::string reason);
+  void ConcludeDraw(std::string reason);
   void CaptureViews();
   bool SendYourTurn(int seat, std::chrono::milliseconds allowed);
   void ArmTurnTimer(std::chrono::milliseconds delay);
@@ -91,7 +92,7 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   Timer::Id turn_timer_ = 0;
   int waiting_seat_ = -1;
   bool concluded_ = false;
-  std::array<std::chrono::milliseconds, 2> time_used_{};
+  std::array<std::chrono::steady_clock::duration, 2> time_used_{};
   std::chrono::steady_clock::time_point turn_started_;
   // The pending deadline is the game budget's rather than turn_timeout's.
   bool turn_budget_bound_ = false;

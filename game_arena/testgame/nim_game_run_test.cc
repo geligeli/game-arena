@@ -15,6 +15,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -37,8 +38,15 @@ class FakeClient final : public ClientHandle {
  public:
   enum class Mode { kPlayValid, kSilent, kIllegal };
 
-  FakeClient(std::string name, Mode mode)
-      : name_(std::move(name)), mode_(mode) {}
+  // A nonzero delay answers from another thread, so the referee clocks it.
+  FakeClient(std::string name, Mode mode, milliseconds delay = milliseconds(0))
+      : name_(std::move(name)), mode_(mode), delay_(delay) {}
+
+  ~FakeClient() override {
+    for (std::thread &t : threads_) {
+      t.join();
+    }
+  }
 
   std::string name() const override { return name_; }
 
@@ -64,7 +72,14 @@ class FakeClient final : public ClientHandle {
         Deliver(std::string(kUnparseableAction));
         break;
       case Mode::kPlayValid:
-        Deliver(std::string(kTakeOne));
+        if (delay_.count() == 0) {
+          Deliver(std::string(kTakeOne));
+          break;
+        }
+        threads_.emplace_back([this] {
+          std::this_thread::sleep_for(delay_);
+          Deliver(std::string(kTakeOne));
+        });
         break;
     }
     return true;
@@ -138,6 +153,8 @@ class FakeClient final : public ClientHandle {
 
   const std::string name_;
   const Mode mode_;
+  const milliseconds delay_;
+  std::vector<std::thread> threads_;  // touched only from Send, on the strand
 
   mutable std::mutex mu_;
   std::vector<std::string> inbox_;
@@ -273,6 +290,22 @@ TEST_F(NimGameRunTest, StopsRecordingViewsPastTheCap) {
   ASSERT_TRUE(record.has_value());
   EXPECT_EQ(record->steps(1).view(), "19:0");
   EXPECT_EQ(record->steps(2).view(), "");
+}
+
+TEST_F(NimGameRunTest, DrawGoesToTheFasterSeat) {
+  auto fast =
+      std::make_shared<FakeClient>("fast", FakeClient::Mode::kPlayValid);
+  auto slow = std::make_shared<FakeClient>("slow", FakeClient::Mode::kPlayValid,
+                                           milliseconds(20));
+  GameRunConfig config;
+  config.max_moves_per_game = 4;  // Nim never draws on its own
+  RunToCompletion({MakeSeat(slow), MakeSeat(fast)}, config);
+
+  ASSERT_TRUE(fast->game_over().has_value());
+  EXPECT_EQ(fast->game_over()->result(), proto::GameOver::WIN);
+  EXPECT_EQ(fast->game_over()->reason(), "time_tiebreak");
+  ASSERT_TRUE(slow->game_over().has_value());
+  EXPECT_EQ(slow->game_over()->result(), proto::GameOver::LOSS);
 }
 
 // A builtin seat takes the same path as a remote one, so the registry's
