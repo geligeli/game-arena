@@ -315,7 +315,7 @@ go(0);
 </script>)";
 
 // With a replay module: it draws each view (bytes, base64 in #views) into
-// #stage; a view past the budget, or a module that fails, says so instead.
+// #stage; a module that fails says so instead.
 constexpr std::string_view kModuleScript = R"(<script>
 (function(){var stage=document.getElementById('stage'),
 raw=JSON.parse(document.getElementById('views').textContent),
@@ -324,9 +324,7 @@ function bytes(v){if(!(v in cache)){var s=atob(raw[v]),b=new Uint8Array(s.length
 for(var i=0;i<s.length;i++)b[i]=s.charCodeAt(i);cache[v]=b}return cache[v]}
 import(game.module).then(function(m){
 return Promise.resolve(m.init&&m.init(stage,game)).then(function(){
-window.showView=function(i,v){if(raw[v]===null){
-stage.textContent='(no view: past the budget for views)';return}
-var f=frames[i];m.render(stage,bytes(v),
+window.showView=function(i,v){var f=frames[i];m.render(stage,bytes(v),
 {index:i,player:+f.dataset.p,caption:f.textContent})};
 showView(at,+frames[at].dataset.v)})}).catch(function(e){
 stage.textContent='(replay module failed to load: '+e+')'})})();
@@ -606,34 +604,22 @@ std::optional<std::string> Dashboard::ReplayPage(
   views.push_back(record->initial_view().empty()
                       ? Readable(record->initial_state())
                       : ViewHtml(record->initial_view()));
-  // The same views as bytes, for a replay module; nullopt past the budget.
-  std::vector<std::optional<std::string>> raw = {record->initial_view().empty()
-                                                     ? record->initial_state()
-                                                     : record->initial_view()};
+  // The same views as bytes, for a replay module.
+  std::vector<std::string> raw = {record->initial_view().empty()
+                                      ? record->initial_state()
+                                      : record->initial_view()};
   std::ostringstream frames;
   frames << "<div class=\"f\" data-v=\"0\" data-own=\"1\"><p>Start</p></div>";
-  const int cut_at = record->has_views_cut_at() ? record->views_cut_at()
-                                                : record->steps_size();
-  int cut_view = -1;
   for (int i = 0; i < record->steps_size(); ++i) {
     const GameRecord::Step& step = record->steps(i);
-    bool own = false;
-    if (i >= cut_at) {
-      if (cut_view < 0) {
-        views.push_back("(no view: past the budget for views)");
-        raw.emplace_back(std::nullopt);
-        cut_view = static_cast<int>(views.size()) - 1;
-        own = true;
-      }
-    } else if (!step.view().empty()) {
+    const bool own = !step.view().empty();
+    if (own) {
       views.push_back(ViewHtml(step.view()));
-      raw.emplace_back(step.view());
-      own = true;
+      raw.push_back(step.view());
     }
-    frames << "<div class=\"f\" data-v=\""
-           << (i >= cut_at ? cut_view : static_cast<int>(views.size()) - 1)
-           << "\" data-p=\"" << step.player() << "\""
-           << (own ? " data-own=\"1\"" : "") << "><p>Move " << i + 1 << ": ";
+    frames << "<div class=\"f\" data-v=\"" << views.size() - 1 << "\" data-p=\""
+           << step.player() << "\"" << (own ? " data-own=\"1\"" : "")
+           << "><p>Move " << i + 1 << ": ";
     if (step.player() >= 0 &&
         step.player() < static_cast<int>(players.size())) {
       frames << "seat " << step.player() << " ("
@@ -650,11 +636,9 @@ std::optional<std::string> Dashboard::ReplayPage(
   }
   if (!assets_.module.empty()) {
     std::string encoded = "[";
-    for (const std::optional<std::string>& view : raw) {
-      absl::StrAppend(&encoded, encoded.size() > 1 ? "," : "",
-                      view.has_value()
-                          ? absl::StrCat("\"", absl::Base64Escape(*view), "\"")
-                          : "null");
+    for (const std::string& view : raw) {
+      absl::StrAppend(&encoded, encoded.size() > 1 ? "," : "", "\"",
+                      absl::Base64Escape(view), "\"");
     }
     std::string game = absl::StrCat(
         "{\"game\":", JsonString(record->game()),

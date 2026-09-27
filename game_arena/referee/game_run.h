@@ -6,7 +6,6 @@
 
 #include <array>
 #include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -27,8 +26,6 @@ struct GameRunConfig {
   // Per seat per game; 0 leaves only turn_timeout, which alone bounds nothing.
   std::chrono::milliseconds game_time_budget{0};
   int max_moves_per_game = 50000;
-  // A record crosses gRPC whole, so steps past this many view bytes get none.
-  std::size_t max_view_bytes = 1 << 20;
 
   // On the game's strand, right after the record is stored.
   std::function<void(const proto::GameRecord&)> on_record;
@@ -86,7 +83,6 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
     std::string view;
   };
   std::vector<Captured> captured_;
-  std::size_t view_bytes_ = 0;
 
   // Keeps the game alive between events; released in Conclude().
   std::shared_ptr<GameRun> self_;

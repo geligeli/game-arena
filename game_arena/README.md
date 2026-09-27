@@ -202,9 +202,10 @@ A replay on the dashboard shows `RenderState()` after every move, with
 serialized state; override it when that is not readable as it is
 (`examples/connect4` draws its board). Both may use ANSI colours (SGR codes
 only). An empty `RenderState()` after a move keeps the previous view on screen.
-Captions and views count against `match.max_view_bytes`, and the record notes
-the step where it ran out (`views_cut_at`). Without a caption the replay shows
-the action's bytes, if they are text.
+Nothing caps them: a game's record, captions and views included, reaches the
+coordinator as one gRPC message, which `problem_server` accepts up to 64 MiB,
+so a long game has to keep its views within that. Without a caption the replay
+shows the action's bytes, if they are text.
 
 A problem can draw its own replays instead: `arena_problem(replay_assets =
 [...], replay_module = "replay.js")`. The coordinator serves every file of

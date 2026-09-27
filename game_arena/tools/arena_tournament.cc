@@ -1021,8 +1021,7 @@ std::string KitConfigText(const proto::ProblemConfig& config,
     for (const auto& [flag, value] :
          {std::pair{"--turn_timeout_ms=", match.turn_timeout_ms()},
           std::pair{"--game_time_budget_ms=", match.game_time_budget_ms()},
-          std::pair{"--max_moves_per_game=", match.max_moves_per_game()},
-          std::pair{"--max_view_bytes=", match.max_view_bytes()}}) {
+          std::pair{"--max_moves_per_game=", match.max_moves_per_game()}}) {
       if (value > 0) {
         kit.add_referee_flags(absl::StrCat(flag, value));
       }

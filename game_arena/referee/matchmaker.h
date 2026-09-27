@@ -7,7 +7,6 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -31,8 +30,7 @@ struct MatchmakerConfig {
   // Or a partner that never builds parks the other side forever.
   std::chrono::milliseconds rendezvous_timeout{60000};
   int max_moves_per_game = 50000;
-  std::size_t max_view_bytes = 1 << 20;  // see GameRunConfig
-  int worker_threads = 0;                // <= 0: hardware_concurrency()
+  int worker_threads = 0;  // <= 0: hardware_concurrency()
 
   std::function<void(const proto::GameRecord&)> on_record;
 };

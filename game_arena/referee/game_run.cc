@@ -51,7 +51,6 @@ void GameRun::Begin() {
   }
   record_.set_initial_state(session_->SerializeState());
   record_.set_initial_view(session_->RenderState());
-  view_bytes_ = record_.initial_view().size();
   record_.set_started_unix_ms(absl::ToUnixMillis(absl::Now()));
 
   // Weak: seats_ owns the handles, so a strong reference would be a cycle.
@@ -200,19 +199,10 @@ void GameRun::Step() {
   }
 }
 
-// Captions count against the budget too: a long game's would otherwise
-// outgrow the one gRPC message its record travels in.
 void GameRun::CaptureViews() {
   while (captured_.size() < session_->Steps().size()) {
-    Captured step;
-    if (view_bytes_ < config_.max_view_bytes) {
-      step.caption = session_->RenderLastStep();
-      step.view = session_->RenderState();
-      view_bytes_ += step.caption.size() + step.view.size();
-    } else if (!record_.has_views_cut_at()) {
-      record_.set_views_cut_at(static_cast<int32_t>(captured_.size()));
-    }
-    captured_.push_back(std::move(step));
+    captured_.push_back(Captured{.caption = session_->RenderLastStep(),
+                                 .view = session_->RenderState()});
   }
 }
 

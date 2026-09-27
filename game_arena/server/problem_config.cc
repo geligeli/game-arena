@@ -4,7 +4,6 @@
 #include <google/protobuf/text_format.h>
 
 #include <algorithm>
-#include <cstddef>
 #include <fstream>
 #include <ios>
 #include <iterator>
@@ -23,9 +22,6 @@
 namespace tournament_arena {
 
 namespace {
-
-// A GameRecord, views included, crosses gRPC as one message (4 MB).
-constexpr std::size_t kMaxViewBytes = 3 << 20;
 
 class CollectingErrors final : public google::protobuf::io::ErrorCollector {
  public:
@@ -154,13 +150,6 @@ bool ValidateProblemConfig(const proto::ProblemConfig& config,
       }
       if (match.referee_target().empty()) {
         *error = "match.referee_target is required";
-        return false;
-      }
-      if (match.max_view_bytes() > kMaxViewBytes) {
-        *error = absl::StrCat(
-            "match.max_view_bytes is ", match.max_view_bytes(), "; at most ",
-            kMaxViewBytes,
-            ": a game's record, views included, is one gRPC message");
         return false;
       }
       // They ride to the referee as one "k=v,k2=v2" flag.

@@ -70,16 +70,16 @@ message GameRecord {
   repeated string player_names = 3;  // indexed by seat
   bytes initial_state = 4;
   // RenderState() of the initial state, as Step.view is after each step: what
-  // a replay shows. Empty past the referee's per-game budget.
+  // a replay shows.
   bytes initial_view = 11;
-  // The first step past the per-game budget: from it on, no caption or view.
-  optional int32 views_cut_at = 12;
+  reserved 12;
+  reserved "views_cut_at";
 
   message Step {
     int32 player = 1;    // deciding player; -1 for chance resolutions
     bytes action = 2;    // serialized action
     int64 unix_ms = 3;
-    bytes view = 4;     // empty: unchanged, or past views_cut_at
+    bytes view = 4;     // empty: unchanged
     bytes caption = 5;  // RenderLastStep(); empty: show the action
   }
   repeated Step steps = 5;

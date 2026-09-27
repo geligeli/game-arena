@@ -315,10 +315,6 @@ void AddMatchPhase(const proto::WorkOrder& order, const BuildPaths& paths,
     *referee->add_argv() = Quoted("--max_moves_per_game=" +
                                   std::to_string(order.max_moves_per_game()));
   }
-  if (order.max_view_bytes() > 0) {
-    *referee->add_argv() =
-        Quoted("--max_view_bytes=" + std::to_string(order.max_view_bytes()));
-  }
   // Opaque to the worker: for the registry linked into the referee.
   if (!order.registry_options().empty()) {
     *referee->add_argv() =

@@ -167,7 +167,6 @@ void Matchmaker::StartGame(const GameDescriptor& descriptor, Seat seat0,
   run_config.on_record = config_.on_record;
   run_config.game_time_budget = config_.game_time_budget;
   run_config.max_moves_per_game = config_.max_moves_per_game;
-  run_config.max_view_bytes = config_.max_view_bytes;
 
   const uint64_t id = ++game_counter_;
   ++running_games_;

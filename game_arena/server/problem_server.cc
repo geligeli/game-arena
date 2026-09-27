@@ -117,7 +117,6 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
     order->set_turn_timeout_ms(match.turn_timeout_ms());
     order->set_game_time_budget_ms(match.game_time_budget_ms());
     order->set_max_moves_per_game(match.max_moves_per_game());
-    order->set_max_view_bytes(match.max_view_bytes());
     *order->mutable_registry_options() = match.registry_options();
     // Under the run timeout, so a stuck match comes back as a partial tally.
     order->set_match_deadline_s(std::max(1, order->run_timeout_s() - 30));
@@ -270,6 +269,9 @@ int main(int argc, char** argv) {
   // A worker with no free slots is idle, not dead.
   builder.AddChannelArgument(
       GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS, keepalive_ms / 2);
+  // A game's record arrives whole, as one OrderGame, and its views are
+  // uncapped: gRPC's default 4 MB would drop a long game's.
+  builder.SetMaxReceiveMessageSize(64 << 20);
   builder.RegisterService(&arena);
   builder.RegisterService(&fleet);
   std::unique_ptr<grpc::Server> server = builder.BuildAndStart();

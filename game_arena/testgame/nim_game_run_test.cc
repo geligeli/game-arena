@@ -288,26 +288,6 @@ TEST_F(NimGameRunTest, RecordsAViewOfEveryState) {
   EXPECT_EQ(record->steps(0).view(), "20:1");
   EXPECT_EQ(record->steps(0).caption(), "seat 0 takes 1");
   EXPECT_EQ(record->steps(20).view(), "0:0");
-  EXPECT_FALSE(record->has_views_cut_at());
-}
-
-TEST_F(NimGameRunTest, StopsRecordingViewsPastTheCap) {
-  std::optional<proto::GameRecord> record;
-  GameRunConfig config;
-  config.max_view_bytes = 10;
-  config.on_record = [&record](const proto::GameRecord& r) { record = r; };
-  auto alice =
-      std::make_shared<FakeClient>("alice", FakeClient::Mode::kPlayValid);
-  auto bob = std::make_shared<FakeClient>("bob", FakeClient::Mode::kPlayValid);
-  RunToCompletion({MakeSeat(alice), MakeSeat(bob)}, config);
-
-  ASSERT_TRUE(record.has_value());
-  // Captions count too: "21:0" + "seat 0 takes 1" + "20:1" is past 10.
-  EXPECT_EQ(record->steps(0).view(), "20:1");
-  EXPECT_EQ(record->steps(1).view(), "");
-  EXPECT_EQ(record->steps(1).caption(), "");
-  ASSERT_TRUE(record->has_views_cut_at());
-  EXPECT_EQ(record->views_cut_at(), 1);
 }
 
 TEST_F(NimGameRunTest, DrawGoesToTheFasterSeat) {

@@ -194,8 +194,8 @@ TEST_F(DashboardTest, AReplayShowsAnsiColouredViewsAsSpans) {
   EXPECT_THAT(html, HasSubstr("(10 bytes, not text)"));
 }
 
-// A caption replaces the action's bytes, an empty view keeps showing the one
-// before it, and steps past the budget say so.
+// A caption replaces the action's bytes, and an empty view keeps showing the
+// one before it.
 TEST_F(DashboardTest, AReplayShowsCaptionsAndKeepsTheLastView) {
   GameRecord record;
   record.set_game_id("o1_1-g3_0");
@@ -212,7 +212,6 @@ TEST_F(DashboardTest, AReplayShowsCaptionsAndKeepsTheLastView) {
     step->set_caption(caption);
     step->set_view(view);
   }
-  record.set_views_cut_at(2);
   record.set_result(GameRecord::WIN);
   games_->Store(record);
 
@@ -223,7 +222,7 @@ TEST_F(DashboardTest, AReplayShowsCaptionsAndKeepsTheLastView) {
   EXPECT_THAT(html,
               HasSubstr("data-v=\"1\" data-p=\"0\" data-own=\"1\"><p>Move 1:"));
   EXPECT_THAT(html, HasSubstr("data-v=\"1\" data-p=\"0\"><p>Move 2:"));
-  EXPECT_THAT(html, HasSubstr("(no view: past the budget for views)"));
+  EXPECT_THAT(html, HasSubstr("data-v=\"1\" data-p=\"0\"><p>Move 3:"));
   EXPECT_THAT(html, HasSubstr("id=\"speed\""));
   EXPECT_THAT(html, HasSubstr("seek(1)"));
 }
@@ -265,7 +264,6 @@ TEST_F(DashboardTest, AReplayWithAModuleHandsItTheViews) {
   step->set_player(0);
   step->set_action("1");
   step->set_view(std::string("\x01\xff", 2));
-  record.set_views_cut_at(1);
   record.add_steps()->set_player(1);
   record.set_result(GameRecord::WIN);
   games_->Store(record);
@@ -275,7 +273,7 @@ TEST_F(DashboardTest, AReplayWithAModuleHandsItTheViews) {
       ReplayAssets{.files = {{"nim.js", ""}}, .module = "nim.js"});
   const std::string html = dashboard.Route("/games/o1_1-g4_0")->second;
   EXPECT_THAT(html, HasSubstr("<div id=\"stage\">"));
-  EXPECT_THAT(html, HasSubstr(">[\"Ym9hcmQgMA==\",\"Af8=\",null]</script>"));
+  EXPECT_THAT(html, HasSubstr(">[\"Ym9hcmQgMA==\",\"Af8=\"]</script>"));
   EXPECT_THAT(html, HasSubstr("\"module\":\"/assets/nim.js\""));
   // A name cannot close the script it sits in.
   EXPECT_THAT(html, HasSubstr("\"\\u003c/script\\u003e\\u003cb\\u003e\""));

@@ -145,10 +145,8 @@ message MatchSpec {
   uint32 game_time_budget_ms = 6;
   uint32 max_moves_per_game = 7;
   uint32 timeout_s = 8;
-  // Per game, for the replay views RenderState() draws; steps past it get
-  // none. 0 is the referee's 1 MiB. At most 3 MiB: a GameRecord travels as
-  // one gRPC message (4 MB), views and steps together.
-  uint32 max_view_bytes = 11;
+  reserved 11;
+  reserved "max_view_bytes";
 
   // Opaque, for the referee's registry, which ignores keys it does not know.
   map<string, string> registry_options = 10;
