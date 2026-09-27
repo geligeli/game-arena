@@ -45,47 +45,22 @@ bazel run -c opt \
  --push
 
 
-TOKEN_P1=$( bazel run @game_arena//game_arena/tools:arena_admin \
- -- mint \
- --client_id=${NAME_P1} \
- --clients=$HOME/.arena/connect4/clients.textproto \
- --overwrite )
-
-
-TOKEN_P2=$( bazel run @game_arena//game_arena/tools:arena_admin \
- -- mint \
- --client_id=${NAME_P2} \
- --clients=$HOME/.arena/connect4/clients.textproto \
- --overwrite )
+mint() {
+  bazel run @game_arena//game_arena/tools:arena_admin -- mint --client_id=$1 \
+    --clients=$HOME/.arena/connect4/clients.textproto --overwrite
+}
+TOKEN_P1=$(mint ${NAME_P1})
+TOKEN_P2=$(mint ${NAME_P2})
 
 tmux new-session -d -s $SESSION -c $TARGET_DIR 'bazel run -c opt //:tournament'
 tmux split-window -h -t $SESSION -c $TARGET_DIR 'bazel run -c opt  @game_arena//game_arena/sandbox/worker:sandbox_worker -- --server=localhost:50051'
 
-tmux split-window -vf -t $SESSION -c $TARGET_DIR "docker run \
- -it \
- --rm \
- --pull=always \
- --network host \
- -e ARENA_SERVER=localhost:50051 \
- -e ARENA_NAME=${NAME_P1} \
- -e ARENA_TOKEN=${TOKEN_P1} \
- -e ARENA_RESTORE=1 \
- -e CLAUDE_CODE_OAUTH_TOKEN \
- ${REGISTRY}:${TAG}
-"
-
-tmux split-window -h -t $SESSION -c $TARGET_DIR "docker run \
- -it \
- --rm \
- --pull=always \
- --network host \
- -e ARENA_SERVER=localhost:50051 \
- -e ARENA_NAME=${NAME_P2} \
- -e ARENA_TOKEN=${TOKEN_P2} \
- -e ARENA_RESTORE=1 \
- -e CLAUDE_CODE_OAUTH_TOKEN \
- ${REGISTRY}:${TAG}
-"
+kit_pane() {  # <split flag> <name> <token>
+  tmux split-window $1 -t $SESSION -c $TARGET_DIR "docker run -it --rm --pull=always --network host \
+ -e ARENA_SERVER=localhost:50051 -e ARENA_NAME=$2 -e ARENA_TOKEN=$3 -e ARENA_RESTORE=1 -e CLAUDE_CODE_OAUTH_TOKEN ${REGISTRY}:${TAG}"
+}
+kit_pane -vf ${NAME_P1} ${TOKEN_P1}
+kit_pane -h ${NAME_P2} ${TOKEN_P2}
 
 # Attach to the session
 tmux attach-session -t $SESSION
