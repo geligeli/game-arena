@@ -33,8 +33,8 @@ That call defines, in the calling package:
                    ARENA_SERVER=... -e ARENA_TOKEN=...` hands them over
   :kit_image_load  `bazel run //:kit_image_load` -- that image, into the local
                    docker daemon, tagged `<name>-kit:latest`
-  :kit_image_push  `bazel run //:kit_image_push` -- that image, to
-                   `kit_repository` (`-- --repository=REG/NAME` to override)
+  :kit_image_push  `bazel run //:kit_image_push -- --repository=REG/NAME` --
+                   that image, to a registry
   :kit_image_issue `bazel run //:kit_image_issue -- --image=TAG [--push]` --
                    what a build cannot add to that image, added outside one:
                    the kit's dependencies vendored and its cache primed
@@ -82,7 +82,6 @@ _REFEREE_MAIN = Label("//game_arena/referee:referee_main")
 _KIT_BASE = Label("//game_arena/image:kit_base")
 _KIT_ENTRYPOINT = Label("//game_arena/image:kit_entrypoint_layer")
 _SANDBOX_BASE = Label("//game_arena/image:sandbox_base")
-_KIT_SURFACE = Label("//:kit_surface")
 _SANDBOX_SURFACE = Label("//:sandbox_surface")
 _REGCTL = Label("//game_arena/image:regctl")
 _TOURNAMENT_BINARIES = [
@@ -92,6 +91,15 @@ _TOURNAMENT_BINARIES = [
     Label("//game_arena/cli:arena_cli"),
 ]
 
+def _tool(rule, name, command, config, data = [], **kwargs):
+    rule(
+        name = name,
+        srcs = [str(_RUN)],
+        data = [config, str(_TOOL)] + data,
+        args = ["$(rootpath %s)" % _TOOL, command, "--problem_config=$(rootpath %s)" % config],
+        **kwargs
+    )
+
 def arena_problem(
         name,
         config,
@@ -99,7 +107,6 @@ def arena_problem(
         kit_files = [],
         tree = [],
         kit_base = None,
-        kit_repository = None,
         visibility = None):
     """Defines the tournament targets for one problem. See the module docstring.
 
@@ -116,9 +123,6 @@ def arena_problem(
         glob here cannot reach: one `filegroup(srcs = glob(["**"]))` per
         package. With the root package's own files they are the tree a
         submission is built on, in the sandbox image.
-      kit_repository: where `:kit_image_push` pushes, e.g.
-        "registry.example.com/connect4-kit". Without it that target is still
-        defined, and takes `-- --repository=...`.
       kit_base: label of the OCI image layout a kit image is layered onto.
         Default: the arena's, which is bazel, git and python3 and nothing of a
         problem. A problem whose participants need more builds its own
@@ -127,45 +131,21 @@ def arena_problem(
         owns /kit.
       visibility: applied to every generated target.
     """
-    tool = str(_TOOL)
-    run = str(_RUN)
-
     if registry:
-        for target, main in [
-            ("match_referee", _REFEREE_MAIN),
-        ]:
-            cc_binary(
-                name = target,
-                deps = [registry, str(main)],
-                visibility = visibility,
-            )
+        cc_binary(
+            name = "match_referee",
+            deps = [registry, str(_REFEREE_MAIN)],
+            visibility = visibility,
+        )
 
-    base_args = [
-        "$(rootpath %s)" % tool,
-    ]
-    config_arg = "--problem_config=$(rootpath %s)" % config
-    base_data = [config, tool]
-
-    sh_test(
-        name = "config_test",
-        srcs = [run],
-        data = base_data,
-        args = base_args + ["check", config_arg],
-        visibility = visibility,
-    )
+    _tool(sh_test, "config_test", "check", config, visibility = visibility)
     # The kit's file list travels in the environment rather than in args, so a
     # participant's own `-- --out=...` arguments are not mixed in with it.
     kit_env = {
         "ARENA_KIT_FILES": " ".join(["$(rootpaths %s)" % f for f in kit_files]),
         "ARENA_KIT_REGISTRY": registry or "",
     }
-    sh_binary(
-        name = "tournament",
-        srcs = [run],
-        data = base_data,
-        args = base_args + ["up", config_arg],
-        visibility = visibility,
-    )
+    _tool(sh_binary, "tournament", "up", config, visibility = visibility)
 
     # The sandbox image, built: the problem's tree where a job's volume is
     # mounted, and the arena's sources where the image's bazelrc overrides
@@ -234,14 +214,7 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         visibility = visibility,
     )
 
-    sh_binary(
-        name = "kit",
-        srcs = [run],
-        data = base_data + kit_files,
-        args = base_args + ["kit", config_arg],
-        env = kit_env,
-        visibility = visibility,
-    )
+    _tool(sh_binary, "kit", "kit", config, kit_files, env = kit_env, visibility = visibility)
     # The kit as an image, built. manual, all of it: these are the targets
     # that need a registry -- the base is pulled the first time -- and `//...`
     # must not. That covers `bazel test //...` here, and the `bazel vendor
@@ -258,7 +231,7 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         config = config,
         kit_files = kit_files,
         registry = registry or "",
-        tool = tool,
+        tool = str(_TOOL),
         workspace_files = workspace_files,
         tags = ["manual"],
         visibility = visibility,
@@ -283,18 +256,19 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
     oci_push(
         name = "kit_image_push",
         image = ":kit_image",
-        repository = kit_repository or "unset.invalid/pass--repository",
+        repository = "unset.invalid/pass--repository",
         remote_tags = ["latest"],
         tags = ["manual"],
         visibility = visibility,
     )
 
     # What a build cannot add to :kit_image, added to it outside one.
-    sh_binary(
-        name = "kit_image_issue",
-        srcs = [run],
-        data = base_data + kit_files + [":kit_image", str(_REGCTL)],
-        args = base_args + ["kit", config_arg],
+    _tool(
+        sh_binary,
+        "kit_image_issue",
+        "kit",
+        config,
+        kit_files + [":kit_image", str(_REGCTL)],
         env = kit_env | {
             "ARENA_KIT_BASE": "$(rootpath :kit_image)",
             "ARENA_REGCTL": "$(rootpath %s)" % _REGCTL,
@@ -304,16 +278,12 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
     )
     # What a build cannot add to :sandbox_image, added to it outside one:
     # primed in a copy of the image's own tree and arena, its two layers.
-    sh_binary(
-        name = "sandbox_image_issue",
-        srcs = [run],
-        data = base_data + [
-            ":sandbox_image",
-            ":sandbox_arena",
-            ":sandbox_tree",
-            str(_REGCTL),
-        ],
-        args = base_args + ["sandbox", config_arg],
+    _tool(
+        sh_binary,
+        "sandbox_image_issue",
+        "sandbox",
+        config,
+        [":sandbox_image", ":sandbox_arena", ":sandbox_tree", str(_REGCTL)],
         env = {
             "ARENA_SANDBOX_BASE": "$(rootpath :sandbox_image)",
             "ARENA_SANDBOX_TARS": "$(rootpath :sandbox_arena) $(rootpath :sandbox_tree)",
@@ -322,11 +292,12 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
         tags = ["manual"],
         visibility = visibility,
     )
-    sh_binary(
-        name = "play",
-        srcs = [run],
-        data = base_data + kit_files,
-        args = base_args + ["play", config_arg],
+    _tool(
+        sh_binary,
+        "play",
+        "play",
+        config,
+        kit_files,
         # `play` makes its worker's sandbox image by running the target that
         # does, rather than carrying that target's base itself.
         env = kit_env | {
@@ -338,7 +309,7 @@ echo "$${ref##*:}" > $(location sandbox_image.tag.txt)
 
     native.filegroup(
         name = name,
-        srcs = [str(label) for label in _TOURNAMENT_BINARIES] + [tool] +
+        srcs = [str(label) for label in _TOURNAMENT_BINARIES] + [str(_TOOL)] +
                ([":match_referee"] if registry else []),
         visibility = visibility,
     )
