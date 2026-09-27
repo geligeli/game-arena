@@ -1,22 +1,8 @@
 #ifndef GAME_ARENA_GAME_ARENA_REFEREE_PLAYER_CONNECTION_H
 #define GAME_ARENA_GAME_ARENA_REFEREE_PLAYER_CONNECTION_H
 
-// The ClientHandle a gRPC bidi stream is driven through, split from the
-// reactor that owns the RPC.
-//
-// Why the split: gRPC owns the reactor and reclaims it after OnDone(), while
-// the matchmaker holds a shared_ptr<ClientHandle> and may call Send() from a
-// game thread at any time. Those two lifetimes are incomparable -- a client can
-// rage-quit while its game runs, and a game can finish while the RPC is still
-// closing -- so one object cannot serve both. PlayerConnection is shared_ptr
-// owned and outlives the RPC; the reactor is reached through a raw Transport*
-// that OnDone() nulls out under mu_.
-//
-// That single rule is the whole safety argument: every transport_ call is made
-// while holding mu_, and the pointer is cleared while holding mu_ from
-// OnDone(), which gRPC runs after every other reaction. A game thread in
-// Send() therefore either sees a live transport or nullptr, never a dangling
-// one.
+// ClientHandle over a gRPC stream. It outlives the reactor gRPC owns, so
+// transport_ is only called, and (from OnDone()) cleared, under mu_.
 
 #include <grpcpp/support/status.h>
 
@@ -32,33 +18,26 @@
 
 namespace tournament_broker {
 
-// The reactor side, as seen by the connection. Kept minimal (and named apart
-// from ServerBidiReactor's own StartWrite/Finish) so implementors are not
-// fighting name hiding.
+// Named apart from ServerBidiReactor's StartWrite/Finish to avoid name hiding.
 class Transport {
  public:
   virtual ~Transport() = default;
 
-  // Starts one write. At most one may be in flight at a time, and |msg| must
-  // stay valid and unmodified until the matching OnWriteComplete().
+  // At most one in flight; |msg| must outlive the matching OnWriteComplete().
   virtual void SendMessage(const proto::ServerMessage *msg) = 0;
 
-  // Ends the RPC. Called at most once.
+  // Called at most once.
   virtual void EndRpc(const grpc::Status &status) = 0;
 };
 
 class PlayerConnection final : public ClientHandle {
  public:
-  // A healthy stream never queues more than a couple of messages: the server
-  // sends at most one unanswered YourTurn per seat. Anything deeper means the
-  // client stopped reading, so the queue is a liveness signal, not a buffer to
-  // grow.
+  // A healthy stream queues one or two; more means the client stopped reading.
   static constexpr std::size_t kMaxOutbox = 8;
   static constexpr std::size_t kMaxInbox = 8;
 
   PlayerConnection(std::string player_name, Transport *transport);
 
-  // --- ClientHandle ---
   std::string name() const override;
   bool Send(const proto::ServerMessage &msg) override;
   std::optional<std::string> TryPopAction() override;
@@ -67,32 +46,19 @@ class PlayerConnection final : public ClientHandle {
   bool disconnected() const override;
   void CloseAfterFlush() override;
 
-  // --- reactor side ---
-
-  // Queues an action received from the client.
   void PushAction(std::string action_bytes);
-
-  // One write finished (or failed, |ok| == false).
   void OnWriteComplete(bool ok);
-
-  // The RPC was cancelled. Always ends up requesting a finish: gRPC's
-  // Server::Shutdown() waits for every call to be finished, so this must never
-  // be made conditional on a game concluding.
+  // Always finishes: Server::Shutdown() waits for every call to be finished.
   void OnCancelled();
-
-  // The RPC is over and the reactor is about to go away.
   void DetachTransport();
-
   // Flush, then finish with |status|. Idempotent; first status wins.
   void Close(const grpc::Status &status);
 
  private:
-  // Starts the next write, or issues the deferred finish once drained. Must be
-  // called without mu_ held.
+  // Starts the next write or the deferred finish. Call without mu_ held.
   void Pump();
 
-  // Runs the observer, if any. Must be called without mu_ held: the observer
-  // hops to a game strand and must never run under this connection's lock.
+  // Call without mu_ held: the observer must never run under this lock.
   void Notify();
 
   const std::string player_name_;

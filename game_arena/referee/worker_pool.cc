@@ -49,8 +49,7 @@ void WorkerPool::WorkerLoop() {
     {
       std::unique_lock lock(mu_);
       cv_.wait(lock, [&] { return stopping_ || !queue_.empty(); });
-      // Drain what is already queued even while stopping, so a game that has
-      // reached its persistence step still finishes writing.
+      // Drain the queue even while stopping, so a concluding game still writes.
       if (queue_.empty()) {
         return;
       }
@@ -72,8 +71,7 @@ void Strand::Post(Task task) {
     }
   }
   if (schedule) {
-    // Holds the strand alive for the whole drain: the last task may destroy
-    // whatever owns this strand.
+    // Keeps the strand alive: the last task may destroy its owner.
     pool_->Submit([self = shared_from_this()] { self->Drain(); });
   }
 }
@@ -132,8 +130,7 @@ void Timer::Stop() {
       return;
     }
     stopping_ = true;
-    // Pending deadlines are abandoned, not run: shutdown must not wait out a
-    // turn timeout.
+    // Abandoned, not run: shutdown must not wait out a turn timeout.
     entries_.clear();
     deadlines_.clear();
   }

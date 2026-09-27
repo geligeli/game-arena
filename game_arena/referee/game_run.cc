@@ -62,8 +62,7 @@ void GameRun::Begin() {
   view_bytes_ = record_.initial_view().size();
   record_.set_started_unix_ms(NowUnixMs());
 
-  // Observers hold a weak reference: seats_ owns the handles, so a strong one
-  // would be a cycle that never frees the game.
+  // Weak: seats_ owns the handles, so a strong reference would be a cycle.
   for (int seat = 0; seat < 2; ++seat) {
     if (!seats_[seat].client) {
       continue;
@@ -105,8 +104,7 @@ void GameRun::ArmTurnTimer(std::chrono::milliseconds delay) {
     }
     // Hop to the strand; the timer thread must never touch game state.
     self->strand_->Post([self, epoch] {
-      // The epoch is the correctness backstop: Cancel() is best effort, so
-      // a timer already being dispatched still fires and must be ignored.
+      // Cancel() is best effort: the epoch catches a timer that fired anyway.
       if (self->concluded_ || epoch != self->turn_epoch_) {
         return;
       }
@@ -156,12 +154,9 @@ void GameRun::Step() {
                  "opponent_disconnect");
         return;
       }
-      // Ask once per turn, before consuming anything: a client that pipelined
-      // an action still gets its YourTurn, exactly as the blocking loop did.
+      // Once per turn, before consuming: a pipelined action gets its YourTurn.
       if (waiting_seat_ != seat) {
-        // The turn timeout bounds one move; the game budget bounds the whole
-        // game. The deadline is whichever runs out first, and which one it was
-        // decides the reason reported if it fires.
+        // Whichever of turn_timeout and the game budget runs out first.
         std::chrono::milliseconds allowed = config_.turn_timeout;
         turn_budget_bound_ = false;
         if (config_.game_time_budget.count() > 0) {
@@ -195,8 +190,6 @@ void GameRun::Step() {
       CancelTurnTimer();
       action_bytes = std::move(*action);
     } else {
-      // Runs on a pool worker. This is the CPU bound that replaced an
-      // unbounded thread per game.
       action_bytes = seats_[seat].builtin(session_->SerializeState(), gen_);
     }
 
@@ -284,8 +277,7 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
     Task done = std::move(on_finished_);
     std::move(done)();
   }
-  // Last: the enclosing strand task still holds a reference, so this never
-  // destroys the object mid-method.
+  // Last; the running strand task still holds a reference.
   self_.reset();
 }
 

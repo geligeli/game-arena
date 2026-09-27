@@ -22,8 +22,7 @@ bool PlayerConnection::Send(const proto::ServerMessage &msg) {
         outbox_.push_back(msg);
         accepted = true;
       } else {
-        // The peer has stopped reading. It cannot act on a game it will never
-        // hear about, so drop it rather than buffering without bound.
+        // The peer stopped reading; drop it rather than buffer without bound.
         LOG(WARNING) << "Player '" << player_name_
                      << "': send queue full, closing connection";
         disconnected_ = true;
@@ -75,8 +74,7 @@ void PlayerConnection::PushAction(std::string action_bytes) {
   {
     std::lock_guard lock(mu_);
     if (inbox_.size() >= kMaxInbox) {
-      // A client spamming actions must not grow the server without bound; the
-      // freshest action is the useful one.
+      // Bounded; the freshest action is the useful one.
       inbox_.pop_front();
     }
     inbox_.push_back(std::move(action_bytes));
@@ -116,8 +114,7 @@ void PlayerConnection::OnCancelled() {
           grpc::Status(grpc::StatusCode::CANCELLED, "call cancelled");
     }
   }
-  // If a write is still in flight the finish is deferred; gRPC completes that
-  // write with ok == false, and OnWriteComplete() pumps it out from there.
+  // With a write in flight, OnWriteComplete(false) issues the deferred finish.
   Pump();
   Notify();
 }
@@ -167,14 +164,8 @@ void PlayerConnection::Pump() {
       write_msg_ = std::move(outbox_.front());
       outbox_.pop_front();
       write_in_flight_ = true;
-      // Safe to call under mu_: the bidi write tag is registered with
-      // can_inline = false, so the completion always lands on an EventEngine
-      // thread and can never re-enter Pump() on this one. Keeping it inside
-      // the lock also makes the write_msg_ handoff atomic with the
-      // write_in_flight_ flip -- releasing first would leave a window where we
-      // are committed to a write we have not started, and if any path then
-      // failed to start it, OnWriteComplete() would never fire, the deferred
-      // finish would never issue, and Server::Shutdown() would hang forever.
+      // Under mu_ on purpose: the write tag is can_inline = false, so this
+      // cannot re-enter Pump(), and the handoff stays atomic with the flag.
       transport_->SendMessage(&write_msg_);
       return;
     }
@@ -184,8 +175,7 @@ void PlayerConnection::Pump() {
       status = finish_status_;
     }
   }
-  // Hoisted out of mu_: the finish tag is registered can_inline = true, so its
-  // callback may run on this thread.
+  // Outside mu_: the finish tag is can_inline = true and may run right here.
   if (finish_now != nullptr) {
     finish_now->EndRpc(status);
   }

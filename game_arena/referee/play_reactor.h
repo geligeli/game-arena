@@ -1,15 +1,7 @@
 #ifndef GAME_ARENA_GAME_ARENA_REFEREE_PLAY_REACTOR_H
 #define GAME_ARENA_GAME_ARENA_REFEREE_PLAY_REACTOR_H
 
-// Callback-API reactor for one TournamentBroker.Play stream.
-//
-// Replaces the synchronous handler that parked an OS thread in stream->Read()
-// for the whole game: reads and writes are now completions on gRPC's
-// EventEngine, so a connected (or merely queued) player costs memory instead
-// of a thread.
-//
-// Owned by gRPC, deleted by itself in OnDone(). All player-visible state lives
-// in the shared_ptr-owned PlayerConnection, which may outlive this object.
+// One Play stream, owned by gRPC; it deletes itself in OnDone().
 
 #include <grpcpp/alarm.h>
 #include <grpcpp/grpcpp.h>
@@ -31,37 +23,28 @@ class PlayReactor final : public grpc::ServerBidiReactor<proto::ClientMessage,
  public:
   explicit PlayReactor(Matchmaker *matchmaker);
 
-  // --- ServerBidiReactor ---
   void OnReadDone(bool ok) override;
   void OnWriteDone(bool ok) override;
   void OnCancel() override;
   void OnDone() override;
 
-  // --- Transport ---
   void SendMessage(const proto::ServerMessage *msg) override;
   void EndRpc(const grpc::Status &status) override;
 
  private:
-  // Handles the mandatory opening hello. Returns false when the stream was
-  // rejected (a finish has been requested and no further read should start).
+  // False when the stream was rejected: a finish is pending, read no further.
   bool HandleHello();
 
   std::shared_ptr<PlayerConnection> connection();
 
-  // Finishes a stream that never got as far as having a connection. Once
-  // conn_ exists every finish goes through PlayerConnection instead, so the
-  // "exactly once" guarantee has a single owner.
+  // Only before conn_ exists; after that PlayerConnection owns the one finish.
   void FinishWithoutConnection(const grpc::Status &status);
 
-  // Starts the next read unless the RPC is already finishing.
   void StartReadUnlessFinishing();
 
   void OnHelloDeadline();
 
-  // Keeps the hello alarm from reaching a reactor gRPC has already reclaimed.
-  // The alarm is not a gRPC operation, so nothing makes OnDone() wait for it;
-  // same shape as PlayerConnection's Transport pointer, and cleared the same
-  // way -- under the mutex, from OnDone().
+  // OnDone() does not wait for the alarm, so it detaches this guard instead.
   class HelloGuard {
    public:
     explicit HelloGuard(PlayReactor *reactor) : reactor_(reactor) {}
@@ -77,15 +60,11 @@ class PlayReactor final : public grpc::ServerBidiReactor<proto::ClientMessage,
 
   std::mutex mu_;  // guards conn_ and finish_issued_
   std::shared_ptr<PlayerConnection> conn_;
-  // Set before Finish() is called, and checked under the same lock that starts
-  // a read. Starting a read after a finish is invalid and wedges the RPC: the
-  // operation never completes, so OnDone() never runs and the peer waits
-  // forever. The reverse order is fine -- gRPC completes an already-pending
-  // read with ok == false.
+  // Set before Finish(), checked under the lock that starts a read: a read
+  // started after a finish never completes, so OnDone() would never run.
   bool finish_issued_ = false;
 
-  // One-shot, so grpc::Alarm is safe here: the "cannot re-arm while armed"
-  // CHECK only bites callers that reuse an Alarm across deadlines.
+  // One-shot, so Alarm's re-arm CHECK cannot fire.
   std::shared_ptr<HelloGuard> hello_guard_;
   grpc::Alarm hello_alarm_;
 

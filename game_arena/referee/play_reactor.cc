@@ -23,18 +23,15 @@ void PlayReactor::HelloGuard::Fire() {
 PlayReactor::PlayReactor(Matchmaker *matchmaker)
     : matchmaker_(matchmaker),
       hello_guard_(std::make_shared<HelloGuard>(this)) {
-  // A peer that opens a stream and then says nothing would otherwise hold a
-  // reactor open indefinitely. Keepalive does not cover it: the connection is
-  // alive, just silent.
+  // A silent peer would hold the reactor forever; keepalive cannot see it.
   hello_alarm_.Set(std::chrono::system_clock::now() + std::chrono::seconds(30),
                    [guard = hello_guard_](bool ok) {
                      if (ok) {
                        guard->Fire();
                      }
                    });
-  // Exactly one operation before Play() returns. Until the stream is bound,
-  // gRPC parks requests in a backlog whose write slot is a *single* pointer,
-  // so a second queued write would silently overwrite the first.
+  // Exactly one operation before Play() returns: until the stream is bound,
+  // gRPC's backlog holds one write and a second would overwrite it.
   StartRead(&read_msg_);
 }
 
@@ -63,13 +60,8 @@ void PlayReactor::StartReadUnlessFinishing() {
   if (finish_issued_) {
     return;
   }
-  // Held across StartRead so a concurrent EndRpc cannot slip its Finish
-  // between the check and the read: starting a read after a finish leaves an
-  // operation that never completes, so OnDone() never runs and the peer hangs.
-  // The opposite interleaving is harmless -- gRPC completes an already-pending
-  // read with ok == false. Safe to call under mu_ because reactions are
-  // dispatched on the EventEngine, never inline from StartRead, so this cannot
-  // re-enter OnReadDone on this thread.
+  // Held across StartRead (see finish_issued_). Reactions run on the
+  // EventEngine, never inline, so this cannot re-enter OnReadDone.
   read_msg_.Clear();
   StartRead(&read_msg_);
 }
@@ -106,14 +98,11 @@ bool PlayReactor::HandleHello() {
             << hello.game() << "' (opponent: '"
             << hello.opponent() << "')";
 
-  // The hello arrived, so the deadline no longer applies. Cancel is best
-  // effort; OnHelloDeadline() re-checks for a connection and does nothing once
-  // one exists.
+  // Best effort: OnHelloDeadline() does nothing once a connection exists.
   hello_alarm_.Cancel();
 
-  // Publish conn_ *before* Join: the matchmaker can start a game (and write to
-  // this stream) on another thread the moment it is handed the handle, and
-  // OnWriteDone would then have nothing to deliver the completion to.
+  // Publish conn_ before Join: a game may write to this stream as soon as the
+  // matchmaker has the handle, and OnWriteDone needs conn_ to deliver to.
   std::shared_ptr<PlayerConnection> conn;
   {
     std::lock_guard lock(mu_);
@@ -131,12 +120,10 @@ bool PlayReactor::HandleHello() {
 
 void PlayReactor::OnReadDone(bool ok) {
   if (!ok) {
-    // Client half-closed (the normal end of a game) or the stream broke.
-    // Either way no further action can arrive, so stop reading.
+    // Half-closed (the normal end) or broken: no further action can arrive.
     if (auto conn = connection(); conn != nullptr) {
       matchmaker_->Disconnect(conn);
-      // Flushes anything already queued -- a GameOver still in the outbox
-      // reaches the client -- and then finishes.
+      // A GameOver still queued reaches the client before the finish.
       conn->CloseAfterFlush();
     } else {
       FinishWithoutConnection(grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
@@ -176,8 +163,7 @@ void PlayReactor::OnCancel() {
 }
 
 void PlayReactor::OnDone() {
-  // Before anything else: blocks until an in-flight alarm callback has
-  // returned, and stops any later one from touching this object.
+  // First: waits out an in-flight alarm callback and fences off later ones.
   hello_alarm_.Cancel();
   hello_guard_->Detach();
 
@@ -187,8 +173,7 @@ void PlayReactor::OnDone() {
     conn = std::move(conn_);
   }
   if (conn != nullptr) {
-    // Severs the raw back-pointer before this object goes away. Any game still
-    // holding the connection now sees a dead handle instead of a dangling one.
+    // Games still holding the connection see a dead handle, not a dangling one.
     conn->DetachTransport();
   }
   delete this;

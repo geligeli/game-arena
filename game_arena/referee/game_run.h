@@ -1,20 +1,8 @@
 #ifndef GAME_ARENA_GAME_ARENA_REFEREE_GAME_RUN_H
 #define GAME_ARENA_GAME_ARENA_REFEREE_GAME_RUN_H
 
-// One game, as an event-driven state machine instead of a blocking loop on a
-// dedicated thread.
-//
-// Previously each game owned a std::thread that parked in a condition variable
-// waiting for the next action. Here Step() advances the game until it must
-// wait on a remote player, sends YourTurn, arms a deadline, and returns; the
-// game resumes when an action arrives or the deadline fires. Games therefore
-// cost an object rather than a thread, and CPU-heavy built-in moves are bounded
-// by the worker pool instead of fanning out without limit.
-//
-// Every transition runs on the game's own Strand, so session_, seats_, gen_
-// and the turn bookkeeping are single-threaded by construction and need no
-// locking -- the same invariant the old thread-per-game gave, at no thread
-// cost. GameSession is therefore unchanged.
+// One game as a state machine: every transition runs on its own Strand, so its
+// state needs no locks.
 
 #include <array>
 #include <chrono>
@@ -36,23 +24,16 @@ namespace tournament_broker {
 
 struct GameRunConfig {
   std::chrono::milliseconds turn_timeout{10000};
-  // Total wall-clock thinking time one seat may spend across a whole game.
-  // Zero disables the budget and leaves only the per-turn timeout, which on
-  // its own bounds nothing: a slow strategy can burn turn_timeout on every one
-  // of thousands of moves.
+  // Per seat per game; 0 leaves only turn_timeout, which alone bounds nothing.
   std::chrono::milliseconds game_time_budget{0};
   int max_moves_per_game = 50000;
-  // Bytes of views (GameRecord.Step.view) one game records. A record crosses
-  // gRPC whole, so the steps past this have none.
+  // A record crosses gRPC whole, so steps past this many view bytes get none.
   std::size_t max_view_bytes = 1 << 20;
 
-  // Called with the finished game's record, on the game's own strand, right
-  // after it is persisted. The match referee tallies through this rather than
-  // reading the history back off disk.
+  // On the game's strand, right after the record is stored.
   std::function<void(const proto::GameRecord &)> on_record;
 };
 
-// One seat of a game: either a remote client or a built-in strategy.
 struct Seat {
   std::string display_name;
   std::shared_ptr<ClientHandle> client;  // null => built-in
@@ -78,7 +59,6 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   void Begin();
   void Step();
   void Conclude(GameOutcome outcome, std::string reason);
-  // Renders the state for every step recorded since the last call.
   void CaptureViews();
   bool SendYourTurn(int seat, std::chrono::milliseconds allowed);
   void ArmTurnTimer(std::chrono::milliseconds delay);
@@ -100,13 +80,10 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   std::unique_ptr<GameSession> session_;
   proto::GameRecord record_;
   std::mt19937 gen_;
-  // The view after each step so far, and their size against max_view_bytes.
   std::vector<std::string> views_;
   std::size_t view_bytes_ = 0;
 
-  // Keeps the game alive between events: once Step() returns, nothing else
-  // holds a strong reference until an action or the deadline arrives.
-  // Released in Conclude(), which every path reaches.
+  // Keeps the game alive between events; released in Conclude().
   std::shared_ptr<GameRun> self_;
 
   // Strand-only; no locking.
@@ -114,11 +91,9 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   Timer::Id turn_timer_ = 0;
   int waiting_seat_ = -1;
   bool concluded_ = false;
-  // Thinking time charged per seat, against config_.game_time_budget.
   std::array<std::chrono::milliseconds, 2> time_used_{};
   std::chrono::steady_clock::time_point turn_started_;
-  // Whether the pending turn's deadline came from the game budget rather than
-  // the per-turn timeout, so a fired deadline reports the right reason.
+  // The pending deadline is the game budget's rather than turn_timeout's.
   bool turn_budget_bound_ = false;
 };
 
