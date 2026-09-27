@@ -1,13 +1,5 @@
 #!/bin/bash
-# Scaffolds a new problem repository from one of the worked examples.
-#
-#   scripts/new_problem.sh match  /path/to/my_game   [--id=my_game]
-#   scripts/new_problem.sh graded /path/to/my_bench  [--id=my_bench]
-#
-# Copies examples/connect4 (match) or examples/knapsack (graded), renames the
-# module and the problem id, pins game_arena to this checkout's HEAD by
-# git_override, and makes the first commit. An uncommitted .bazelrc.local
-# points bazel at this checkout while both are being worked on.
+# Scaffolds a problem repo from examples/connect4 (match) or examples/knapsack (graded).
 set -euo pipefail
 
 usage() {
@@ -49,15 +41,10 @@ remote="$(git -C "${arena}" remote get-url origin 2>/dev/null || echo "")"
 commit="$(git -C "${arena}" rev-parse HEAD)"
 
 mkdir -p "${dest}"
-# Sources only: no bazel-* symlinks, no local state. The lockfile comes along
-# and stays committed. The first local build updates it for the override
-# below; commit that too.
 tar -C "${src}" --exclude='./bazel-*' --exclude='./.arena' -cf - . \
     | tar -C "${dest}" -xf -
 
-# Module name and problem id. The game itself keeps its name: it is the rules,
-# not the problem, and renaming it would mean editing C++ the author will
-# replace anyway.
+# The game keeps its name: renaming it would mean editing C++ the author will replace anyway.
 sed -i -e "s/^    name = \"${example}_problem\",/    name = \"${id}_problem\",/" \
     "${dest}/MODULE.bazel"
 sed -i -e "s/^problem_id: \"${example}\"/problem_id: \"${id}\"/" \
@@ -66,11 +53,7 @@ sed -i -e "s/^problem_id: \"${example}\"/problem_id: \"${id}\"/" \
     "${dest}/problem.textproto"
 sed -i "s/${example}/${id}/g" "${dest}/deploy.sh"
 
-# Pin game_arena. local_path_override in the examples is relative to
-# game-arena's own tree, which this repo is not in. A commit the remote has is
-# pinned by git_override, which any clone can fetch; one that exists only here
-# is pointed at by absolute path, and said so, because nobody cloning this
-# repo elsewhere could fetch it.
+# A commit only this checkout has cannot be fetched by git_override, so it is pinned by path.
 pin="path"
 if [[ -n "${remote}" ]] && git -C "${arena}" branch -r --contains "${commit}" 2>/dev/null | grep -q .; then
   pin="git"
@@ -118,7 +101,6 @@ GI
 
 git -C "${dest}" init -q
 git -C "${dest}" add -A
-# With no identity configured, commit as the scaffolder rather than fail.
 git -C "${dest}" \
     -c user.name="$(git config user.name || echo new_problem.sh)" \
     -c user.email="$(git config user.email || echo new_problem@game-arena)" \

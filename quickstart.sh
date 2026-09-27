@@ -5,15 +5,11 @@ REGISTRY=registry.takumi.city/connect4-kit
 NAME_P1=alice
 NAME_P2=bob
 
-
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 SESSION="game-arena-c4"
 TARGET_DIR=${DIR}/examples/connect4
 
-# The base images, built, pushed and pinned where they are used, by digest: the
-# base in the arena's MODULE.bazel and the agents' FROM, the agents in
-# connect4's MODULE.bazel. An unchanged Dockerfile is a docker cache hit and
-# the same digest, so a pin only moves when its Dockerfile does: commit it then.
+# An unchanged Dockerfile is a cache hit and the same digest, so a pin only moves when it does.
 repin() {  # <old digest> <pushed tag> <files...>
   local new
   new=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$2" \
@@ -33,8 +29,7 @@ repin $(grep -A2 'name = "kit_agents"' ${TARGET_DIR}/MODULE.bazel | grep -o 'sha
 
 cd $TARGET_DIR
 
-# used by the worker server side: dependencies vendored, cache primed. Pulled
-# back, so the worker here does not run a stale tag.
+# Pulled back, so the worker here does not run a stale tag.
 bazel run -c opt //:sandbox_image_issue -- --prime_bazelrc=prime.bazelrc --push
 docker pull registry.takumi.city/connect4-sandbox:latest
 
@@ -43,7 +38,6 @@ bazel run -c opt \
  --image=${REGISTRY}:${TAG} \
  --prime_bazelrc=prime.bazelrc \
  --push
-
 
 mint() {
   bazel run @game_arena//game_arena/tools:arena_admin -- mint --client_id=$1 \
@@ -62,7 +56,4 @@ kit_pane() {  # <split flag> <name> <token>
 kit_pane -vf ${NAME_P1} ${TOKEN_P1}
 kit_pane -h ${NAME_P2} ${TOKEN_P2}
 
-# Attach to the session
 tmux attach-session -t $SESSION
-
-
