@@ -230,6 +230,33 @@ cc_test(
 )
 
 cc_library(
+    name = "swiss",
+    srcs = ["swiss.cc"],
+    hdrs = ["swiss.h"],
+    deps = [
+        ":candidate_store",
+        ":job_log",
+        ":scheduler",
+        "//game_arena/proto:arena_cc_proto",
+        "//game_arena/standings:http_leaderboard",
+        "//game_arena/standings:trueskill",
+        "//game_arena/standings:trueskill_standings",
+        "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/strings",
+    ],
+)
+
+cc_test(
+    name = "swiss_test",
+    srcs = ["swiss_test.cc"],
+    deps = [
+        ":swiss",
+        "//game_arena/standings:game_history",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "arena_service",
     srcs = ["arena_service.cc"],
     hdrs = ["arena_service.h"],
@@ -274,6 +301,7 @@ cc_binary(
         "//game_arena/standings:trueskill_standings",
         ":problem_config",
         ":scheduler",
+        ":swiss",
         "//game_arena/standings:standings",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",

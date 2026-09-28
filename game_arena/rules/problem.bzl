@@ -14,6 +14,7 @@ defines, in the calling package:
   :match_referee        the registry linked with the arena's referee (with `registry`)
   :config_test          the config parses and is consistent
   :tournament           the coordinator; a worker is a process of its own
+  :swiss                a re-rank of every version :tournament has seen, at /swiss
   :kit                  `-- --out=DIR --server=HOST:PORT --mint=ID`: a participant's workspace
   :kit_image            that kit on kit_base; no token, no address, nothing built
   :kit_image_load       into the local daemon as <name>-kit:latest
@@ -110,15 +111,16 @@ def arena_problem(
         "ARENA_REPLAY_ASSETS": " ".join(["$(rlocationpaths %s)" % a for a in replay_assets]),
         "ARENA_REPLAY_MODULE": replay_module or "",
     }
-    _tool(
-        sh_binary,
-        "tournament",
-        "up",
-        config,
-        replay_assets,
-        env = replay_env,
-        visibility = visibility,
-    )
+    for target, command in [("tournament", "up"), ("swiss", "swiss")]:
+        _tool(
+            sh_binary,
+            target,
+            command,
+            config,
+            replay_assets,
+            env = replay_env,
+            visibility = visibility,
+        )
 
     # manual, like every target that carries a base: `//...` must not need a registry.
     sandbox_tree(

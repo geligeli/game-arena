@@ -60,6 +60,11 @@ ABSL_FLAG(std::string, data_dir, "",
           "workers' checkouts. Default: $ARENA_STATE_DIR/<problem_id>, and "
           "$ARENA_STATE_DIR defaults to ~/.arena. Kept out of the repo so "
           "`bazel test //...` there never descends into a worker's clone");
+ABSL_FLAG(std::string, swiss_from, "",
+          "swiss: the tournament whose every version is re-ranked. Default: "
+          "$ARENA_STATE_DIR/<problem_id>");
+ABSL_FLAG(int, swiss_rounds, 0, "swiss: rounds. 0: ceil(log2(entries)) + 3");
+ABSL_FLAG(int, swiss_games, 2, "swiss: games per match");
 ABSL_FLAG(int, grpc_port, 50051, "up: the Arena and SandboxFleet port");
 ABSL_FLAG(int, http_port, 8090, "up: the leaderboard port");
 ABSL_FLAG(std::string, clients, "",
@@ -521,7 +526,9 @@ int Bazel(const std::vector<std::string>& startup,
   return RunInherit("bazel", command, cwd);
 }
 
-int RunUp(const ArenaRunfiles& runfiles) {
+// |swiss|: a re-rank of the tournament in the default state dir, in a data
+// dir of its own, rather than the tournament itself.
+int RunUp(const ArenaRunfiles& runfiles, bool swiss = false) {
   std::filesystem::path config_path;
   auto config = LoadConfig(&config_path);
   if (!config) {
@@ -539,8 +546,15 @@ int RunUp(const ArenaRunfiles& runfiles) {
     return 1;
   }
 
-  const std::filesystem::path data_dir =
-      PathFlag(FLAGS_data_dir, StateDir(config->problem_id()));
+  const std::filesystem::path state = StateDir(config->problem_id());
+  const std::filesystem::path data_dir = PathFlag(
+      FLAGS_data_dir,
+      swiss ? absl::StrCat(
+                  state.string(), "-swiss-",
+                  std::chrono::duration_cast<std::chrono::seconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count())
+            : state.string());
   std::error_code ec;
   std::filesystem::create_directories(data_dir, ec);
   if (ec) {
@@ -581,6 +595,14 @@ int RunUp(const ArenaRunfiles& runfiles) {
       absl::StrCat("--http_port=", http_port),
       "--clients=" + clients.string(),
   };
+  if (swiss) {
+    server_args.push_back("--swiss_from=" +
+                          PathFlag(FLAGS_swiss_from, state).string());
+    server_args.push_back(
+        absl::StrCat("--swiss_rounds=", absl::GetFlag(FLAGS_swiss_rounds)));
+    server_args.push_back(
+        absl::StrCat("--swiss_games=", absl::GetFlag(FLAGS_swiss_games)));
+  }
   // arena_problem's replay_assets, by runfiles path, and the module among
   // them; the coordinator serves the files and checks the module is one.
   std::vector<std::string> assets;
@@ -1816,9 +1838,10 @@ int RunPlay(const ArenaRunfiles& runfiles) {
 
 void PrintUsage() {
   std::fprintf(stderr,
-               "usage: arena_tournament <up|kit|sandbox|check|play> "
+               "usage: arena_tournament <up|swiss|kit|sandbox|check|play> "
                "--problem_config=<path> [flags]\n"
                "  up       run the coordinator\n"
+               "  swiss    re-rank every version up has seen, at /swiss\n"
                "  play     up in the background, a kit for you, a shell in it\n"
                "  kit      write a participant's workspace (--out, --mint, "
                "--image)\n"
@@ -1843,6 +1866,7 @@ int main(int argc, char** argv) {
   const ArenaRunfiles runfiles(argv[0]);
   const std::map<std::string, std::function<int()>> commands = {
       {"up", [&] { return RunUp(runfiles); }},
+      {"swiss", [&] { return RunUp(runfiles, /*swiss=*/true); }},
       {"kit", [&] { return RunKit(runfiles); }},
       {"sandbox", [&] { return RunSandbox(runfiles); }},
       {"check", RunCheck},

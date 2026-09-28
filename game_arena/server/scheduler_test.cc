@@ -487,6 +487,46 @@ TEST_F(SchedulerTest, ResubmitSupersedesTheCandidatesUnfinishedJob) {
             proto::Candidate::PENDING);
 }
 
+TEST_F(SchedulerTest, AMatchBetweenBuiltinsBuildsNeitherAndReportsItsEnd) {
+  std::vector<proto::Job> concluded;
+  scheduler_ = std::make_unique<Scheduler>(
+      config_, store_.get(), standings_.get(), nullptr, nullptr,
+      [&concluded](const proto::Job &job) { concluded.push_back(job); });
+  auto worker = std::make_shared<FakeWorker>("w1", 1);
+  scheduler_->AddWorker(worker);
+
+  proto::Candidate builtin;
+  builtin.set_candidate_id("builtin:mcts");
+  builtin.set_game("risk2");
+  const std::string job_id =
+      scheduler_->EnqueueMatch(builtin, "builtin:random", 2);
+
+  ASSERT_EQ(worker->orders.size(), 1u);
+  const proto::WorkOrder &order = worker->orders[0];
+  EXPECT_EQ(order.candidate().candidate_id(), "builtin:mcts");
+  EXPECT_TRUE(order.candidate().patch().empty());
+  EXPECT_EQ(order.candidate().build_targets_size(), 0);
+  EXPECT_EQ(order.opponent_spec(), "builtin:random");
+  EXPECT_FALSE(order.has_opponent());
+  EXPECT_TRUE(concluded.empty());
+
+  scheduler_->OnResult("w1", Result(order.order_id()));
+  ASSERT_EQ(concluded.size(), 1u);
+  EXPECT_EQ(concluded[0].job_id(), job_id);
+  EXPECT_EQ(concluded[0].state(), proto::Job::DONE);
+  EXPECT_EQ(concluded[0].wins(), 1);
+}
+
+TEST_F(SchedulerTest, AMatchWithNoRunnableRivalConcludesAtOnce) {
+  std::vector<proto::Job> concluded;
+  scheduler_ = std::make_unique<Scheduler>(
+      config_, store_.get(), standings_.get(), nullptr, nullptr,
+      [&concluded](const proto::Job &job) { concluded.push_back(job); });
+  scheduler_->EnqueueMatch(AddCandidate("Alpha"), "player:nobody", 2);
+  ASSERT_EQ(concluded.size(), 1u);
+  EXPECT_EQ(concluded[0].state(), proto::Job::FAILED);
+}
+
 TEST_F(SchedulerTest, PlacementAlsoPlaysTheLadder) {
   // Nothing else ever plays two submissions against each other: the builtins
   // first, then rated rivals spread from the top of the board to the bottom.

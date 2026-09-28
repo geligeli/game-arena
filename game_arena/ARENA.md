@@ -189,8 +189,9 @@ builtins the same way.
    `genrule`, and a `genrule` runs arbitrary code at build time.
 2. The scheduler queues a **placement series**: the problem's
    `placement_opponents`, then a ladder of rated rivals spread from the top
-   of the board to the bottom. Nothing else plays two submissions against
-   each other; there is no RPC that asks the fleet for more games.
+   of the board to the bottom. In a tournament nothing else plays two
+   submissions against each other; there is no RPC that asks the fleet for
+   more games (a re-rank, below, is a coordinator of its own).
 3. A worker picks up the order, starts from the tree in the sandbox image,
    `git apply`s the patch (both sides, for a candidate-vs-candidate match),
    and builds the problem's targets.
@@ -201,11 +202,33 @@ builtins the same way.
    the tally counted from them; the coordinator keeps the games and updates
    ELO from the tally (TrueSkill: from each game as it is kept).
 
-A candidate-vs-candidate match is **two** orders, dispatched together, each
-telling its bot `--opponent=player:<the other>`. That is what the broker's
-`player:<name>` rendezvous exists for, and why the scheduler never dispatches
-half a pair: a lone half would sit at the rendezvous until it timed out,
-holding a slot and producing no game.
+A candidate-vs-candidate match is **one** order carrying both sides: the
+worker starts both bots beside one referee, each told
+`--opponent=player:<the other>`, which is what the broker's `player:<name>`
+rendezvous exists for. A side named `builtin:<spec>` has no code: the referee
+plays it, and when both sides are builtins it plays the whole match itself.
+
+## Re-ranking every version
+
+A resubmit replaces the code behind a participant, and placement is sparse,
+so the board says little about whether later versions were actually better.
+`arena_tournament swiss` answers that from the job log, which keeps every
+submission as it was sent:
+
+```sh
+bazel run //:swiss -- --grpc_port=50061 --http_port=8091
+```
+
+It runs the coordinator in a data dir of its own (`<state>-swiss-<time>`),
+reading the tournament's state dir and never writing it. Every version that
+played a game becomes an entry, `<participant>-vNN`, its patch moved to
+`<files_submit_dir>/<participant>-vNN/`; the builtins are entries too. The
+entries play Swiss rounds (`--swiss_rounds`, default ceil(log2 n) + 3; the
+first drawn, then neighbours by TrueSkill mu, no rematch while a fresh
+opponent is left), `--swiss_games` per match, on whatever workers attach.
+`/swiss` shows the rounds, where each entry's skill converges, and each
+participant's skill by version. The sandbox image must carry this arena: a
+referee from before builtin-vs-builtin never starts a game between two.
 
 ## Isolation, honestly
 

@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -26,11 +27,13 @@ namespace tournament_arena {
 
 class Scheduler {
  public:
-  // |history| and |job_log| may be null.
+  // |history| and |job_log| may be null. |on_concluded| gets each job that
+  // runs to DONE or FAILED, under the scheduler's lock.
   Scheduler(SchedulerConfig config, CandidateStore *candidates,
             Standings *standings,
             tournament_broker::GameHistory *history = nullptr,
-            JobLog *job_log = nullptr);
+            JobLog *job_log = nullptr,
+            std::function<void(const proto::Job &)> on_concluded = {});
 
   // Counted when granted, so two concurrent submits cannot both pass.
   class Reservation {
@@ -62,6 +65,11 @@ class Scheduler {
   // The problem's placement opponents, then a ladder of rated rivals.
   std::string EnqueuePlacement(const proto::Candidate &candidate,
                                Reservation reservation);
+
+  // One match of |games| against |opponent|, metered against no one. Either
+  // side may be a builtin, as "builtin:<spec>" for |candidate|'s id.
+  std::string EnqueueMatch(const proto::Candidate &candidate,
+                           const std::string &opponent, int games);
 
   std::optional<proto::Job> GetJob(const std::string &job_id) const;
 
@@ -117,6 +125,7 @@ class Scheduler {
   Standings *standings_;                     // not owned
   tournament_broker::GameHistory *history_;  // not owned
   JobLog *job_log_;                          // not owned
+  const std::function<void(const proto::Job &)> on_concluded_;
 
   mutable std::mutex mutex_;
   std::map<std::string, Job> jobs_;

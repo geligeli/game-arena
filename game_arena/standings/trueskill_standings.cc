@@ -60,6 +60,12 @@ Standing TrueSkillStandings::Get(const std::string &candidate_id) const {
   return standing;
 }
 
+tournament_broker::trueskill::Rating TrueSkillStandings::RatingOf(
+    const std::string &player) const {
+  std::lock_guard lock(mutex_);
+  return ranker_.Get(player).rating;
+}
+
 bool TrueSkillStandings::has(const std::string &candidate_id) const {
   const Standing standing = Get(candidate_id);
   return standing.wins + standing.draws + standing.losses > 0;

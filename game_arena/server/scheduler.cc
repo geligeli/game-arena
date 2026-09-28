@@ -39,12 +39,14 @@ void Scheduler::Reservation::Release::operator()(Scheduler *scheduler) const {
 
 Scheduler::Scheduler(SchedulerConfig config, CandidateStore *candidates,
                      Standings *standings,
-                     tournament_broker::GameHistory *history, JobLog *job_log)
+                     tournament_broker::GameHistory *history, JobLog *job_log,
+                     std::function<void(const proto::Job &)> on_concluded)
     : config_(std::move(config)),
       candidates_(candidates),
       standings_(standings),
       history_(history),
-      job_log_(job_log) {}
+      job_log_(job_log),
+      on_concluded_(std::move(on_concluded)) {}
 
 void Scheduler::ReleaseReservationLocked(const std::string &client_id) {
   const auto it = reserved_.find(client_id);
@@ -144,6 +146,10 @@ auto Scheduler::TryReserve(const std::string &client_id,
 void Scheduler::FillSideLocked(const proto::Candidate &candidate,
                                proto::Side *side) const {
   side->set_candidate_id(candidate.candidate_id());
+  // The referee plays it: nothing to patch or build.
+  if (IsBuiltin(candidate.candidate_id())) {
+    return;
+  }
   *side->mutable_params() = candidate.params();
 
   // Not looked up by id: a staged resubmit shares its entry's id.
@@ -231,7 +237,7 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
     // Nothing runnable: fail now rather than leave the caller polling.
     jobs_[job_id].status.set_state(proto::Job::FAILED);
     jobs_[job_id].status.set_error("no runnable opponent");
-    jobs_[job_id].status.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
+    ConcludeJobLocked(&jobs_[job_id]);
     PersistLocked(&jobs_[job_id]);
     return job_id;
   }
@@ -268,6 +274,12 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
   opponents.insert(opponents.end(), ladder.begin(), ladder.end());
   return EnqueueLocked(candidate, opponents, config_.placement_games(),
                        client_id);
+}
+
+std::string Scheduler::EnqueueMatch(const proto::Candidate &candidate,
+                                    const std::string &opponent, int games) {
+  std::lock_guard lock(mutex_);
+  return EnqueueLocked(candidate, {opponent}, games, "");
 }
 
 // Rated rivals, evenly spaced from the top of the board to the bottom.
@@ -512,6 +524,9 @@ void Scheduler::ConcludeJobLocked(Job *job) {
     job->status.set_state(proto::Job::DONE);
   }
   job->status.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
+  if (on_concluded_) {
+    on_concluded_(job->status);
+  }
 }
 
 void Scheduler::PersistLocked(Job *job) {

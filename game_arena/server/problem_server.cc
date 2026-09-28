@@ -27,6 +27,7 @@
 #include "game_arena/server/job_log.h"
 #include "game_arena/server/problem_config.h"
 #include "game_arena/server/scheduler.h"
+#include "game_arena/server/swiss.h"
 #include "game_arena/standings/elo_standings.h"
 #include "game_arena/standings/elo_store.h"
 #include "game_arena/standings/game_history.h"
@@ -60,6 +61,13 @@ ABSL_FLAG(std::vector<std::string>, replay_assets, {},
 ABSL_FLAG(std::string, replay_module, "",
           "The ES module among --replay_assets that draws a replay's views. "
           "Empty: views are shown as text");
+ABSL_FLAG(std::string, swiss_from, "",
+          "Instead of taking submissions, re-rank every version in this "
+          "tournament data dir's job log, and the builtins, in Swiss rounds "
+          "rated by TrueSkill; progress at /swiss. Reads it, never writes it");
+ABSL_FLAG(int, swiss_rounds, 0, "Swiss rounds. 0: ceil(log2(entries)) + 3");
+ABSL_FLAG(int, swiss_games, 2,
+          "Games per Swiss match: two gives each side each seat once");
 ABSL_FLAG(int, shutdown_grace_s, 5,
           "How long a shutdown waits for in-flight RPCs to finish before "
           "cancelling them");
@@ -194,7 +202,24 @@ int main(int argc, char** argv) {
       problem->submission());
   candidates.Load();
 
+  const std::filesystem::path swiss_from = absl::GetFlag(FLAGS_swiss_from);
+  tournament_broker::trueskill::Params trueskill_params;
+  trueskill_params.draw_probability = problem->ranking().draw_probability();
+  std::vector<tournament_arena::SwissEntry> swiss_entries;
+  if (!swiss_from.empty()) {
+    tournament_broker::GameHistory board_games(swiss_from / "games");
+    const tournament_arena::TrueSkillStandings board(board_games, nullptr,
+                                                     trueskill_params);
+    swiss_entries = tournament_arena::SeedVersions(
+        tournament_arena::JobLog(swiss_from / "jobs"),
+        problem->submission().files_submit_dir(), board, &candidates);
+    for (const std::string& builtin : problem->match().placement_opponents()) {
+      swiss_entries.emplace_back().id = builtin;
+    }
+  }
+
   std::unique_ptr<tournament_arena::Standings> standings;
+  const tournament_arena::TrueSkillStandings* ratings = nullptr;
   std::unique_ptr<tournament_arena::MetricStandings> metric_standings;
   const bool graded = problem->has_grade();
   if (graded) {
@@ -205,12 +230,13 @@ int main(int argc, char** argv) {
         primary->direction() == tournament_arena::proto::MetricSpec::MINIMIZE);
     metric_standings->Load();
     standings = std::move(metric_standings);
-  } else if (problem->ranking().kind() ==
-             tournament_arena::proto::RankingSpec::TRUESKILL) {
-    tournament_broker::trueskill::Params params;
-    params.draw_probability = problem->ranking().draw_probability();
-    standings = std::make_unique<tournament_arena::TrueSkillStandings>(
-        history, &candidates, params);
+  } else if (!swiss_from.empty() ||
+             problem->ranking().kind() ==
+                 tournament_arena::proto::RankingSpec::TRUESKILL) {
+    auto trueskill = std::make_unique<tournament_arena::TrueSkillStandings>(
+        history, &candidates, trueskill_params);
+    ratings = trueskill.get();
+    standings = std::move(trueskill);
   } else {
     standings = std::make_unique<tournament_arena::EloStandings>(
         &elo_store, &candidates, problem->problem_id());
@@ -231,9 +257,14 @@ int main(int argc, char** argv) {
   }
 
   tournament_arena::JobLog job_log(data_dir / "jobs");
-  tournament_arena::Scheduler scheduler(SchedulerConfigFor(*problem),
-                                        &candidates, standings.get(), &history,
-                                        &job_log);
+  std::unique_ptr<tournament_arena::SwissRun> swiss;
+  tournament_arena::Scheduler scheduler(
+      SchedulerConfigFor(*problem), &candidates, standings.get(), &history,
+      &job_log, [&swiss](const tournament_arena::proto::Job& job) {
+        if (swiss) {
+          swiss->OnConcluded(job);
+        }
+      });
   // Curated: the operator's image names and timeouts are not a submitter's.
   tournament_arena::proto::ProblemInfo info;
   info.set_problem_id(problem->problem_id());
@@ -280,7 +311,10 @@ int main(int argc, char** argv) {
   // A game's record arrives whole, as one OrderGame, and its views are
   // uncapped: gRPC's default 4 MB would drop a long game's.
   builder.SetMaxReceiveMessageSize(64 << 20);
-  builder.RegisterService(&arena);
+  // A re-rank takes no submissions: only workers dial it.
+  if (swiss_from.empty()) {
+    builder.RegisterService(&arena);
+  }
   builder.RegisterService(&fleet);
   std::unique_ptr<grpc::Server> server = builder.BuildAndStart();
   if (!server) {
@@ -304,7 +338,12 @@ int main(int argc, char** argv) {
       absl::GetFlag(FLAGS_http_port), &history, &candidates, standings.get(),
       problem->display_name().empty() ? problem->problem_id()
                                       : problem->display_name(),
-      [&dashboard](std::string_view target) {
+      [&dashboard, &swiss](std::string_view target) {
+        if (swiss) {
+          if (auto page = swiss->Route(target)) {
+            return page;
+          }
+        }
         return dashboard.Route(target);
       });
   if (!leaderboard.Start()) {
@@ -328,6 +367,17 @@ int main(int argc, char** argv) {
               << ": the default is that every participant reads every "
                  "submission";
   }
+  if (!swiss_from.empty()) {
+    swiss = std::make_unique<tournament_arena::SwissRun>(
+        std::move(swiss_entries), absl::GetFlag(FLAGS_swiss_rounds),
+        absl::GetFlag(FLAGS_swiss_games), problem->match().game(), &scheduler,
+        &candidates, ratings);
+    swiss->Start();
+    LOG(INFO) << "Swiss re-rank of " << swiss_from
+              << ": http://localhost:" << absl::GetFlag(FLAGS_http_port)
+              << "/swiss";
+  }
+
   int signum = 0;
   sigwait(&shutdown_signals, &signum);
   LOG(INFO) << "Shutting down";
@@ -336,5 +386,6 @@ int main(int argc, char** argv) {
   server->Shutdown(std::chrono::system_clock::now() +
                    std::chrono::seconds(absl::GetFlag(FLAGS_shutdown_grace_s)));
   leaderboard.Stop();
+  swiss.reset();
   return 0;
 }
