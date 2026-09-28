@@ -227,7 +227,10 @@ entries play Swiss rounds (`--swiss_rounds`, default ceil(log2 n) + 3; the
 first drawn, then neighbours by TrueSkill mu, no rematch while a fresh
 opponent is left), `--swiss_games` per match, on whatever workers attach.
 `/swiss` shows the rounds, where each entry's skill converges, and each
-participant's skill by version. The sandbox image must carry this arena: a
+participant's skill by version. Ratings use TrueSkill with no dynamics
+(tau 0), since no version's code ever changes. The run keeps its rounds in
+`<data_dir>/swiss.tsv`: started again with that `--data_dir` and a larger
+`--swiss_rounds`, it goes on where it stopped. The sandbox image must carry this arena: a
 referee from before builtin-vs-builtin never starts a game between two.
 
 ## Isolation, honestly

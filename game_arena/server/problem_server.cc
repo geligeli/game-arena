@@ -65,7 +65,9 @@ ABSL_FLAG(std::string, swiss_from, "",
           "Instead of taking submissions, re-rank every version in this "
           "tournament data dir's job log, and the builtins, in Swiss rounds "
           "rated by TrueSkill; progress at /swiss. Reads it, never writes it");
-ABSL_FLAG(int, swiss_rounds, 0, "Swiss rounds. 0: ceil(log2(entries)) + 3");
+ABSL_FLAG(int, swiss_rounds, 0,
+          "Swiss rounds in all: a restart on the same --data_dir resumes "
+          "after the ones already played. 0: ceil(log2(entries)) + 3");
 ABSL_FLAG(int, swiss_games, 2,
           "Games per Swiss match: two gives each side each seat once");
 ABSL_FLAG(int, shutdown_grace_s, 5,
@@ -216,6 +218,8 @@ int main(int argc, char** argv) {
     for (const std::string& builtin : problem->match().placement_opponents()) {
       swiss_entries.emplace_back().id = builtin;
     }
+    // No dynamics: a version's code never changes, so every game is evidence.
+    trueskill_params.tau = 0;
   }
 
   std::unique_ptr<tournament_arena::Standings> standings;
@@ -371,7 +375,7 @@ int main(int argc, char** argv) {
     swiss = std::make_unique<tournament_arena::SwissRun>(
         std::move(swiss_entries), absl::GetFlag(FLAGS_swiss_rounds),
         absl::GetFlag(FLAGS_swiss_games), problem->match().game(), &scheduler,
-        &candidates, ratings);
+        &candidates, ratings, &job_log, data_dir / "swiss.tsv");
     swiss->Start();
     LOG(INFO) << "Swiss re-rank of " << swiss_from
               << ": http://localhost:" << absl::GetFlag(FLAGS_http_port)

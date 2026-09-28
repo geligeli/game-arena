@@ -5,6 +5,7 @@
 // rounds of neighbours by TrueSkill, on the fleet like any other match.
 
 #include <condition_variable>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -56,10 +57,13 @@ std::vector<SwissEntry> SeedVersions(const JobLog &jobs,
 
 class SwissRun {
  public:
-  // |rounds| <= 0: ceil(log2(entries)) + 3.
+  // |rounds| <= 0: ceil(log2(entries)) + 3, counting the rounds a run on the
+  // same data dir played before: |state| is where it keeps them, and |jobs|
+  // how their matches ended.
   SwissRun(std::vector<SwissEntry> entries, int rounds, int games,
            std::string game, Scheduler *scheduler,
-           const CandidateView *candidates, const TrueSkillStandings *ratings);
+           const CandidateView *candidates, const TrueSkillStandings *ratings,
+           const JobLog *jobs, std::filesystem::path state);
   ~SwissRun();
 
   void Start();
@@ -75,6 +79,12 @@ class SwissRun {
   };
 
   void Run();
+  // Reads back |state_|; under mutex_.
+  void Resume(std::set<std::pair<std::string, std::string>> *played,
+              std::set<std::string> *had_bye);
+  void Append(int round,
+              const std::map<std::string, tournament_broker::trueskill::Rating>
+                  &snapshot) const;
   std::map<std::string, tournament_broker::trueskill::Rating> Snapshot() const;
 
   const std::vector<SwissEntry> entries_;
@@ -84,6 +94,8 @@ class SwissRun {
   Scheduler *scheduler_;               // not owned
   const CandidateView *candidates_;    // not owned
   const TrueSkillStandings *ratings_;  // not owned
+  const JobLog *jobs_;                 // not owned
+  const std::filesystem::path state_;
 
   mutable std::mutex mutex_;
   std::condition_variable cv_;

@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <random>
 #include <sstream>
 
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
+#include "absl/strings/str_split.h"
 #include "game_arena/standings/http_leaderboard.h"
 
 namespace tournament_arena {
@@ -153,7 +155,9 @@ std::vector<SwissEntry> SeedVersions(const JobLog &jobs,
     *request.mutable_extra_deps() = submission.extra_deps();
     *request.mutable_params() = submission.params();
     std::string error;
-    if (!store->Create(request, &error).has_value()) {
+    // Already there when a run resumes on its own data dir.
+    if (!store->Get(id).has_value() &&
+        !store->Create(request, &error).has_value()) {
       LOG(WARNING) << "Swiss: skipping " << id << " (job "
                    << record.job().job_id() << "): " << error;
       continue;
@@ -187,7 +191,8 @@ std::vector<SwissEntry> SeedVersions(const JobLog &jobs,
 SwissRun::SwissRun(std::vector<SwissEntry> entries, int rounds, int games,
                    std::string game, Scheduler *scheduler,
                    const CandidateView *candidates,
-                   const TrueSkillStandings *ratings)
+                   const TrueSkillStandings *ratings, const JobLog *jobs,
+                   std::filesystem::path state)
     : entries_(std::move(entries)),
       rounds_(rounds > 0 ? rounds
                          : static_cast<int>(std::ceil(std::log2(
@@ -197,7 +202,9 @@ SwissRun::SwissRun(std::vector<SwissEntry> entries, int rounds, int games,
       game_(std::move(game)),
       scheduler_(scheduler),
       candidates_(candidates),
-      ratings_(ratings) {}
+      ratings_(ratings),
+      jobs_(jobs),
+      state_(std::move(state)) {}
 
 SwissRun::~SwissRun() {
   {
@@ -228,21 +235,74 @@ std::map<std::string, Rating> SwissRun::Snapshot() const {
   return ratings;
 }
 
+void SwissRun::Append(int round,
+                      const std::map<std::string, Rating> &snapshot) const {
+  std::ofstream out(state_, std::ios::app);
+  for (const auto &[id, rating] : snapshot) {
+    out << "S\t" << round << "\t" << id << "\t" << Fixed(rating.mu, 6) << "\t"
+        << Fixed(rating.sigma, 6) << "\n";
+  }
+}
+
+// State lines, tab-separated: "M <round> <a> <b> <job id>" as a match is
+// queued, "B <round> <id>" for a bye, and "S <round> <id> <mu> <sigma>" after
+// each round, round 0 being before any game.
+void SwissRun::Resume(std::set<std::pair<std::string, std::string>> *played,
+                      std::set<std::string> *had_bye) {
+  std::ifstream in(state_);
+  for (std::string line; std::getline(in, line);) {
+    const std::vector<std::string> f = absl::StrSplit(line, '\t');
+    const std::size_t round = std::stoul(f[1]);
+    if (f[0] == "M") {
+      played_.resize(std::max(played_.size(), round));
+      played_[round - 1].push_back({f[2], f[3], f[4]});
+      played->insert(Key(f[2], f[3]));
+      const auto record = jobs_->Get(f[4]);
+      proto::Job job = record.has_value() ? record->job() : proto::Job();
+      if (job.state() != proto::Job::DONE &&
+          job.state() != proto::Job::FAILED) {
+        job.set_job_id(f[4]);
+        job.set_state(proto::Job::CANCELLED);
+        job.set_error("dropped: the run stopped before it finished");
+      }
+      concluded_[f[4]] = job;
+    } else if (f[0] == "B") {
+      byes_.resize(std::max(byes_.size(), round));
+      byes_[round - 1] = f[2];
+      had_bye->insert(f[2]);
+    } else {
+      snapshots_.resize(std::max(snapshots_.size(), round + 1));
+      snapshots_[round][f[2]] = {std::stod(f[3]), std::stod(f[4])};
+    }
+  }
+  byes_.resize(played_.size());
+  // A round cut short counts as played, with the games it got.
+  while (snapshots_.size() < played_.size() + 1) {
+    snapshots_.push_back(Snapshot());
+    Append(static_cast<int>(snapshots_.size()) - 1, snapshots_.back());
+  }
+}
+
 void SwissRun::Run() {
   std::vector<std::string> ids;
   for (const SwissEntry &entry : entries_) {
     ids.push_back(entry.id);
   }
-  // No prior: the first round is drawn, reproducibly.
-  std::shuffle(ids.begin(), ids.end(), std::mt19937(1));
   std::set<std::pair<std::string, std::string>> played;
   std::set<std::string> had_bye;
   {
     std::lock_guard lock(mutex_);
-    snapshots_.push_back(Snapshot());
+    Resume(&played, &had_bye);
+  }
+  if (played_.empty()) {
+    // No prior: the first round is drawn, reproducibly.
+    std::shuffle(ids.begin(), ids.end(), std::mt19937(1));
+  }
+  if (!played_.empty()) {
+    LOG(INFO) << "Swiss: resuming after round " << played_.size();
   }
 
-  for (int round = 0; round < rounds_; ++round) {
+  for (int round = static_cast<int>(played_.size()); round < rounds_; ++round) {
     if (round > 0) {
       const auto ratings = Snapshot();
       std::stable_sort(ids.begin(), ids.end(),
@@ -268,9 +328,14 @@ void SwissRun::Run() {
       const std::string opponent = IsBuiltin(b) ? b : "player:" + b;
       matches.push_back(
           {a, b, scheduler_->EnqueueMatch(candidate, opponent, games_)});
+      std::ofstream(state_, std::ios::app)
+          << "M\t" << round + 1 << "\t" << a << "\t" << b << "\t"
+          << matches.back().job_id << "\n";
     }
     if (!pairing.bye.empty()) {
       had_bye.insert(pairing.bye);
+      std::ofstream(state_, std::ios::app)
+          << "B\t" << round + 1 << "\t" << pairing.bye << "\n";
     }
     LOG(INFO) << "Swiss: round " << round + 1 << " of " << rounds_ << ", "
               << matches.size() << " match(es)";
@@ -288,6 +353,7 @@ void SwissRun::Run() {
       return;
     }
     snapshots_.push_back(Snapshot());
+    Append(round + 1, snapshots_.back());
   }
   LOG(INFO) << "Swiss: all " << rounds_ << " rounds played";
 }
