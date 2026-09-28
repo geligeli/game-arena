@@ -151,8 +151,16 @@ void MountOutputBase(const std::optional<sx::Mount>& output_base, bool readonly,
   }
 }
 
+// A builtin plays inside the referee: nothing of it to patch, build or start.
+bool IsBuiltin(const proto::Side& side) {
+  return side.candidate_id().starts_with("builtin:");
+}
+
 std::vector<const proto::Side*> SidesOf(const proto::WorkOrder& order) {
-  std::vector<const proto::Side*> sides = {&order.candidate()};
+  std::vector<const proto::Side*> sides;
+  if (!IsBuiltin(order.candidate())) {
+    sides.push_back(&order.candidate());
+  }
   if (order.has_opponent()) {
     sides.push_back(&order.opponent());
   }
@@ -270,7 +278,10 @@ void AddMatchPhase(const proto::WorkOrder& order, const BuildPaths& paths,
   isolation->set_network(sx::Isolation::NETWORK_PHASE_BRIDGE);
   phase->set_drain_timeout_s(match_deadline_s + 60);
 
-  sx::Step* referee = phase->add_background();
+  // Two builtins: the referee plays the whole match, so its exit ends it.
+  const bool bot_less = IsBuiltin(order.candidate());
+  sx::Step* referee =
+      bot_less ? phase->mutable_foreground() : phase->add_background();
   referee->set_name("referee");
   referee->set_keep_after_exit(true);
   MountOutputBase(output_base, /*readonly=*/true, referee);
@@ -344,6 +355,10 @@ void AddMatchPhase(const proto::WorkOrder& order, const BuildPaths& paths,
     }
   };
 
+  if (bot_less) {
+    referee->set_timeout_s(run_timeout_s);
+    return;
+  }
   if (order.has_opponent()) {
     // Plays the whole match; the referee ends both bots' streams.
     sx::Step* opponent = phase->add_background();

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -22,6 +23,20 @@ std::string PairingKey(const std::string& game, const std::string& a,
   const std::string& lo = a < b ? a : b;
   const std::string& hi = a < b ? b : a;
   return game + "\t" + lo + "\t" + hi;
+}
+
+// |opponent| is "builtin:<spec>"; nullopt, with *error set, for a bad spec.
+std::optional<Seat> BuiltinSeat(const GameDescriptor& descriptor,
+                                const std::string& opponent,
+                                std::string* error) {
+  auto builtin = descriptor.make_builtin(
+      std::string_view(opponent).substr(kBuiltinPrefix.size()), error);
+  if (!builtin.has_value()) {
+    return std::nullopt;
+  }
+  return Seat{.display_name = opponent,
+              .client = nullptr,
+              .builtin = std::move(*builtin)};
 }
 
 }  // namespace
@@ -63,19 +78,14 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
   const GameDescriptor& descriptor = it->second;
 
   if (hello.opponent().substr(0, kBuiltinPrefix.size()) == kBuiltinPrefix) {
-    const std::string_view spec =
-        std::string_view(hello.opponent()).substr(kBuiltinPrefix.size());
-    auto builtin = descriptor.make_builtin(spec, error);
-    if (!builtin.has_value()) {
+    std::optional<Seat> bot = BuiltinSeat(descriptor, hello.opponent(), error);
+    if (!bot.has_value()) {
       return false;
     }
     Seat remote{.display_name = client->name(),
                 .client = std::move(client),
                 .builtin = nullptr};
-    Seat bot{.display_name = std::string(kBuiltinPrefix) + std::string(spec),
-             .client = nullptr,
-             .builtin = std::move(*builtin)};
-    StartPairedGame(descriptor, std::move(remote), std::move(bot));
+    StartPairedGame(descriptor, std::move(remote), std::move(*bot));
     return true;
   }
 
@@ -95,6 +105,20 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
   *error = "unknown opponent '" + hello.opponent() +
            "' (expected: builtin:<spec> | player:<name>)";
   return false;
+}
+
+bool Matchmaker::StartBuiltins(const std::string& game,
+                               const std::string& spec_a,
+                               const std::string& spec_b, std::string* error) {
+  const GameDescriptor& descriptor = GameRegistry().at(game);
+  std::optional<Seat> a = BuiltinSeat(descriptor, spec_a, error);
+  std::optional<Seat> b =
+      a.has_value() ? BuiltinSeat(descriptor, spec_b, error) : std::nullopt;
+  if (!b.has_value()) {
+    return false;
+  }
+  StartPairedGame(descriptor, std::move(*a), std::move(*b));
+  return true;
 }
 
 bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,

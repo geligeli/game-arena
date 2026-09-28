@@ -32,8 +32,9 @@ ABSL_FLAG(int, games, 1, "Games to play before reporting and exiting");
 ABSL_FLAG(std::string, player_a, "",
           "Player the tally is counted from (required)");
 ABSL_FLAG(std::string, player_b, "",
-          "The opponent, for the log only: a builtin plays because the bot "
-          "named it, and a rival plays because both bots rendezvous");
+          "The opponent. A builtin plays because the bot named it and a rival "
+          "because both bots rendezvous; with --player_a a builtin too, the "
+          "referee plays both itself");
 ABSL_FLAG(std::string, report, "",
           "Write the MatchReport here before exiting. Empty: none");
 ABSL_FLAG(std::string, scratch_dir, "",
@@ -66,8 +67,7 @@ namespace {
 // Written from game strands, which may run concurrently, and read by main.
 class Tally {
  public:
-  Tally(std::string player_a, int target)
-      : player_a_(std::move(player_a)), target_(target) {}
+  explicit Tally(std::string player_a) : player_a_(std::move(player_a)) {}
 
   void Observe(const tournament_broker::proto::GameRecord& record) {
     {
@@ -82,15 +82,15 @@ class Tally {
     cv_.notify_all();
   }
 
-  // True once the full match is played; false if |deadline| passes first.
-  bool Await(std::chrono::steady_clock::time_point deadline) {
+  // True once |games| are played; false if |deadline| passes first.
+  bool Await(int games, std::chrono::steady_clock::time_point deadline) {
     std::unique_lock lock(mutex_);
     if (deadline == std::chrono::steady_clock::time_point::max()) {
-      cv_.wait(lock, [&] { return counts_.games >= target_; });
+      cv_.wait(lock, [&] { return counts_.games >= games; });
       return true;
     }
     return cv_.wait_until(lock, deadline,
-                          [&] { return counts_.games >= target_; });
+                          [&] { return counts_.games >= games; });
   }
 
   tournament_broker::MatchTally counts() const {
@@ -104,7 +104,6 @@ class Tally {
 
  private:
   const std::string player_a_;
-  const int target_;
   mutable std::mutex mutex_;
   std::condition_variable cv_;
   tournament_broker::MatchTally counts_;
@@ -147,7 +146,7 @@ int main(int argc, char** argv) {
 
   tournament_broker::GameHistory history(scratch / "games");
 
-  Tally tally(player_a, target_games);
+  Tally tally(player_a);
 
   tournament_broker::MatchmakerConfig config;
   config.turn_timeout =
@@ -197,7 +196,21 @@ int main(int argc, char** argv) {
       deadline_s > 0
           ? std::chrono::steady_clock::now() + std::chrono::seconds(deadline_s)
           : std::chrono::steady_clock::time_point::max();
-  const bool complete = tally.Await(deadline);
+  // Two builtins have no bot to start their games: the referee does, one at a
+  // time, as a bot plays its series.
+  const std::string player_b = absl::GetFlag(FLAGS_player_b);
+  bool complete = true;
+  if (player_a.starts_with("builtin:") && player_b.starts_with("builtin:")) {
+    for (int played = 0; complete && played < target_games; ++played) {
+      if (!matchmaker.StartBuiltins(game, player_a, player_b, &error)) {
+        LOG(ERROR) << error;
+        return 2;
+      }
+      complete = tally.Await(played + 1, deadline);
+    }
+  } else {
+    complete = tally.Await(target_games, deadline);
+  }
 
   // Shutdown first, or Drain waits out a turn timeout per silent client.
   matchmaker.Shutdown();

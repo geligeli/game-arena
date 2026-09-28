@@ -169,6 +169,29 @@ TEST(JobForOrderTest, OneBuildBuildsEverySideAndTheReferee) {
   EXPECT_EQ(job.phases(1).background(1).name(), "opponent");
 }
 
+TEST(JobForOrderTest, TwoBuiltinsAreTheRefereeAlone) {
+  proto::WorkOrder order = MatchOrder();
+  order.mutable_candidate()->Clear();
+  order.mutable_candidate()->set_candidate_id("builtin:optimal");
+
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(
+      JobForOrder(0, order, Config(), ContainerCapabilities(), &job, &error))
+      << error;
+  EXPECT_EQ(job.workspace().staged_files_size(), 0);
+  EXPECT_EQ(ArgvOf(job.phases(0).foreground()).find("//solutions"),
+            std::string::npos);
+  const sx::Step &referee = job.phases(1).foreground();
+  EXPECT_EQ(referee.name(), "referee");
+  EXPECT_EQ(job.phases(1).background_size(), 0);
+  EXPECT_NE(ArgvOf(referee).find(
+                "--player_a=builtin:optimal --player_b=builtin:random"),
+            std::string::npos)
+      << ArgvOf(referee);
+  EXPECT_EQ(referee.timeout_s(), 1800);
+}
+
 TEST(JobForOrderTest, AContainerRefereeListensOnAFixedPortAndIsDialledByName) {
   sx::Job job;
   std::string error;

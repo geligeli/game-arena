@@ -381,5 +381,25 @@ TEST_F(NimMatchmakerTest, SeatsAlternateBetweenPlayersWhoeverArrivesFirst) {
   EXPECT_EQ(alice_seats, (std::vector<int>{0, 1, 0, 1}));
 }
 
+TEST_F(NimMatchmakerTest, TwoBuiltinsPlayWithNoClientAndAlternateSeats) {
+  std::vector<proto::GameRecord> records;
+  MatchmakerConfig config;
+  config.on_record = [&records](const proto::GameRecord& r) {
+    records.push_back(r);
+  };
+  Matchmaker matchmaker(config, history_.get());
+  std::string error;
+  for (int game = 0; game < 2; ++game) {
+    ASSERT_TRUE(matchmaker.StartBuiltins("nim", "builtin:random",
+                                         "builtin:optimal", &error))
+        << error;
+    matchmaker.Drain();
+  }
+  ASSERT_EQ(records.size(), 2u);
+  EXPECT_EQ(records[0].player_names(0), records[1].player_names(1));
+  EXPECT_FALSE(matchmaker.StartBuiltins("nim", "builtin:random",
+                                        "builtin:nonsense", &error));
+}
+
 }  // namespace
 }  // namespace tournament_broker

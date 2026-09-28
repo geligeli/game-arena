@@ -48,6 +48,10 @@ class Matchmaker {
   bool Join(std::shared_ptr<ClientHandle> client, const proto::Hello& hello,
             std::string* error);
 
+  // Plays one game between two builtins, with no client on either side.
+  bool StartBuiltins(const std::string& game, const std::string& spec_a,
+                     const std::string& spec_b, std::string* error);
+
   // Unparks the client, and marks it disconnected so its game is forfeited.
   void Disconnect(const std::shared_ptr<ClientHandle>& client);
 
