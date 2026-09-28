@@ -172,7 +172,10 @@ The coordinator serves them, on `tournament`'s HTTP port (8090):
 - `/api/games` — recent games as JSON.
 
 Ratings live in the state directory's `ratings.pb` (per problem + candidate,
-ELO with K=32 by default), updated from each match's tally. Every game a
+ELO with K=32 by default), updated from each match's tally. A problem with
+`ranking { kind: TRUESKILL }` is ranked by TrueSkill instead (score: mu - 3
+sigma), rated game by game as each is stored and rebuilt at start from
+`games/index.jsonl`, so it keeps no ratings file. Every game a
 worker played is kept under the state directory's `games/`, one `GameRecord`
 proto each (initial state, every step with timestamps and the game's
 `RenderState()` after it, result) named `<order_id>-<game_id>.pb`, indexed by

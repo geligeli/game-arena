@@ -154,12 +154,16 @@ message MatchSpec {
 
 message RankingSpec {
   enum Kind {
-    ELO = 0;     // requires MatchSpec
-    METRIC = 1;  // requires GradeSpec
+    ELO = 0;        // requires MatchSpec
+    METRIC = 1;     // requires GradeSpec
+    TRUESKILL = 2;  // requires MatchSpec; rated game by game
   }
   Kind kind = 1;
   // For METRIC; empty uses the GradeSpec metric marked primary.
   string metric_name = 2;
+  // For TRUESKILL: how often two equal players draw; 0 for a game that
+  // cannot draw.
+  double draw_probability = 3;
 }
 
 // Defaults; server/client_registry.h overrides them per client.

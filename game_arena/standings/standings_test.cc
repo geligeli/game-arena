@@ -15,7 +15,9 @@
 
 #include "game_arena/standings/candidate_view.h"
 #include "game_arena/standings/elo_standings.h"
+#include "game_arena/standings/game_history.h"
 #include "game_arena/standings/metric_standings.h"
+#include "game_arena/standings/trueskill_standings.h"
 
 namespace tournament_arena {
 namespace {
@@ -162,6 +164,104 @@ TEST_F(EloStandingsTest, RanksReadyCandidatesBestFirst) {
   EXPECT_EQ(rows[0].candidate_id, strong);
   EXPECT_EQ(rows[1].candidate_id, weak);
   EXPECT_EQ(standings_->Rank(1).size(), 1u);
+}
+
+// |winner| is the winning seat, -1 for a draw.
+tournament_broker::proto::GameRecord Game(const std::string &player0,
+                                          const std::string &player1,
+                                          int winner) {
+  static int next_id = 0;
+  tournament_broker::proto::GameRecord record;
+  record.set_game_id("g" + std::to_string(++next_id));
+  record.set_game("risk2");
+  record.add_player_names(player0);
+  record.add_player_names(player1);
+  record.set_result(winner < 0 ? tournament_broker::proto::GameRecord::DRAW
+                               : tournament_broker::proto::GameRecord::WIN);
+  record.set_winning_player(winner);
+  return record;
+}
+
+class TrueSkillStandingsTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    dir_ = TempDir("trueskill_standings");
+    history_ = std::make_unique<tournament_broker::GameHistory>(dir_);
+    store_ = std::make_unique<FakeCandidates>();
+  }
+  void TearDown() override { std::filesystem::remove_all(dir_); }
+
+  std::unique_ptr<TrueSkillStandings> Open() const {
+    return std::make_unique<TrueSkillStandings>(
+        *history_, store_.get(), tournament_broker::trueskill::Params{});
+  }
+
+  // Stored, then rated, the way the scheduler does it.
+  void Play(TrueSkillStandings &standings,
+            const tournament_broker::proto::GameRecord &record) {
+    history_->Store(record);
+    standings.RecordGame(record);
+  }
+
+  std::filesystem::path dir_;
+  std::unique_ptr<tournament_broker::GameHistory> history_;
+  std::unique_ptr<FakeCandidates> store_;
+};
+
+TEST_F(TrueSkillStandingsTest, RatesEachGameFromEitherSeat) {
+  const std::string alpha = store_->Add("Alpha");
+  auto standings = Open();
+  EXPECT_FALSE(standings->has(alpha)) << "unplayed is not a result";
+
+  Play(*standings, Game(alpha, "builtin:random", 0));
+  Play(*standings, Game("builtin:random", alpha, 1));
+  Play(*standings, Game(alpha, "builtin:random", -1));
+
+  const Standing standing = standings->Get(alpha);
+  EXPECT_EQ(standing.wins, 2);
+  EXPECT_EQ(standing.draws, 1);
+  EXPECT_EQ(standing.losses, 0);
+  EXPECT_GT(standing.score, standings->Get("builtin:random").score);
+  EXPECT_EQ(standings->score_label(), "trueskill");
+  EXPECT_FALSE(standings->graded());
+}
+
+// No ratings file: a restart replays the index into the very same numbers.
+TEST_F(TrueSkillStandingsTest, ARestartReplaysTheSameRatings) {
+  const std::string alpha = store_->Add("Alpha");
+  const std::string beta = store_->Add("Beta");
+  auto live = Open();
+  Play(*live, Game(alpha, beta, 0));
+  Play(*live, Game(beta, "builtin:mcts", 1));
+  Play(*live, Game(alpha, beta, 1));
+  Play(*live, Game("builtin:mcts", alpha, 1));
+
+  const auto restarted = Open();
+  for (const std::string &player : {alpha, beta, std::string("builtin:mcts")}) {
+    EXPECT_DOUBLE_EQ(restarted->Get(player).score, live->Get(player).score)
+        << player;
+    EXPECT_EQ(restarted->Get(player).wins, live->Get(player).wins) << player;
+  }
+}
+
+TEST_F(TrueSkillStandingsTest, RanksReadyCandidatesButNotBuiltins) {
+  const std::string weak = store_->Add("Weak");
+  const std::string strong = store_->Add("Strong");
+  auto standings = Open();
+  for (int i = 0; i < 5; ++i) {
+    Play(*standings, Game(strong, "builtin:random", 0));
+    Play(*standings, Game("builtin:random", weak, 0));
+  }
+  // An order's tally adds nothing on top of its games.
+  const Standing before = standings->Get(strong);
+  standings->Record(strong, "builtin:random", Tally(5, 0, 0));
+  EXPECT_EQ(standings->Get(strong).wins, before.wins);
+
+  EXPECT_TRUE(standings->has("builtin:random"));
+  const auto rows = standings->Rank(0);
+  ASSERT_EQ(rows.size(), 2u) << "builtins are rated, never ranked";
+  EXPECT_EQ(rows[0].candidate_id, strong);
+  EXPECT_EQ(rows[1].candidate_id, weak);
 }
 
 class MetricStandingsTest : public ::testing::Test {

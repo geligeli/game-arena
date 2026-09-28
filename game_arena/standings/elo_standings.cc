@@ -1,6 +1,5 @@
 #include "game_arena/standings/elo_standings.h"
 
-#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -68,21 +67,7 @@ bool EloStandings::has(const std::string &candidate_id) const {
 }
 
 std::vector<Standing> EloStandings::Rank(int limit) const {
-  std::vector<Standing> rows;
-  for (const proto::Candidate &candidate : candidates_->List()) {
-    if (candidate.status() != proto::Candidate::READY) {
-      continue;
-    }
-    rows.push_back(Get(candidate.candidate_id()));
-  }
-  // Ties go by id, so equal rows do not swap places between requests.
-  std::ranges::sort(rows, {}, [](const Standing &row) {
-    return std::pair<double, const std::string &>(-row.score, row.candidate_id);
-  });
-  if (limit > 0 && rows.size() > static_cast<std::size_t>(limit)) {
-    rows.resize(limit);
-  }
-  return rows;
+  return RankReady(candidates_->List(), *this, limit);
 }
 
 }  // namespace tournament_arena

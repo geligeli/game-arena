@@ -8,7 +8,10 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "standings",
     hdrs = ["standings.h"],
-    deps = ["//game_arena/proto:arena_cc_proto"],
+    deps = [
+        "//game_arena/proto:arena_cc_proto",
+        "//game_arena/proto:tournament_broker_cc_proto",
+    ],
 )
 
 # Read-only, so a kit need not carry the store that writes candidates.
@@ -53,6 +56,28 @@ cc_library(
     ],
 )
 
+# The rating math alone: no dependencies.
+cc_library(
+    name = "trueskill",
+    srcs = ["trueskill.cc"],
+    hdrs = ["trueskill.h"],
+)
+
+cc_library(
+    name = "trueskill_standings",
+    srcs = ["trueskill_standings.cc"],
+    hdrs = ["trueskill_standings.h"],
+    deps = [
+        ":candidate_view",
+        ":game_history",
+        ":standings",
+        ":trueskill",
+        "//game_arena/proto:tournament_broker_cc_proto",
+        "@abseil-cpp//absl/log",
+        "@boost.json",
+    ],
+)
+
 cc_library(
     name = "metric_standings",
     srcs = ["metric_standings.cc"],
@@ -92,6 +117,15 @@ cc_test(
 )
 
 cc_test(
+    name = "trueskill_test",
+    srcs = ["trueskill_test.cc"],
+    deps = [
+        ":trueskill",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "game_history_test",
     srcs = ["game_history_test.cc"],
     deps = [
@@ -117,7 +151,10 @@ cc_test(
     srcs = ["standings_test.cc"],
     deps = [
         ":elo_standings",
+        ":game_history",
         ":metric_standings",
+        ":trueskill_standings",
+        "//game_arena/proto:tournament_broker_cc_proto",
         "@googletest//:gtest_main",
     ],
 )

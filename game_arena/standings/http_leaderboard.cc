@@ -196,7 +196,7 @@ std::string HttpLeaderboard::RenderLeaderboardHtml() const {
           "<th>Author</th><th>"
        << HtmlEscape(score) << "</th>";
   // A graded row shows the host that measured it: what a reader must trust.
-  const bool graded = score != "elo";
+  const bool graded = standings_->graded();
   html << (graded ? "<th>runs</th><th class=\"d\">machine</th>"
                   : "<th>W</th><th>D</th><th>L</th>");
   html << "</tr>";

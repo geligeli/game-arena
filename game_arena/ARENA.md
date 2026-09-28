@@ -199,7 +199,7 @@ builtins the same way.
    game's record -- in a scratch volume only it mounts.
 5. The records flow back over the fleet stream, one message per game, then
    the tally counted from them; the coordinator keeps the games and updates
-   ELO.
+   ELO from the tally (TrueSkill: from each game as it is kept).
 
 A candidate-vs-candidate match is **two** orders, dispatched together, each
 telling its bot `--opponent=player:<the other>`. That is what the broker's
@@ -313,7 +313,7 @@ score label, not ratings or milliseconds.
 | config | `match { … }` | `grade { … }` |
 | an order | build both sides, referee N games | run a command N times |
 | result | W/D/L tally | a metric per run |
-| standings | ELO, keyed `(problem_id, submission_id)` | the primary metric, in its direction |
+| standings | ELO, keyed `(problem_id, submission_id)`; or TrueSkill (`ranking.kind`) | the primary metric, in its direction |
 
 **The coordinator owns the standings.** A match's referee keeps its own ratings
 while it plays, but they die with its container: they exist so a game has
@@ -321,6 +321,9 @@ somewhere to record itself, not to be authoritative. What crosses the wire is a
 tally, and `EloStandings::Record` turns it into a rating once, on the machine
 that holds the store. It applies the tally *game by game* — ELO is path
 dependent, so a 6–4 result folded in one lump is a different number.
+`TrueSkillStandings` goes further: it rates each game as the coordinator stores
+it (`Standings::RecordGame`), in the order played, and rebuilds itself at
+start by replaying `games/index.jsonl`.
 
 ### The metric contract
 

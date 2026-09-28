@@ -425,6 +425,7 @@ void Scheduler::OnGame(const proto::OrderGame &game) {
     }
   }
   history_->Store(record);
+  standings_->RecordGame(record);
 }
 
 void Scheduler::OnResult(const std::string &worker_id,

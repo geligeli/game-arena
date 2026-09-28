@@ -34,7 +34,7 @@ message ProblemInfo {
   string description = 3;
   // True: submissions are run and measured, not played and rated.
   bool graded = 5;
-  // "elo", or the ranked metric's name.
+  // "elo", "trueskill", or the ranked metric's name.
   string score_label = 6;
   // For a graded problem, whether lower or higher wins.
   bool lower_is_better = 7;
@@ -154,7 +154,8 @@ message ListCandidatesRequest {
 message CandidateStanding {
   Candidate candidate = 1;
 
-  // ELO or the primary metric; LeaderboardResponse.score_label says which.
+  // ELO, TrueSkill's mu - 3 sigma or the primary metric;
+  // LeaderboardResponse.score_label says which.
   double score = 2;
 
   // Match problems.
@@ -214,8 +215,10 @@ message LeaderboardRequest {
 
 message LeaderboardResponse {
   repeated CandidateStanding rows = 1;
-  // What `score` means here, e.g. "elo" or "wall_ms".
+  // What `score` means here, e.g. "elo", "trueskill" or "wall_ms".
   string score_label = 2;
+  // A measured metric (runs, machine) rather than a match record (W/D/L).
+  bool graded = 3;
 }
 
 message WorkerHello {

@@ -57,6 +57,18 @@ TEST(ProblemConfigTest, ParsesAMatchProblem) {
   EXPECT_EQ(config->ranking().kind(), proto::RankingSpec::ELO);
 }
 
+TEST(ProblemConfigTest, ParsesATrueSkillMatchProblem) {
+  std::string text = kMatchConfig;
+  constexpr std::string_view kElo = "ranking { kind: ELO }";
+  text.replace(text.find(kElo), kElo.size(),
+               "ranking { kind: TRUESKILL draw_probability: 0.05 }");
+  std::string error;
+  const auto config = Load(text, &error);
+  ASSERT_TRUE(config.has_value()) << error;
+  EXPECT_EQ(config->ranking().kind(), proto::RankingSpec::TRUESKILL);
+  EXPECT_DOUBLE_EQ(config->ranking().draw_probability(), 0.05);
+}
+
 TEST(ProblemConfigTest, ParsesAGradeProblem) {
   std::string error;
   const auto config = Load(kGradeConfig, &error);
@@ -160,6 +172,20 @@ TEST(ProblemConfigTest, RequiresRankingToMatchEvaluation) {
                     )pb",
                     &error));
   EXPECT_NE(error.find("ELO requires a match"), std::string::npos) << error;
+
+  EXPECT_FALSE(Load(R"pb(
+                      problem_id: "p"
+                      build { targets: "//bench" }
+                      sandbox { image: "arena/sandbox:test" }
+                      grade {
+                        argv: "run"
+                        metrics { name: "wall_ms" primary: true }
+                      }
+                      ranking { kind: TRUESKILL }
+                    )pb",
+                    &error));
+  EXPECT_NE(error.find("TRUESKILL requires a match"), std::string::npos)
+      << error;
 
   EXPECT_FALSE(Load(R"pb(
                       problem_id: "p"

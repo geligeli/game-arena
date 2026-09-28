@@ -81,7 +81,8 @@ its own bazel workspace:
 - [`examples/knapsack`](examples/knapsack) — a **graded** problem. A grader you
   write scores each submission; no game, no registry, no referee.
 - [`examples/connect4`](examples/connect4) — a **tournament** problem. Your own
-  game linked into the arena's referee, submissions rated by ELO.
+  game linked into the arena's referee, submissions rated by ELO (or
+  TrueSkill, with `ranking { kind: TRUESKILL }`).
 
 Neither is referenced from anything under `game_arena/`, which is the point.
 Start there if you are adding a problem.

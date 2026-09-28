@@ -266,6 +266,7 @@ grpc::Status ArenaService::Leaderboard(grpc::ServerContext *context,
   const std::string reader = Reader(context);
   const int limit = request->limit() > 0 ? request->limit() : kDefaultListLimit;
   response->set_score_label(standings_->score_label());
+  response->set_graded(standings_->graded());
   for (const Standing &row : standings_->Rank(limit)) {
     const auto candidate = candidates_->Get(row.candidate_id);
     if (!candidate.has_value() ||

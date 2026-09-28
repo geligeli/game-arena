@@ -177,9 +177,12 @@ bool ValidateProblemConfig(const proto::ProblemConfig& config,
       return false;
   }
 
-  if (config.ranking().kind() == proto::RankingSpec::ELO &&
+  if ((config.ranking().kind() == proto::RankingSpec::ELO ||
+       config.ranking().kind() == proto::RankingSpec::TRUESKILL) &&
       !config.has_match()) {
-    *error = "ranking.kind ELO requires a match evaluation";
+    *error = absl::StrCat(
+        "ranking.kind ", proto::RankingSpec::Kind_Name(config.ranking().kind()),
+        " requires a match evaluation");
     return false;
   }
   if (config.ranking().kind() == proto::RankingSpec::METRIC) {

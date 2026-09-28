@@ -28,6 +28,7 @@ class MetricStandings final : public Standings {
   Standing Get(const std::string &candidate_id) const override;
   std::vector<Standing> Rank(int limit) const override;
   std::string score_label() const override { return metric_name_; }
+  bool graded() const override { return true; }
   bool has(const std::string &candidate_id) const override;
 
  private:

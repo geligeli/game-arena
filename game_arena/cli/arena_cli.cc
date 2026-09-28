@@ -587,9 +587,7 @@ int CmdLeaderboard(const Client &client) {
     std::printf("nothing has been scored yet\n");
     return 0;
   }
-  // A graded problem's score_label is a metric name, not "elo".
-  const bool graded =
-      response.score_label() != "" && response.score_label() != "elo";
+  const bool graded = response.graded();
   PrintStandingHeader(response.score_label(), graded);
   for (const proto::CandidateStanding &standing : response.rows()) {
     PrintStandingRow(standing, graded);

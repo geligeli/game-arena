@@ -32,6 +32,8 @@
 #include "game_arena/standings/game_history.h"
 #include "game_arena/standings/http_leaderboard.h"
 #include "game_arena/standings/metric_standings.h"
+#include "game_arena/standings/trueskill.h"
+#include "game_arena/standings/trueskill_standings.h"
 
 ABSL_FLAG(std::string, problem_config, "",
           "Path to the problem's .textproto (required). See "
@@ -203,6 +205,12 @@ int main(int argc, char** argv) {
         primary->direction() == tournament_arena::proto::MetricSpec::MINIMIZE);
     metric_standings->Load();
     standings = std::move(metric_standings);
+  } else if (problem->ranking().kind() ==
+             tournament_arena::proto::RankingSpec::TRUESKILL) {
+    tournament_broker::trueskill::Params params;
+    params.draw_probability = problem->ranking().draw_probability();
+    standings = std::make_unique<tournament_arena::TrueSkillStandings>(
+        history, &candidates, params);
   } else {
     standings = std::make_unique<tournament_arena::EloStandings>(
         &elo_store, &candidates, problem->problem_id());

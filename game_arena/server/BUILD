@@ -270,6 +270,8 @@ cc_binary(
         "//game_arena/standings:http_leaderboard",
         ":job_log",
         "//game_arena/standings:metric_standings",
+        "//game_arena/standings:trueskill",
+        "//game_arena/standings:trueskill_standings",
         ":problem_config",
         ":scheduler",
         "//game_arena/standings:standings",
