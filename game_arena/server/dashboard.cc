@@ -316,7 +316,8 @@ go(+location.hash.slice(1)||0);
 </script>)";
 
 // With a replay module: it draws each view (bytes, base64 in #views) into
-// #stage; a module that fails says so instead.
+// #stage, and init sees them all, for whatever spans the game; a module that
+// fails says so instead.
 constexpr std::string_view kModuleScript = R"(<script>
 (function(){var stage=document.getElementById('stage'),
 raw=JSON.parse(document.getElementById('views').textContent),
@@ -324,9 +325,10 @@ game=JSON.parse(document.getElementById('game').textContent),cache={};
 function bytes(v){if(!(v in cache)){var s=atob(raw[v]),b=new Uint8Array(s.length);
 for(var i=0;i<s.length;i++)b[i]=s.charCodeAt(i);cache[v]=b}return cache[v]}
 import(game.module).then(function(m){
-return Promise.resolve(m.init&&m.init(stage,game)).then(function(){
+return Promise.resolve(m.init&&m.init(stage,game,raw.map(function(_,v){
+return bytes(v)}))).then(function(){
 window.showView=function(i,v){var f=frames[i];m.render(stage,bytes(v),
-{index:i,player:+f.dataset.p,caption:f.textContent})};
+{index:i,view:v,player:+f.dataset.p,caption:f.textContent})};
 showView(at,+frames[at].dataset.v)})}).catch(function(e){
 stage.textContent='(replay module failed to load: '+e+')'})})();
 </script>)";

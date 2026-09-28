@@ -216,12 +216,14 @@ A problem can draw its own replays instead: `arena_problem(replay_assets =
 `application/wasm`), and a replay page imports the module and calls
 
 ```js
-export async function init(stage, game) {}  // optional; game: {game, players}
-export function render(stage, view, step) {}  // view: Uint8Array; step: {index, player, caption}
+export async function init(stage, game, views) {}  // optional; game: {game, players}; views: Uint8Array[]
+export function render(stage, view, step) {}  // view: Uint8Array; step: {index, view, player, caption}
 ```
 
 for each frame shown, with that step's `RenderState()` bytes (the last
-non-empty one). Views can then be compact data (a few hundred bytes of JSON a
+non-empty one). `init` gets every view of the game, in order, for what spans
+the whole game (a score over time, say); `step.view` is the shown view's index
+in them. Views can then be compact data (a few hundred bytes of JSON a
 step) rather than text art. The module runs in the browser, never in the
 coordinator, and treats names, captions and views as data (`textContent`,
 never `innerHTML`): display names are the submitters'.

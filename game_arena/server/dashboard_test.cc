@@ -276,6 +276,9 @@ TEST_F(DashboardTest, AReplayWithAModuleHandsItTheViews) {
   EXPECT_THAT(html, HasSubstr("<div id=\"stage\">"));
   EXPECT_THAT(html, HasSubstr(">[\"Ym9hcmQgMA==\",\"Af8=\"]</script>"));
   EXPECT_THAT(html, HasSubstr("\"module\":\"/assets/nim.js\""));
+  // init sees every view, render which one it draws.
+  EXPECT_THAT(html, HasSubstr("m.init(stage,game,raw.map("));
+  EXPECT_THAT(html, HasSubstr("{index:i,view:v,"));
   // A name cannot close the script it sits in.
   EXPECT_THAT(html, HasSubstr("\"\\u003c/script\\u003e\\u003cb\\u003e\""));
   EXPECT_THAT(html, Not(HasSubstr("<pre class=\"v\"")));
