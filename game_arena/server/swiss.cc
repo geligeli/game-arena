@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <random>
 #include <sstream>
 
@@ -11,6 +13,7 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/str_split.h"
+#include "absl/time/time.h"
 #include "game_arena/standings/http_leaderboard.h"
 
 namespace tournament_arena {
@@ -167,6 +170,7 @@ std::vector<SwissEntry> SeedVersions(const JobLog &jobs,
     entry.id = id;
     entry.participant = participant;
     entry.version = static_cast<int>(seen[participant].size());
+    entry.submitted_unix_ms = submission.submitted_unix_ms();
   }
 
   // Each participant's last version is the one the board ranks.
@@ -474,69 +478,134 @@ std::optional<std::pair<std::string, std::string>> SwissRun::Route(
         << svg.str() << "</svg>";
   }
 
-  // 2. Did later versions get stronger? mu by version, per participant.
+  // Each participant's versions along |at|, mu +-1 sigma; builtins as levels.
+  const auto by_participant =
+      [&](std::string_view title, std::string_view note,
+          const std::function<double(const SwissEntry &)> &at,
+          const std::vector<std::pair<double, std::string>> &ticks) {
+        double first = ticks.front().first, last_x = ticks.back().first;
+        for (const SwissEntry &e : entries_) {
+          if (!e.participant.empty()) {
+            first = std::min(first, at(e));
+            last_x = std::max(last_x, at(e));
+          }
+        }
+        const double left = 40, width = 680, top = 10, height = 260;
+        const Scale x{first, last_x, left + 10, left + width - 90};
+        const Scale y{lo, hi, top + height, top};
+        std::ostringstream svg;
+        YAxis(y, 5, left, width, svg);
+        for (const auto &[at_tick, label] : ticks) {
+          svg << "<text class=tick x=" << x(at_tick)
+              << " y=" << top + height + 16 << " text-anchor=middle>"
+              << HtmlEscape(label) << "</text>";
+        }
+        // Placed last, and nudged apart where two would overlap.
+        struct Label {
+          double y, x;
+          std::string text;
+        };
+        std::vector<Label> labels;
+        for (const SwissEntry &e : entries_) {
+          if (!e.participant.empty()) {
+            continue;
+          }
+          const double level = y(now.at(e.id).mu);
+          svg << "<line x1=" << left << " x2=" << left + width - 90
+              << " y1=" << level << " y2=" << level << " stroke=\""
+              << kBuiltinInk
+              << "\" stroke-width=1.5 stroke-dasharray=\"4 4\" />";
+          labels.push_back({level + 4, left + width - 86, e.id});
+        }
+        for (const auto &[participant, index] : slot) {
+          const std::string color = kSeries[index % std::size(kSeries)];
+          std::string path;
+          const SwissEntry *last = nullptr;
+          std::ostringstream marks;
+          for (const SwissEntry &e : entries_) {
+            if (e.participant != participant) {
+              continue;
+            }
+            const Rating &r = now.at(e.id);
+            absl::StrAppend(&path, path.empty() ? "M" : "L", x(at(e)), " ",
+                            y(r.mu));
+            marks << "<g><title>" << HtmlEscape(e.id) << ": mu " << Fixed(r.mu)
+                  << " sigma " << Fixed(r.sigma)
+                  << "</title><line x1=" << x(at(e)) << " x2=" << x(at(e))
+                  << " y1=" << y(r.mu - r.sigma) << " y2=" << y(r.mu + r.sigma)
+                  << " stroke=\"" << color
+                  << "\" stroke-width=1 opacity=0.6 /><circle cx=" << x(at(e))
+                  << " cy=" << y(r.mu) << " r=4 fill=\"" << color
+                  << "\" stroke=\"var(--surface)\" stroke-width=2 /></g>";
+            last = &e;
+          }
+          svg << "<path d=\"" << path << "\" fill=none stroke=\"" << color
+              << "\" stroke-width=2 />" << marks.str();
+          if (last != nullptr) {
+            labels.push_back(
+                {y(now.at(last->id).mu) + 4, x(at(*last)) + 8, participant});
+          }
+        }
+        std::sort(labels.begin(), labels.end(),
+                  [](const Label &a, const Label &b) { return a.y < b.y; });
+        for (std::size_t i = 0; i < labels.size(); ++i) {
+          for (std::size_t j = 0; j < i; ++j) {
+            if (std::abs(labels[i].x - labels[j].x) < 80 &&
+                labels[i].y < labels[j].y + 12) {
+              labels[i].y = labels[j].y + 12;
+            }
+          }
+          svg << "<text class=lbl x=" << labels[i].x << " y=" << labels[i].y
+              << ">" << HtmlEscape(labels[i].text) << "</text>";
+        }
+        html << "<h2>" << title << "</h2><p class=note>" << note
+             << "</p><svg viewBox=\"0 0 " << left + width << " "
+             << top + height + 24 << "\">" << svg.str() << "</svg>";
+      };
+
+  // 2. Did later versions get stronger?
   {
-    int versions = 1;
+    int versions = 2;
     for (const SwissEntry &e : entries_) {
       versions = std::max(versions, e.version);
     }
-    const double left = 40, width = 680, top = 10, height = 260;
-    const Scale x{1, static_cast<double>(std::max(2, versions)), left + 10,
-                  left + width - 90};
-    const Scale y{lo, hi, top + height, top};
-    std::ostringstream svg;
-    YAxis(y, 5, left, width, svg);
+    std::vector<std::pair<double, std::string>> ticks;
     for (int v = 1; v <= versions; ++v) {
-      svg << "<text class=tick x=" << x(v) << " y=" << top + height + 16
-          << " text-anchor=middle>v" << v << "</text>";
+      ticks.emplace_back(v, absl::StrCat("v", v));
     }
+    by_participant(
+        "Skill by version",
+        "Each participant's versions in submission order, mu &plusmn;1&sigma;; "
+        "dashed lines are the builtins. A curve that flattens or falls is "
+        "iteration that stopped paying.",
+        [](const SwissEntry &e) { return e.version; }, ticks);
+  }
+  // 2b. The same on one clock: who moved when, and whether they converged.
+  {
+    int64_t first = INT64_MAX, last = 0;
     for (const SwissEntry &e : entries_) {
       if (!e.participant.empty()) {
-        continue;
-      }
-      const double level = y(now.at(e.id).mu);
-      svg << "<line x1=" << left << " x2=" << left + width - 90
-          << " y1=" << level << " y2=" << level << " stroke=\"" << kBuiltinInk
-          << "\" stroke-width=1.5 stroke-dasharray=\"4 4\" /><text class=lbl x="
-          << left + width - 86 << " y=" << level + 4 << ">" << HtmlEscape(e.id)
-          << "</text>";
-    }
-    for (const auto &[participant, index] : slot) {
-      const std::string color = kSeries[index % std::size(kSeries)];
-      std::string path;
-      const SwissEntry *last = nullptr;
-      std::ostringstream marks;
-      for (const SwissEntry &e : entries_) {
-        if (e.participant != participant) {
-          continue;
-        }
-        const Rating &r = now.at(e.id);
-        absl::StrAppend(&path, path.empty() ? "M" : "L", x(e.version), " ",
-                        y(r.mu));
-        marks << "<g><title>" << HtmlEscape(e.id) << ": mu " << Fixed(r.mu)
-              << " sigma " << Fixed(r.sigma)
-              << "</title><line x1=" << x(e.version) << " x2=" << x(e.version)
-              << " y1=" << y(r.mu - r.sigma) << " y2=" << y(r.mu + r.sigma)
-              << " stroke=\"" << color << "\" stroke-width=1 opacity=0.6 />"
-              << "<circle cx=" << x(e.version) << " cy=" << y(r.mu)
-              << " r=4 fill=\"" << color
-              << "\" stroke=\"var(--surface)\" stroke-width=2 /></g>";
-        last = &e;
-      }
-      svg << "<path d=\"" << path << "\" fill=none stroke=\"" << color
-          << "\" stroke-width=2 />" << marks.str();
-      if (last != nullptr) {
-        svg << "<text class=lbl x=" << x(last->version) + 8
-            << " y=" << y(now.at(last->id).mu) + 4 << ">"
-            << HtmlEscape(participant) << "</text>";
+        first = std::min(first, e.submitted_unix_ms);
+        last = std::max(last, e.submitted_unix_ms);
       }
     }
-    html << "<h2>Skill by version</h2><p class=note>Each participant's "
-            "versions in submission order, mu &plusmn;1&sigma;; dashed lines "
-            "are the builtins. A curve that flattens or falls is iteration "
-            "that stopped paying.</p><svg viewBox=\"0 0 "
-         << left + width << " " << top + height + 24 << "\">" << svg.str()
-         << "</svg>";
+    std::vector<std::pair<double, std::string>> ticks;
+    for (int i = 0; i <= 5; ++i) {
+      const double t = first + (last - first) * i / 5.0;
+      ticks.emplace_back(
+          t, absl::FormatTime("%b %d %H:%M",
+                              absl::FromUnixMillis(static_cast<int64_t>(t)),
+                              absl::LocalTimeZone()));
+    }
+    by_participant(
+        "Skill by submission time",
+        "Every version where it was submitted, mu &plusmn;1&sigma;, all "
+        "participants on one clock: whether they climbed together, and who "
+        "stalled while the others moved.",
+        [](const SwissEntry &e) {
+          return static_cast<double>(e.submitted_unix_ms);
+        },
+        ticks);
   }
 
   // 3. Convergence: mu after each round, every entry.

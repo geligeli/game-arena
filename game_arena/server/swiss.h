@@ -5,6 +5,7 @@
 // rounds of neighbours by TrueSkill, on the fleet like any other match.
 
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -44,6 +45,7 @@ struct SwissEntry {
   int version = 0;          // 1-based per participant; 0 for a builtin
   bool live = false;        // the participant's last: the one on the board
   int board_rank = 0;       // the live one's place on |board|, 1-based
+  int64_t submitted_unix_ms = 0;
 };
 
 // Every version in |jobs| that played a game, oldest first and without

@@ -243,6 +243,7 @@ cc_library(
         "//game_arena/standings:trueskill_standings",
         "@abseil-cpp//absl/log",
         "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/time",
     ],
 )
 
