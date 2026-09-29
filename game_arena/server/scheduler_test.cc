@@ -27,14 +27,10 @@ namespace {
 
 class FakeWorker : public FleetWorker {
  public:
-  FakeWorker(std::string id, int slots, bool builds_artifacts = false)
-      : id_(std::move(id)),
-        slots_(slots),
-        builds_artifacts_(builds_artifacts) {}
+  FakeWorker(std::string id, int slots) : id_(std::move(id)), slots_(slots) {}
 
   std::string worker_id() const override { return id_; }
   int slots() const override { return slots_; }
-  bool builds_artifacts() const override { return builds_artifacts_; }
 
   bool Send(const proto::FleetMessage &msg) override {
     if (!alive_) {
@@ -56,7 +52,6 @@ class FakeWorker : public FleetWorker {
  private:
   std::string id_;
   int slots_;
-  bool builds_artifacts_;
   bool alive_ = true;
 };
 
@@ -445,7 +440,7 @@ TEST_F(SchedulerTest, BatchesQueueUntilAWorkerAttaches) {
 
 TEST_F(SchedulerTest, APlacementBuildsOnceThenPlaysFromTheArchive) {
   WithArchive();
-  auto worker = std::make_shared<FakeWorker>("w1", 4, true);
+  auto worker = std::make_shared<FakeWorker>("w1", 4);
   scheduler_->AddWorker(worker);
   const auto candidate = AddCandidate("Fresh", proto::Candidate::PENDING);
   scheduler_->EnqueuePlacement(candidate, Reserve());
@@ -482,23 +477,9 @@ TEST_F(SchedulerTest, APlacementBuildsOnceThenPlaysFromTheArchive) {
   EXPECT_EQ(worker->orders[2].referee_target(), "");
 }
 
-TEST_F(SchedulerTest, ABuildOrderWaitsForAWorkerThatUploads) {
-  WithArchive();
-  auto old_worker = std::make_shared<FakeWorker>("old", 4);
-  scheduler_->AddWorker(old_worker);
-  scheduler_->EnqueuePlacement(AddCandidate("Fresh", proto::Candidate::PENDING),
-                               Reserve());
-  EXPECT_TRUE(old_worker->orders.empty());
-
-  auto worker = std::make_shared<FakeWorker>("new", 4, true);
-  scheduler_->AddWorker(worker);
-  ASSERT_EQ(worker->orders.size(), 1u);
-  EXPECT_TRUE(worker->orders[0].build_only());
-}
-
 TEST_F(SchedulerTest, ABuildTheEngineFailedIsTriedAgainAndBlamesNoOne) {
   WithArchive();
-  auto worker = std::make_shared<FakeWorker>("w1", 4, true);
+  auto worker = std::make_shared<FakeWorker>("w1", 4);
   scheduler_->AddWorker(worker);
   const auto candidate = AddCandidate("Fresh", proto::Candidate::PENDING);
   scheduler_->EnqueuePlacement(candidate, Reserve());
@@ -515,7 +496,7 @@ TEST_F(SchedulerTest, ABuildTheEngineFailedIsTriedAgainAndBlamesNoOne) {
 
 TEST_F(SchedulerTest, ABrokenBuildFailsTheCandidateBeforeItPlays) {
   WithArchive();
-  auto worker = std::make_shared<FakeWorker>("w1", 4, true);
+  auto worker = std::make_shared<FakeWorker>("w1", 4);
   scheduler_->AddWorker(worker);
   const auto candidate = AddCandidate("Broken", proto::Candidate::PENDING);
   const std::string job_id = scheduler_->EnqueuePlacement(candidate, Reserve());
@@ -533,7 +514,7 @@ TEST_F(SchedulerTest, ABrokenBuildFailsTheCandidateBeforeItPlays) {
 
 TEST_F(SchedulerTest, ABackfillArchivesAReadyCandidateAndPlaysNothing) {
   WithArchive();
-  auto worker = std::make_shared<FakeWorker>("w1", 4, true);
+  auto worker = std::make_shared<FakeWorker>("w1", 4);
   scheduler_->AddWorker(worker);
   const auto candidate = AddCandidate("Old");
   const std::string job_id = scheduler_->EnqueueBuild(candidate);

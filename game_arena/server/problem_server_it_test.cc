@@ -180,7 +180,6 @@ class ProblemServerTest : public ::testing::Test {
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id("it-worker");
     hello.mutable_hello()->set_slots(slots);
-    hello.mutable_hello()->set_builds_artifacts(true);
     EXPECT_TRUE(stream->Write(hello));
     return stream;
   }

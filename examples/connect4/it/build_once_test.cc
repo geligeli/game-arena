@@ -34,7 +34,6 @@ class CapturingWorker : public FleetWorker {
  public:
   std::string worker_id() const override { return "it"; }
   int slots() const override { return 8; }
-  bool builds_artifacts() const override { return true; }
   bool Send(const proto::FleetMessage &message) override {
     if (message.has_order()) {
       orders.push_back(message.order());

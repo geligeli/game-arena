@@ -244,7 +244,6 @@ int main(int argc, char **argv) {
     hello.mutable_hello()->set_slots(slots);
     // Up front too, so the arena can schedule on it.
     hello.mutable_hello()->set_machine_class(machine_class);
-    hello.mutable_hello()->set_builds_artifacts(true);
     if (!stream->Write(hello)) {
       LOG(WARNING) << "Cannot reach the arena at "
                    << absl::GetFlag(FLAGS_server) << "; retrying";

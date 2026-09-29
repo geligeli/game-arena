@@ -29,13 +29,11 @@ class StreamFleetWorker : public FleetWorker {
   // A worker that has stopped reading is broken, not busy.
   static constexpr std::size_t kMaxOutbox = 64;
 
-  StreamFleetWorker(std::string worker_id, int slots, bool builds_artifacts,
-                    Stream *stream);
+  StreamFleetWorker(std::string worker_id, int slots, Stream *stream);
   ~StreamFleetWorker() override;
 
   std::string worker_id() const override { return worker_id_; }
   int slots() const override { return slots_; }
-  bool builds_artifacts() const override { return builds_artifacts_; }
   bool Send(const proto::FleetMessage &msg) override;
 
   void Start();
@@ -46,7 +44,6 @@ class StreamFleetWorker : public FleetWorker {
 
   const std::string worker_id_;
   const int slots_;
-  const bool builds_artifacts_;
   Stream *stream_;  // owned by the RPC handler, which outlives this object
 
   std::mutex mutex_;

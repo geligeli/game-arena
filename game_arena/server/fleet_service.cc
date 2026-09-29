@@ -7,10 +7,9 @@
 namespace tournament_arena {
 
 StreamFleetWorker::StreamFleetWorker(std::string worker_id, int slots,
-                                     bool builds_artifacts, Stream *stream)
+                                     Stream *stream)
     : worker_id_(std::move(worker_id)),
       slots_(slots < 1 ? 1 : slots),
-      builds_artifacts_(builds_artifacts),
       stream_(stream) {}
 
 StreamFleetWorker::~StreamFleetWorker() { Stop(); }
@@ -87,8 +86,8 @@ grpc::Status FleetService::Attach(
     return {grpc::StatusCode::INVALID_ARGUMENT, "worker_id is required"};
   }
 
-  auto worker = std::make_shared<StreamFleetWorker>(
-      hello.worker_id(), hello.slots(), hello.builds_artifacts(), stream);
+  auto worker = std::make_shared<StreamFleetWorker>(hello.worker_id(),
+                                                    hello.slots(), stream);
   worker->Start();
   scheduler_->AddWorker(worker);
 

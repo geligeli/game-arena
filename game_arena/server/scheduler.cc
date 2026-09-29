@@ -386,14 +386,10 @@ void Scheduler::DispatchLocked() {
       }
       Job &job = job_it->second;
 
-      // The emptiest worker first, so work spreads across hosts; a build
-      // order only to one that uploads what it built.
-      const bool build_only = job.pending.front().build_only();
-      const auto room = [build_only](const auto &entry) {
-        return build_only && !entry.second.worker->builds_artifacts()
-                   ? 0
-                   : entry.second.worker->slots() -
-                         static_cast<int>(entry.second.in_flight.size());
+      // The emptiest worker first, so work spreads across hosts.
+      const auto room = [](const auto &entry) {
+        return entry.second.worker->slots() -
+               static_cast<int>(entry.second.in_flight.size());
       };
       const auto emptiest = std::ranges::max_element(workers_, {}, room);
       if (emptiest == workers_.end() || room(*emptiest) <= 0) {

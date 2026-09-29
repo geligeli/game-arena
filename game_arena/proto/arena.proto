@@ -247,8 +247,6 @@ message WorkerHello {
   int32 slots = 2;  // orders it will run concurrently
   // e.g. "bench-c7i", for GradeSpec.require_machine_class.
   string machine_class = 5;
-  // It runs build_only orders and fetches artifacts (SandboxFleet).
-  bool builds_artifacts = 6;
 }
 
 // One buildable side of an order.
