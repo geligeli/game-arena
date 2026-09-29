@@ -143,7 +143,7 @@ void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
 }  // namespace
 
 OrderOutcome OutcomeFor(const proto::WorkOrder &order,
-                        const sx::JobResult &result, bool build_reused) {
+                        const sx::JobResult &result, bool prebuilt) {
   OrderOutcome outcome;
   proto::OrderResult &out = outcome.result;
 
@@ -167,8 +167,8 @@ OrderOutcome OutcomeFor(const proto::WorkOrder &order,
 
   const std::string build_output =
       build_step != nullptr ? build_step->stdout() + build_step->stderr() : "";
-  if (build_reused) {
-    out.set_build_output("reused this slot's earlier build\n");
+  if (prebuilt) {
+    out.set_build_output("ran the archived build\n");
   } else if (build_step == nullptr) {
     out.set_error("the job reported no build");
     return outcome;
@@ -185,6 +185,28 @@ OrderOutcome OutcomeFor(const proto::WorkOrder &order,
     return outcome;
   }
   out.set_build_ok(true);
+
+  if (order.build_only()) {
+    const sx::PhaseResult *stash = PhaseNamed(result, "stash");
+    const sx::StepResult *step =
+        stash != nullptr ? StepNamed(*stash, "stash") : nullptr;
+    const auto stashed = [&](const char *file) {
+      return step != nullptr && step->collected().contains(file);
+    };
+    if (!stashed(kStashedBot) ||
+        (!order.referee_target().empty() && !stashed(kStashedReferee))) {
+      out.set_error("the build stashed nothing to archive: " +
+                    (step != nullptr ? step->stderr() : std::string()));
+      return outcome;
+    }
+    outcome.built[order.candidate().bot_target()] =
+        step->collected().at(kStashedBot);
+    if (!order.referee_target().empty()) {
+      outcome.built[order.referee_target()] =
+          step->collected().at(kStashedReferee);
+    }
+    return outcome;
+  }
 
   if (order.has_grade()) {
     ReadGrade(order, result, &outcome);

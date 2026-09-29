@@ -17,6 +17,8 @@
 #include <thread>
 #include <vector>
 
+#include "game_arena/common/sha256/sha256.h"
+#include "game_arena/server/artifact_store.h"
 #include "game_arena/standings/elo_standings.h"
 #include "gtest/gtest.h"
 
@@ -25,10 +27,14 @@ namespace {
 
 class FakeWorker : public FleetWorker {
  public:
-  FakeWorker(std::string id, int slots) : id_(std::move(id)), slots_(slots) {}
+  FakeWorker(std::string id, int slots, bool builds_artifacts = false)
+      : id_(std::move(id)),
+        slots_(slots),
+        builds_artifacts_(builds_artifacts) {}
 
   std::string worker_id() const override { return id_; }
   int slots() const override { return slots_; }
+  bool builds_artifacts() const override { return builds_artifacts_; }
 
   bool Send(const proto::FleetMessage &msg) override {
     if (!alive_) {
@@ -50,6 +56,7 @@ class FakeWorker : public FleetWorker {
  private:
   std::string id_;
   int slots_;
+  bool builds_artifacts_;
   bool alive_ = true;
 };
 
@@ -92,6 +99,34 @@ class SchedulerTest : public ::testing::Test {
     config.set_placement_games(games);
     scheduler_ =
         std::make_unique<Scheduler>(config, store_.get(), standings_.get());
+  }
+
+  // A scheduler with an archive: a match problem's candidate builds once.
+  void WithArchive() {
+    artifacts_ = std::make_unique<ArtifactStore>(dir_ / "artifacts");
+    SchedulerConfig config = config_;
+    config.mutable_order()->set_referee_target("//game:match_referee");
+    config.mutable_order()->mutable_sandbox()->set_image("img:1");
+    scheduler_ = std::make_unique<Scheduler>(
+        config, store_.get(), standings_.get(), nullptr, nullptr,
+        std::function<void(const proto::Job &)>{}, artifacts_.get());
+  }
+
+  // Uploads |bytes| as a worker would and returns their digest.
+  std::string Archive(const std::string &bytes) {
+    std::string error;
+    EXPECT_TRUE(artifacts_->Put(sha256::Hex(bytes), bytes, &error)) << error;
+    return sha256::Hex(bytes);
+  }
+
+  static proto::OrderResult Built(
+      const proto::WorkOrder &order,
+      const std::map<std::string, std::string> &artifacts) {
+    proto::OrderResult result;
+    result.set_order_id(order.order_id());
+    result.set_build_ok(true);
+    result.mutable_artifacts()->insert(artifacts.begin(), artifacts.end());
+    return result;
   }
 
   void TearDown() override { std::filesystem::remove_all(dir_); }
@@ -145,6 +180,7 @@ class SchedulerTest : public ::testing::Test {
   SchedulerConfig config_;
   std::unique_ptr<EloStandings> standings_;
   std::unique_ptr<Scheduler> scheduler_;
+  std::unique_ptr<ArtifactStore> artifacts_;
 };
 
 TEST_F(SchedulerTest, PlacementDispatchesOneOrderPerBuiltin) {
@@ -405,6 +441,120 @@ TEST_F(SchedulerTest, BatchesQueueUntilAWorkerAttaches) {
   scheduler_->AddWorker(worker);
   EXPECT_EQ(worker->orders.size(), 1u);
   EXPECT_EQ(scheduler_->GetJob(job_id)->state(), proto::Job::RUNNING);
+}
+
+TEST_F(SchedulerTest, APlacementBuildsOnceThenPlaysFromTheArchive) {
+  WithArchive();
+  auto worker = std::make_shared<FakeWorker>("w1", 4, true);
+  scheduler_->AddWorker(worker);
+  const auto candidate = AddCandidate("Fresh", proto::Candidate::PENDING);
+  scheduler_->EnqueuePlacement(candidate, Reserve());
+
+  // One order: build the bot, and the referee the archive lacks.
+  ASSERT_EQ(worker->orders.size(), 1u);
+  const proto::WorkOrder build = worker->orders[0];
+  EXPECT_TRUE(build.build_only());
+  EXPECT_EQ(build.referee_target(), "//game:match_referee");
+  EXPECT_EQ(build.num_games(), 0);
+
+  const std::string bot = Archive("the fresh bot");
+  const std::string referee = Archive("the referee");
+  scheduler_->OnResult("w1",
+                       Built(build, {{build.candidate().bot_target(), bot},
+                                     {"//game:match_referee", referee}}));
+
+  const auto stored = store_->Get(candidate.candidate_id());
+  EXPECT_EQ(stored->status(), proto::Candidate::READY);
+  EXPECT_EQ(stored->artifact(), bot);
+  // Then the placement, from the archive.
+  ASSERT_EQ(worker->orders.size(), 2u);
+  const proto::WorkOrder &match = worker->orders[1];
+  EXPECT_FALSE(match.build_only());
+  EXPECT_EQ(match.opponent_spec(), "builtin:random");
+  EXPECT_EQ(match.candidate().artifact(), bot);
+  EXPECT_EQ(match.referee_artifact(), referee);
+
+  // The next candidate's build leaves the referee to the archive.
+  scheduler_->EnqueuePlacement(AddCandidate("Next", proto::Candidate::PENDING),
+                               Reserve());
+  ASSERT_EQ(worker->orders.size(), 3u);
+  EXPECT_TRUE(worker->orders[2].build_only());
+  EXPECT_EQ(worker->orders[2].referee_target(), "");
+}
+
+TEST_F(SchedulerTest, ABuildOrderWaitsForAWorkerThatUploads) {
+  WithArchive();
+  auto old_worker = std::make_shared<FakeWorker>("old", 4);
+  scheduler_->AddWorker(old_worker);
+  scheduler_->EnqueuePlacement(AddCandidate("Fresh", proto::Candidate::PENDING),
+                               Reserve());
+  EXPECT_TRUE(old_worker->orders.empty());
+
+  auto worker = std::make_shared<FakeWorker>("new", 4, true);
+  scheduler_->AddWorker(worker);
+  ASSERT_EQ(worker->orders.size(), 1u);
+  EXPECT_TRUE(worker->orders[0].build_only());
+}
+
+TEST_F(SchedulerTest, ABuildTheEngineFailedIsTriedAgainAndBlamesNoOne) {
+  WithArchive();
+  auto worker = std::make_shared<FakeWorker>("w1", 4, true);
+  scheduler_->AddWorker(worker);
+  const auto candidate = AddCandidate("Fresh", proto::Candidate::PENDING);
+  scheduler_->EnqueuePlacement(candidate, Reserve());
+
+  proto::OrderResult failed;
+  failed.set_order_id(worker->orders[0].order_id());
+  failed.set_error("cannot create the phase network");
+  scheduler_->OnResult("w1", failed);
+  ASSERT_EQ(worker->orders.size(), 2u);
+  EXPECT_TRUE(worker->orders[1].build_only());
+  EXPECT_EQ(store_->Get(candidate.candidate_id())->status(),
+            proto::Candidate::PENDING);
+}
+
+TEST_F(SchedulerTest, ABrokenBuildFailsTheCandidateBeforeItPlays) {
+  WithArchive();
+  auto worker = std::make_shared<FakeWorker>("w1", 4, true);
+  scheduler_->AddWorker(worker);
+  const auto candidate = AddCandidate("Broken", proto::Candidate::PENDING);
+  const std::string job_id = scheduler_->EnqueuePlacement(candidate, Reserve());
+
+  proto::OrderResult result;
+  result.set_order_id(worker->orders[0].order_id());
+  result.set_build_failed_candidate_id(candidate.candidate_id());
+  result.set_build_log("strategy.h:1:1: error: expected unqualified-id");
+  scheduler_->OnResult("w1", result);
+  EXPECT_EQ(worker->orders.size(), 1u);
+  EXPECT_EQ(scheduler_->GetJob(job_id)->state(), proto::Job::FAILED);
+  EXPECT_EQ(store_->Get(candidate.candidate_id())->status(),
+            proto::Candidate::BUILD_FAILED);
+}
+
+TEST_F(SchedulerTest, ABackfillArchivesAReadyCandidateAndPlaysNothing) {
+  WithArchive();
+  auto worker = std::make_shared<FakeWorker>("w1", 4, true);
+  scheduler_->AddWorker(worker);
+  const auto candidate = AddCandidate("Old");
+  const std::string job_id = scheduler_->EnqueueBuild(candidate);
+  ASSERT_EQ(worker->orders.size(), 1u);
+
+  proto::OrderResult broken;
+  broken.set_order_id(worker->orders[0].order_id());
+  broken.set_build_failed_candidate_id(candidate.candidate_id());
+  scheduler_->OnResult("w1", broken);
+  // It built before: it stays READY and plays the old way.
+  EXPECT_EQ(store_->Get(candidate.candidate_id())->status(),
+            proto::Candidate::READY);
+
+  scheduler_->EnqueueBuild(candidate);
+  const std::string bot = Archive("the old bot");
+  scheduler_->OnResult(
+      "w1", Built(worker->orders[1],
+                  {{worker->orders[1].candidate().bot_target(), bot}}));
+  EXPECT_EQ(store_->Get(candidate.candidate_id())->artifact(), bot);
+  EXPECT_EQ(worker->orders.size(), 2u);
+  EXPECT_EQ(scheduler_->GetJob(job_id)->state(), proto::Job::FAILED);
 }
 
 TEST_F(SchedulerTest, BuildFailureFailsTheJobAndMarksTheCandidate) {

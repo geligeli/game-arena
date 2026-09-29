@@ -81,10 +81,22 @@ cc_test(
 )
 
 cc_library(
+    name = "artifact_cache",
+    srcs = ["artifact_cache.cc"],
+    hdrs = ["artifact_cache.h"],
+    deps = [
+        "//game_arena/common/sha256",
+        "//game_arena/proto:arena_cc_grpc",
+        "@grpc//:grpc++",
+    ],
+)
+
+cc_library(
     name = "order_runner",
     srcs = ["order_runner.cc"],
     hdrs = ["order_runner.h"],
     deps = [
+        ":artifact_cache",
         ":order_job",
         ":order_outcome",
         "//game_arena/proto:arena_cc_proto",
@@ -100,6 +112,7 @@ cc_binary(
     name = "sandbox_worker",
     srcs = ["sandbox_worker.cc"],
     deps = [
+        ":artifact_cache",
         ":order_runner",
         "//game_arena/common/process",
         "//game_arena/sandbox/exec:container_engine",
@@ -128,6 +141,9 @@ cc_test(
     size = "medium",
     srcs = ["order_runner_container_test.cc"],
     deps = [
+        ":artifact_cache",
+        "//game_arena/proto:arena_cc_grpc",
+        "@grpc//:grpc++",
         ":order_runner",
         "//game_arena/sandbox/exec:container_engine",
         "@googletest//:gtest_main",

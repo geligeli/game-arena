@@ -33,18 +33,25 @@ struct OrderJobConfig {
   std::string bazel = "bazel";  // a container runs the image's
 };
 
+// A build order's stash, collected from its "stash" step.
+inline constexpr char kStashedBot[] = "bot";
+inline constexpr char kStashedReferee[] = "referee";
+
+// A match's binaries from the archive, as files on this host: the job loads
+// them into the sandbox and builds nothing.
+struct Prebuilt {
+  std::filesystem::path referee;
+  std::map<std::string, std::filesystem::path> bots;  // by candidate id
+};
+
 // |capabilities| decides the rendezvous: a named referee on a fixed port, or a
-// port file. Without |build|, the job runs what the slot's output base holds.
+// port file. A build_only order builds and stashes; with |prebuilt|, a match
+// runs those binaries instead of building.
 bool JobForOrder(int slot, const proto::WorkOrder &order,
                  const OrderJobConfig &config,
                  const sandbox_exec::Capabilities &capabilities,
                  sandbox_exec::proto::Job *job, std::string *error,
-                 bool build = true);
-
-// Each target the order builds, and what its outputs depend on beyond the
-// image's tree: the flags, and its own side's patch. A slot whose last build
-// of a target had the same key holds the same binary.
-std::map<std::string, std::string> BuildKeys(const proto::WorkOrder &order);
+                 const Prebuilt *prebuilt = nullptr);
 
 std::filesystem::path SlotLogDir(const OrderJobConfig &config, int slot);
 

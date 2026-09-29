@@ -4,6 +4,8 @@
 // A job's result as an order's: a step that failed is a result, a job the
 // engine could not run is an error.
 
+#include <map>
+#include <string>
 #include <vector>
 
 #include "game_arena/proto/arena.pb.h"
@@ -15,12 +17,14 @@ namespace tournament_arena {
 struct OrderOutcome {
   proto::OrderResult result;  // order_id, worker_id and machine_class unset
   std::vector<tournament_broker::proto::GameRecord> games;
+  // A build_only order's binaries: build target -> bytes, to archive.
+  std::map<std::string, std::string> built;
 };
 
-// |build_reused|: the job had no build phase, as the slot held its binaries.
+// |prebuilt|: the job had no build phase, as it ran the archive's binaries.
 OrderOutcome OutcomeFor(const proto::WorkOrder &order,
                         const sandbox_exec::proto::JobResult &result,
-                        bool build_reused = false);
+                        bool prebuilt = false);
 
 }  // namespace tournament_arena
 

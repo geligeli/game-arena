@@ -20,6 +20,7 @@
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
 #include "game_arena/server/arena_service.h"
+#include "game_arena/server/artifact_store.h"
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/client_registry.h"
 #include "game_arena/server/dashboard.h"
@@ -223,6 +224,7 @@ int main(int argc, char** argv) {
   }
 
   tournament_arena::JobLog job_log(data_dir / "jobs");
+  tournament_arena::ArtifactStore artifacts(data_dir / "artifacts");
   std::unique_ptr<tournament_arena::SwissRun> swiss;
   std::unique_ptr<tournament_arena::Matchmaker> matchmaker;
   tournament_arena::Scheduler scheduler(
@@ -235,7 +237,9 @@ int main(int argc, char** argv) {
         if (matchmaker) {
           matchmaker->OnConcluded(job);
         }
-      });
+      },
+      // A graded problem builds in its one order, beside the tree it reads.
+      graded ? nullptr : &artifacts);
   if (problem->match().has_matchmaking() && swiss_from.empty()) {
     matchmaker = std::make_unique<tournament_arena::Matchmaker>(
         problem->match().matchmaking(), problem->match().game(),
@@ -264,6 +268,12 @@ int main(int argc, char** argv) {
       LOG(INFO) << "Placing " << candidate.candidate_id() << " again as "
                 << scheduler.EnqueuePlacement(candidate,
                                               std::move(*reservation));
+    } else if (!graded &&
+               candidate.status() ==
+                   tournament_arena::proto::Candidate::READY &&
+               candidate.artifact().empty()) {
+      LOG(INFO) << "Archiving " << candidate.candidate_id() << " as "
+                << scheduler.EnqueueBuild(candidate);
     }
   }
   // Curated: the operator's image names and timeouts are not a submitter's.
@@ -295,7 +305,7 @@ int main(int argc, char** argv) {
       &candidates, &scheduler, standings.get(),
       problem->has_match() ? problem->match().game() : "", std::move(info),
       clients.get());
-  tournament_arena::FleetService fleet(&scheduler);
+  tournament_arena::FleetService fleet(&scheduler, &artifacts);
 
   grpc::ServerBuilder builder;
   builder.AddListeningPort(

@@ -107,6 +107,15 @@ bool PrepareWorkspace(const proto::Workspace &ws,
   if (!WriteStagedFiles(ws, status)) {
     return false;
   }
+  for (const proto::InputFile &input : ws.inputs()) {
+    if (input.name().find('/') != std::string::npos ||
+        !IsSafeStagedPath(input.name()) ||
+        !ws.inputs_mount().starts_with('/')) {
+      return Fail(status, proto::Status::INVALID_JOB,
+                  "an input is a file name under an absolute inputs_mount: " +
+                      input.name());
+    }
+  }
   if (ws.patch() == proto::Workspace::PATCH_HOST &&
       !ApplyHostPatches(ws, log_dir, status)) {
     return false;

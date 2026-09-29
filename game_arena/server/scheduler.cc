@@ -6,8 +6,11 @@
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "game_arena/common/sha256/sha256.h"
 #include "game_arena/server/problem_config.h"
 
 namespace tournament_arena {
@@ -40,13 +43,20 @@ void Scheduler::Reservation::Release::operator()(Scheduler *scheduler) const {
 Scheduler::Scheduler(SchedulerConfig config, CandidateStore *candidates,
                      Standings *standings,
                      tournament_broker::GameHistory *history, JobLog *job_log,
-                     std::function<void(const proto::Job &)> on_concluded)
+                     std::function<void(const proto::Job &)> on_concluded,
+                     ArtifactStore *artifacts)
     : config_(std::move(config)),
       candidates_(candidates),
       standings_(standings),
       history_(history),
       job_log_(job_log),
-      on_concluded_(std::move(on_concluded)) {}
+      on_concluded_(std::move(on_concluded)),
+      artifacts_(artifacts),
+      referee_ref_("referee-" +
+                   sha256::Hex(absl::StrCat(
+                       config_.order().sandbox().image(), "\n",
+                       absl::StrJoin(config_.order().bazel_flags(), " "), "\n",
+                       config_.order().referee_target()))) {}
 
 void Scheduler::ReleaseReservationLocked(const std::string &client_id) {
   const auto it = reserved_.find(client_id);
@@ -154,6 +164,7 @@ void Scheduler::FillSideLocked(const proto::Candidate &candidate,
 
   // Not looked up by id: a staged resubmit shares its entry's id.
   side->set_patch(candidate.patch());
+  side->set_artifact(candidate.artifact());
 
   // Expanded here, so the worker needs no problem config of its own.
   for (const std::string &target : config_.build_targets()) {
@@ -168,12 +179,14 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
     const proto::Candidate &candidate, const std::string &opponent, int games,
     const std::string &job_id) {
   proto::WorkOrder order = config_.order();
-  order.set_order_id("o" + std::to_string(absl::ToUnixMillis(absl::Now())) +
-                     "_" + std::to_string(++order_counter_));
+  order.set_order_id(NextOrderIdLocked());
   order.set_job_id(job_id);
   order.set_game(candidate.game());
   order.set_opponent_spec(opponent);
   order.set_num_games(games);
+  if (artifacts_ != nullptr) {
+    order.set_referee_artifact(artifacts_->Ref(referee_ref_));
+  }
 
   FillSideLocked(candidate, order.mutable_candidate());
 
@@ -201,10 +214,31 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
   return order;
 }
 
+std::string Scheduler::NextOrderIdLocked() {
+  return "o" + std::to_string(absl::ToUnixMillis(absl::Now())) + "_" +
+         std::to_string(++order_counter_);
+}
+
+proto::WorkOrder Scheduler::MakeBuildOrderLocked(
+    const proto::Candidate &candidate, const std::string &job_id) {
+  proto::WorkOrder order = config_.order();
+  order.set_order_id(NextOrderIdLocked());
+  order.set_job_id(job_id);
+  order.set_game(candidate.game());
+  order.set_build_only(true);
+  FillSideLocked(candidate, order.mutable_candidate());
+  order.mutable_candidate()->clear_artifact();
+  // The referee, too, until the archive has one for this image.
+  if (!artifacts_->Ref(referee_ref_).empty()) {
+    order.clear_referee_target();
+  }
+  return order;
+}
+
 std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
                                      const std::vector<std::string> &opponents,
                                      int games, const std::string &client_id,
-                                     bool record_patch) {
+                                     bool record_patch, bool build_first) {
   const std::string job_id = "j" +
                              std::to_string(absl::ToUnixMillis(absl::Now())) +
                              "_" + std::to_string(++job_counter_);
@@ -221,7 +255,18 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
   }
 
   int requested = 0;
-  for (const std::string &opponent : opponents) {
+  if (build_first) {
+    job.after_build = opponents;
+    job.after_build_games = games;
+    requested = games * static_cast<int>(opponents.size());
+    proto::WorkOrder order = MakeBuildOrderLocked(candidate, job_id);
+    JobRecord::Order *logged = job.record.add_orders();
+    logged->set_order_id(order.order_id());
+    logged->set_opponent_spec("build");
+    job.pending.push_back(std::move(order));
+  }
+  for (const std::string &opponent :
+       build_first ? std::vector<std::string>{} : opponents) {
     auto order = MakeOrderLocked(candidate, opponent, games, job_id);
     if (!order.has_value()) {
       LOG(WARNING) << "Job " << job_id << ": skipping opponent '" << opponent
@@ -275,8 +320,19 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
                                      config_.placement_opponents().end());
   const std::vector<std::string> ladder = LadderLocked(candidate);
   opponents.insert(opponents.end(), ladder.begin(), ladder.end());
-  return EnqueueLocked(candidate, opponents, config_.placement_games(),
-                       client_id);
+  return EnqueueLocked(
+      candidate, opponents, config_.placement_games(), client_id,
+      /*record_patch=*/true,
+      /*build_first=*/artifacts_ != nullptr && candidate.artifact().empty());
+}
+
+std::string Scheduler::EnqueueBuild(const proto::Candidate &candidate) {
+  std::lock_guard lock(mutex_);
+  const std::string job_id = EnqueueLocked(candidate, {}, 0, "",
+                                           /*record_patch=*/false,
+                                           /*build_first=*/true);
+  jobs_[job_id].backfill = true;
+  return job_id;
 }
 
 std::string Scheduler::EnqueueMatch(const proto::Candidate &candidate,
@@ -330,10 +386,14 @@ void Scheduler::DispatchLocked() {
       }
       Job &job = job_it->second;
 
-      // The emptiest worker first, so work spreads across hosts.
-      const auto room = [](const auto &entry) {
-        return entry.second.worker->slots() -
-               static_cast<int>(entry.second.in_flight.size());
+      // The emptiest worker first, so work spreads across hosts; a build
+      // order only to one that uploads what it built.
+      const bool build_only = job.pending.front().build_only();
+      const auto room = [build_only](const auto &entry) {
+        return build_only && !entry.second.worker->builds_artifacts()
+                   ? 0
+                   : entry.second.worker->slots() -
+                         static_cast<int>(entry.second.in_flight.size());
       };
       const auto emptiest = std::ranges::max_element(workers_, {}, room);
       if (emptiest == workers_.end() || room(*emptiest) <= 0) {
@@ -485,8 +545,12 @@ void Scheduler::OnResult(const std::string &worker_id,
 
   // A job the engine could not run carries an error and blames no one: it
   // says nothing about anyone's code.
-  if (!result.build_ok() &&
-      (!result.build_failed_candidate_id().empty() || result.error().empty())) {
+  const auto running = job.running.find(result.order_id());
+  if (running != job.running.end() && running->second.build_only()) {
+    OnBuiltLocked(&job, running->second, result);
+  } else if (!result.build_ok() &&
+             (!result.build_failed_candidate_id().empty() ||
+              result.error().empty())) {
     // Only the worker knows whose build broke; an older one does not say.
     const std::string &broken = result.build_failed_candidate_id().empty()
                                     ? job.status.candidate_id()
@@ -511,7 +575,6 @@ void Scheduler::OnResult(const std::string &worker_id,
                            "");
     // Only the coordinator writes standings; a referee's die with it.
     if (standings_ != nullptr) {
-      const auto running = job.running.find(result.order_id());
       const std::string opponent = running != job.running.end()
                                        ? running->second.opponent_spec()
                                        : std::string();
@@ -531,6 +594,65 @@ void Scheduler::OnResult(const std::string &worker_id,
   ConcludeJobLocked(&job);
   PersistLocked(&job);
   DispatchLocked();
+}
+
+void Scheduler::OnBuiltLocked(Job *job, const proto::WorkOrder &order,
+                              const proto::OrderResult &result) {
+  const std::string &id = job->status.candidate_id();
+  const std::string &bot = order.candidate().bot_target();
+  const auto artifact = result.artifacts().find(bot);
+  if (!result.build_ok() && !result.build_failed_candidate_id().empty()) {
+    job->aborted = true;
+    job->status.set_state(proto::Job::FAILED);
+    job->status.set_error(id + ": " + result.build_log());
+    // A backfill's candidate built before, and keeps playing the old way.
+    if (!job->backfill) {
+      candidates_->SetStatus(id, proto::Candidate::BUILD_FAILED,
+                             result.build_log());
+    }
+    return;
+  }
+  if (!result.build_ok() || artifact == result.artifacts().end() ||
+      !artifacts_->Has(artifact->second)) {
+    // The engine's failure, not the code's: again, a few times.
+    if (++job->build_attempts < 3 && !job->aborted) {
+      proto::WorkOrder again = order;
+      again.set_order_id(NextOrderIdLocked());
+      JobRecord::Order *logged = job->record.add_orders();
+      logged->set_order_id(again.order_id());
+      logged->set_opponent_spec("build");
+      job->pending.push_back(std::move(again));
+      queue_.push_back(job->status.job_id());
+      return;
+    }
+    job->status.set_state(proto::Job::FAILED);
+    job->status.set_error(result.error().empty()
+                              ? "the build uploaded no " + bot
+                              : result.error());
+    return;
+  }
+
+  if (const auto referee = result.artifacts().find(order.referee_target());
+      !order.referee_target().empty() && referee != result.artifacts().end()) {
+    artifacts_->SetRef(referee_ref_, referee->second);
+  }
+  candidates_->SetStatus(id, proto::Candidate::READY, "", artifact->second);
+  const auto built = candidates_->Get(id);
+  for (const std::string &opponent : job->after_build) {
+    auto match = MakeOrderLocked(*built, opponent, job->after_build_games,
+                                 job->status.job_id());
+    if (!match.has_value()) {
+      continue;
+    }
+    JobRecord::Order *logged = job->record.add_orders();
+    logged->set_order_id(match->order_id());
+    logged->set_opponent_spec(match->opponent_spec());
+    job->pending.push_back(std::move(*match));
+  }
+  job->after_build.clear();
+  if (!job->pending.empty()) {
+    queue_.push_back(job->status.job_id());
+  }
 }
 
 void Scheduler::ConcludeJobLocked(Job *job) {

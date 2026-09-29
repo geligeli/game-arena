@@ -4,18 +4,23 @@
 // loaded into a volume, but the exact volumes, mounts, argv and entrypoint
 // scripts handed to docker are asserted from the log.
 
+#include <grpcpp/grpcpp.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <system_error>
 
+#include "game_arena/proto/arena.grpc.pb.h"
 #include "game_arena/proto/tournament_broker.pb.h"
 #include "game_arena/sandbox/exec/container_engine.h"
+#include "game_arena/sandbox/worker/artifact_cache.h"
 #include "game_arena/sandbox/worker/order_runner.h"
 
 namespace tournament_arena {
@@ -53,7 +58,7 @@ class OrderRunnerContainerTest : public ::testing::Test {
     engine_ = std::make_unique<sandbox_exec::ContainerEngine>(engine_config);
   }
 
-  // A runner per test: it remembers what each slot built.
+  // A runner per test, so no test inherits another's state.
   void SetUp() override {
     OrderJobConfig config;
     config.work_dir = root_ / "work";
@@ -121,6 +126,8 @@ class OrderRunnerContainerTest : public ::testing::Test {
            "      *-referee:/sandbox/match.pb) cp \"" +
            (root_ / "match.pb").string() +
            "\" \"$2\";;\n"
+           // A build order's binaries, as its stash step left them.
+           "      *-stash:/sandbox/*) echo \"stashed $1\" > \"$2\";;\n"
            "    esac\n"
            "    exit 0;;\n"
            "  rm|create|start|volume|network|wait|logs)\n"
@@ -235,28 +242,90 @@ TEST_F(OrderRunnerContainerTest, TheTreeIsTheImagesNotTheWorkers) {
   EXPECT_TRUE(std::filesystem::is_directory(root_ / "work" / "disk_cache"));
 }
 
-TEST_F(OrderRunnerContainerTest, ASlotBuildsEachVersionOnce) {
-  ASSERT_TRUE(
-      runner_->RunOrder(0, MakeOrder("once-1", "c-ok"), {}).result.build_ok());
+// The coordinator's archive, in this process.
+class FakeArchive final : public proto::SandboxFleet::Service {
+ public:
+  grpc::Status PutArtifact(grpc::ServerContext *,
+                           grpc::ServerReader<proto::ArtifactChunk> *reader,
+                           proto::PutArtifactResponse *response) override {
+    proto::ArtifactChunk chunk;
+    std::string bytes;
+    while (reader->Read(&chunk)) {
+      bytes += chunk.data();
+    }
+    std::lock_guard lock(mutex_);
+    blobs_[chunk.digest()] = bytes;
+    response->set_digest(chunk.digest());
+    return grpc::Status::OK;
+  }
+  grpc::Status GetArtifact(
+      grpc::ServerContext *, const proto::GetArtifactRequest *request,
+      grpc::ServerWriter<proto::ArtifactChunk> *writer) override {
+    std::lock_guard lock(mutex_);
+    const auto blob = blobs_.find(request->digest());
+    if (blob == blobs_.end()) {
+      return {grpc::StatusCode::NOT_FOUND, request->digest()};
+    }
+    proto::ArtifactChunk chunk;
+    chunk.set_digest(blob->first);
+    chunk.set_data(blob->second);
+    writer->Write(chunk);
+    return grpc::Status::OK;
+  }
+  std::size_t size() {
+    std::lock_guard lock(mutex_);
+    return blobs_.size();
+  }
 
-  // The same code in the same slot: its output base holds the binaries.
-  std::size_t before = ReadFile(root_ / "docker.log").size();
-  const OrderOutcome again =
-      runner_->RunOrder(0, MakeOrder("once-2", "c-ok"), {});
-  EXPECT_TRUE(again.result.build_ok());
-  std::string mine = ReadFile(root_ / "docker.log").substr(before);
-  EXPECT_EQ(mine.find("saw-0-once-2-build"), std::string::npos) << mine;
-  ExpectLogContains(mine, "--name saw-0-once-2-bot");
+ private:
+  std::mutex mutex_;
+  std::map<std::string, std::string> blobs_;
+};
 
-  // Another slot has its own output base; changed code is another binary.
-  before = ReadFile(root_ / "docker.log").size();
-  runner_->RunOrder(1, MakeOrder("once-3", "c-ok"), {});
-  proto::WorkOrder changed = MakeOrder("once-4", "c-ok");
-  changed.mutable_candidate()->mutable_patch()->append("+// v2\n");
-  runner_->RunOrder(0, changed, {});
-  mine = ReadFile(root_ / "docker.log").substr(before);
-  ExpectLogContains(mine, "--name saw-1-once-3-build");
-  ExpectLogContains(mine, "--name saw-0-once-4-build");
+TEST_F(OrderRunnerContainerTest, ABuildIsArchivedAndAMatchPlaysItUnbuilt) {
+  FakeArchive archive;
+  grpc::ServerBuilder builder;
+  int port = 0;
+  builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(),
+                           &port);
+  builder.RegisterService(&archive);
+  const std::unique_ptr<grpc::Server> server = builder.BuildAndStart();
+  const auto stub = proto::SandboxFleet::NewStub(grpc::CreateChannel(
+      "127.0.0.1:" + std::to_string(port), grpc::InsecureChannelCredentials()));
+  ArtifactCache cache(root_ / "artifacts", stub.get());
+  OrderJobConfig config;
+  config.work_dir = root_ / "work";
+  OrderRunner runner(/*process_engine=*/nullptr, engine_.get(), config, "",
+                     &cache);
+
+  proto::WorkOrder build = MakeOrder("arc-1", "c-ok");
+  build.set_build_only(true);
+  const OrderOutcome built = runner.RunOrder(0, build, {});
+  ASSERT_TRUE(built.result.build_ok()) << built.result.DebugString();
+  ASSERT_EQ(built.result.error(), "");
+  const auto &artifacts = built.result.artifacts();
+  ASSERT_TRUE(artifacts.contains("//solutions/c-ok:bot"));
+  ASSERT_TRUE(artifacts.contains("//game_arena/testgame:match_referee"));
+  EXPECT_EQ(archive.size(), 2u);
+  EXPECT_EQ(built.result.games_played(), 0);
+
+  proto::WorkOrder match = MakeOrder("arc-2", "c-ok");
+  match.mutable_candidate()->set_artifact(artifacts.at("//solutions/c-ok:bot"));
+  match.set_referee_artifact(
+      artifacts.at("//game_arena/testgame:match_referee"));
+  const std::size_t before = ReadFile(root_ / "docker.log").size();
+  const OrderOutcome played = runner.RunOrder(1, match, {});
+  EXPECT_TRUE(played.result.build_ok()) << played.result.DebugString();
+  EXPECT_EQ(played.result.games_played(), 2);
+
+  const std::string mine = ReadFile(root_ / "docker.log").substr(before);
+  EXPECT_EQ(mine.find("saw-1-arc-2-build"), std::string::npos) << mine;
+  ExpectLogContains(mine, "docker cp " + (root_ / "artifacts").string() + "/" +
+                              artifacts.at("//solutions/c-ok:bot") +
+                              " saw-1-arc-2-load:/load_inputs/bot-c-ok");
+  ExpectLogContains(mine, "source=saw-1-arc-2-inputs,target=/inputs,readonly");
+  ExpectLogContains(mine, "exec '/inputs/bot-c-ok' '--name=c-ok'");
+  server->Shutdown();
 }
 
 // The problem's registry_options have to survive all the way to the referee's
@@ -359,7 +428,6 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log,
                     "exec bazel --output_base=/output_base "
                     "--output_user_root=/output_base/_user_root build "
-                    "--symlink_prefix=/output_base/bazel- "
                     "--disk_cache=/disk_cache '//solutions/"
                     "c-ok:bot'");
 
@@ -367,15 +435,11 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log, "docker network create --internal saw-0-ok-1-net");
   ExpectLogContains(log, "docker network rm saw-0-ok-1-net");
 
-  // Its links live in the slot's output base, where a later job that reuses
-  // the build finds them.
-  ExpectLogContains(log, "--symlink_prefix=/output_base/bazel-");
-
   // The referee is started detached on that network, and judges the match.
   ExpectLogContains(log, "--name saw-0-ok-1-referee");
   ExpectLogContains(log, "--network saw-0-ok-1-net");
   ExpectLogContains(log,
-                    "exec '/output_base/bazel-bin/game_arena/testgame/"
+                    "exec './bazel-bin/game_arena/testgame/"
                     "match_referee' '--port=50051' '--game=nim' "
                     "'--games=2' '--player_a=c-ok' "
                     "'--player_b=builtin:random'");
@@ -385,8 +449,7 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log, "--name saw-0-ok-1-bot");
   ExpectLogContains(log, "--memory 4096m");
   ExpectLogContains(log,
-                    "exec '/output_base/bazel-bin/solutions/c-ok/bot' "
-                    "'--name=c-ok' "
+                    "exec './bazel-bin/solutions/c-ok/bot' '--name=c-ok' "
                     "'--server=saw-0-ok-1-referee:50051' "
                     "'--opponent=builtin:random' '--games=2' "
                     "'--params=iterations=100'");

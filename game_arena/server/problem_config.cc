@@ -249,6 +249,7 @@ SchedulerConfig SchedulerConfigFor(const proto::ProblemConfig& problem) {
   order_sandbox->set_cpus(sandbox.cpus());
   order_sandbox->set_pids_limit(sandbox.pids_limit());
   order_sandbox->set_build_memory_limit_mb(sandbox.build_memory_limit_mb());
+  order_sandbox->set_build_cpus(sandbox.build_cpus());
   order_sandbox->set_run_as_user(sandbox.run_as_user());
   order_sandbox->set_allow_build_network(sandbox.allow_build_network());
   if (problem.has_match()) {

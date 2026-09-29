@@ -1,6 +1,7 @@
 #include "game_arena/sandbox/worker/order_runner.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -36,15 +37,32 @@ class ProgressObserver final : public sandbox_exec::Observer {
   const OrderRunner::ProgressSink *const sink_;
 };
 
+// Every side that plays has a built bot in the archive, and so does the
+// referee: nothing to build.
+bool PlaysFromTheArchive(const proto::WorkOrder &order) {
+  if (order.build_only() || order.has_grade() ||
+      order.referee_artifact().empty()) {
+    return false;
+  }
+  const auto archived = [](const proto::Side &side) {
+    return side.candidate_id().starts_with("builtin:") ||
+           !side.artifact().empty();
+  };
+  return archived(order.candidate()) &&
+         (!order.has_opponent() || archived(order.opponent()));
+}
+
 }  // namespace
 
 OrderRunner::OrderRunner(sandbox_exec::Engine *process_engine,
                          sandbox_exec::Engine *container_engine,
-                         OrderJobConfig config, std::string machine_class)
+                         OrderJobConfig config, std::string machine_class,
+                         ArtifactCache *artifacts)
     : process_engine_(process_engine),
       container_engine_(container_engine),
       config_(std::move(config)),
-      machine_class_(std::move(machine_class)) {}
+      machine_class_(std::move(machine_class)),
+      artifacts_(artifacts) {}
 
 bool OrderRunner::Warmup(int slots, std::string *error) {
   // Bind-mount sources too: docker would create a missing one owned by root.
@@ -104,14 +122,11 @@ OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
     return outcome;
   }
 
-  const std::map<std::string, std::string> keys = BuildKeys(order);
-  bool reuse = !keys.empty();
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    const auto &held = built_[slot];
-    for (const auto &[target, key] : keys) {
-      const auto it = held.find(target);
-      reuse = reuse && it != held.end() && it->second == key;
+  std::optional<Prebuilt> prebuilt;
+  if (artifacts_ != nullptr && PlaysFromTheArchive(order)) {
+    prebuilt = Fetch(order, &outcome.result);
+    if (!prebuilt.has_value()) {
+      return outcome;
     }
   }
 
@@ -119,7 +134,7 @@ OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
   sandbox_exec::proto::Job job;
   std::string error;
   if (!JobForOrder(slot, order, config_, engine->capabilities(), &job, &error,
-                   /*build=*/!reuse)) {
+                   prebuilt.has_value() ? &*prebuilt : nullptr)) {
     outcome.result.set_error(error);
     return outcome;
   }
@@ -130,21 +145,49 @@ OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
   }
   ProgressObserver observer(order.order_id(), &progress);
   const sandbox_exec::proto::JobResult result = engine->Run(job, &observer);
-  outcome = OutcomeFor(order, result, reuse);
-  std::lock_guard<std::mutex> lock(mutex_);
-  running_.erase(order.order_id());
-  if (!reuse) {
-    // A failed build may have replaced some of these outputs, or none.
-    auto &held = built_[slot];
-    for (const auto &[target, key] : keys) {
-      if (outcome.result.build_ok()) {
-        held[target] = key;
-      } else {
-        held.erase(target);
-      }
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    running_.erase(order.order_id());
+  }
+  outcome = OutcomeFor(order, result, prebuilt.has_value());
+
+  // What a build order built goes to the archive, for every match after it.
+  for (const auto &[target, bytes] : outcome.built) {
+    const auto digest = artifacts_ != nullptr ? artifacts_->Put(bytes, &error)
+                                              : std::optional<std::string>();
+    if (!digest.has_value()) {
+      outcome.result.set_error(
+          artifacts_ != nullptr ? error : "this worker has no archive to fill");
+      outcome.result.clear_artifacts();
+      break;
     }
+    (*outcome.result.mutable_artifacts())[target] = *digest;
   }
   return outcome;
+}
+
+std::optional<Prebuilt> OrderRunner::Fetch(const proto::WorkOrder &order,
+                                           proto::OrderResult *result) {
+  Prebuilt prebuilt;
+  std::string error;
+  const auto referee = artifacts_->Fetch(order.referee_artifact(), &error);
+  if (!referee.has_value()) {
+    result->set_error(error);
+    return std::nullopt;
+  }
+  prebuilt.referee = *referee;
+  for (const proto::Side *side : {&order.candidate(), &order.opponent()}) {
+    if (side->artifact().empty()) {
+      continue;
+    }
+    const auto bot = artifacts_->Fetch(side->artifact(), &error);
+    if (!bot.has_value()) {
+      result->set_error(error);
+      return std::nullopt;
+    }
+    prebuilt.bots[side->candidate_id()] = *bot;
+  }
+  return prebuilt;
 }
 
 void OrderRunner::Cancel(const std::string &order_id) {

@@ -374,6 +374,52 @@ TEST_F(ContainerEngineTest, TheLoaderLeavesReadOnlyMountsAlone) {
             std::string::npos);
 }
 
+TEST_F(ContainerEngineTest, InputsAreLoadedIntoAVolumeEveryStepReadsOnly) {
+  proto::Job job;
+  job.set_id("saw-0-in-1");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_workspace() = SlotWorkspace();
+  proto::InputFile *input = job.mutable_workspace()->add_inputs();
+  input->set_source("/cache/abc123");
+  input->set_name("referee");
+  job.mutable_workspace()->set_inputs_mount("/inputs");
+  *job.mutable_isolation() = HardenedIsolation();
+  proto::Phase *run = job.add_phases();
+  run->set_name("run");
+  run->mutable_foreground()->set_name("run");
+  *run->mutable_foreground()->add_argv() = Word("/inputs/referee", false);
+
+  ASSERT_EQ(engine_->Run(job, nullptr).status().code(), proto::Status::OK);
+  const std::string log = Log();
+  EXPECT_NE(log.find("docker volume create saw-0-in-1-inputs"),
+            std::string::npos)
+      << log;
+  EXPECT_NE(log.find("docker cp /cache/abc123 saw-0-in-1-load:/load_inputs/"
+                     "referee"),
+            std::string::npos)
+      << log;
+  EXPECT_NE(RunArgvFor("saw-0-in-1-run")
+                .find("source=saw-0-in-1-inputs,target=/inputs,readonly"),
+            std::string::npos)
+      << RunArgvFor("saw-0-in-1-run");
+  EXPECT_NE(log.find("docker volume rm -f saw-0-in-1-inputs"),
+            std::string::npos);
+}
+
+TEST_F(ContainerEngineTest, AnInputIsAFileNameUnderAnAbsoluteMount) {
+  proto::Job job;
+  job.set_id("saw-0-in-2");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_isolation() = HardenedIsolation();
+  proto::InputFile *input = job.mutable_workspace()->add_inputs();
+  input->set_source("/cache/abc123");
+  input->set_name("../escape");
+  job.mutable_workspace()->set_inputs_mount("/inputs");
+  job.add_phases()->mutable_foreground()->set_name("run");
+  EXPECT_EQ(engine_->Run(job, nullptr).status().code(),
+            proto::Status::INVALID_JOB);
+}
+
 TEST_F(ContainerEngineTest, AMatchPhaseJoinsItsStepsOnAPrivateBridge) {
   proto::Job job;
   job.set_id("saw-0-ok-1");

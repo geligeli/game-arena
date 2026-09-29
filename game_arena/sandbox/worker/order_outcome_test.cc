@@ -89,7 +89,7 @@ TEST(OutcomeForTest, AGoodMatchCarriesTheRefereesTally) {
             tournament_broker::proto::GameRecord::DRAW);
 }
 
-TEST(OutcomeForTest, AReusedBuildIsABuildThatSucceeded) {
+TEST(OutcomeForTest, AnArchivedBuildIsABuildThatSucceeded) {
   sx::JobResult result;
   sx::PhaseResult *match = result.add_phases();
   match->set_name("match");
@@ -97,10 +97,38 @@ TEST(OutcomeForTest, AReusedBuildIsABuildThatSucceeded) {
   Report(AddStep(match, "referee", 0), "w");
 
   const OrderOutcome outcome =
-      OutcomeFor(MatchOrder(1), result, /*build_reused=*/true);
+      OutcomeFor(MatchOrder(1), result, /*prebuilt=*/true);
   EXPECT_TRUE(outcome.result.build_ok());
   EXPECT_EQ(outcome.result.error(), "");
   EXPECT_EQ(outcome.result.wins(), 1);
+}
+
+TEST(OutcomeForTest, ABuildOrderCarriesWhatItStashed) {
+  proto::WorkOrder order = MatchOrder();
+  order.set_build_only(true);
+  order.mutable_candidate()->set_bot_target("//solutions/c-ok:bot");
+  order.set_referee_target("//game:match_referee");
+  sx::JobResult result;
+  WithBuild(&result, 0);
+  sx::PhaseResult *stash = result.add_phases();
+  stash->set_name("stash");
+  sx::StepResult *step = AddStep(stash, "stash", 0);
+  (*step->mutable_collected())[kStashedBot] = "the bot";
+  (*step->mutable_collected())[kStashedReferee] = "the referee";
+
+  const OrderOutcome outcome = OutcomeFor(order, result);
+  EXPECT_TRUE(outcome.result.build_ok());
+  EXPECT_EQ(outcome.result.error(), "");
+  EXPECT_EQ(outcome.result.games_played(), 0);
+  EXPECT_EQ(outcome.built.at("//solutions/c-ok:bot"), "the bot");
+  EXPECT_EQ(outcome.built.at("//game:match_referee"), "the referee");
+
+  // Built but not stashed: nothing to archive, and no one's code to blame.
+  step->mutable_collected()->clear();
+  const OrderOutcome empty = OutcomeFor(order, result);
+  EXPECT_TRUE(empty.built.empty());
+  EXPECT_NE(empty.result.error(), "");
+  EXPECT_EQ(empty.result.build_failed_candidate_id(), "");
 }
 
 TEST(OutcomeForTest, APrintedTallyIsNotAResult) {

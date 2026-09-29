@@ -572,7 +572,8 @@ std::vector<proto::Candidate> CandidateStore::List() const {
 
 bool CandidateStore::SetStatus(const std::string &candidate_id,
                                proto::Candidate::Status status,
-                               const std::string &build_error) {
+                               const std::string &build_error,
+                               const std::string &artifact) {
   std::lock_guard lock(mutex_);
   if (const auto staged = staged_.find(candidate_id); staged != staged_.end()) {
     std::error_code ec;
@@ -594,6 +595,9 @@ bool CandidateStore::SetStatus(const std::string &candidate_id,
     return false;
   }
   it->second.set_status(status);
+  if (!artifact.empty()) {
+    it->second.set_artifact(artifact);
+  }
   it->second.set_build_error(
       build_error.size() > limits_.max_build_error_bytes
           ? build_error.substr(build_error.size() -

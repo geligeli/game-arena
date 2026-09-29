@@ -436,6 +436,10 @@ std::optional<std::string> Dashboard::JobPage(const std::string& job_id) const {
       html << (i == 0 ? " &middot; games " : " ") << "<a href=\"/games/"
            << HtmlEscape(order.game_ids(i)) << "\">" << i + 1 << "</a>";
     }
+    for (const auto& [target, digest] : result.artifacts()) {
+      html << " &middot; archived " << HtmlEscape(target) << " as "
+           << HtmlEscape(digest.substr(0, 12));
+    }
     html << "</p>";
     if (!show_source_) {
       html << kHidden;

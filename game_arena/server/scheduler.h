@@ -16,6 +16,7 @@
 
 #include "game_arena/proto/arena.pb.h"
 #include "game_arena/proto/clients.pb.h"
+#include "game_arena/server/artifact_store.h"
 #include "game_arena/server/candidate_store.h"
 #include "game_arena/server/fleet_worker.h"
 #include "game_arena/server/job_log.h"
@@ -28,12 +29,14 @@ namespace tournament_arena {
 class Scheduler {
  public:
   // |history| and |job_log| may be null. |on_concluded| gets each job that
-  // runs to DONE or FAILED, under the scheduler's lock.
+  // runs to DONE or FAILED, under the scheduler's lock. With |artifacts|, a
+  // match problem's candidate is built once, into it, before it plays.
   Scheduler(SchedulerConfig config, CandidateStore *candidates,
             Standings *standings,
             tournament_broker::GameHistory *history = nullptr,
             JobLog *job_log = nullptr,
-            std::function<void(const proto::Job &)> on_concluded = {});
+            std::function<void(const proto::Job &)> on_concluded = {},
+            ArtifactStore *artifacts = nullptr);
 
   // Counted when granted, so two concurrent submits cannot both pass.
   class Reservation {
@@ -71,6 +74,10 @@ class Scheduler {
   std::string EnqueueMatch(const proto::Candidate &candidate,
                            const std::string &opponent, int games);
 
+  // Builds |candidate| into the archive and plays nothing, unmetered: for a
+  // READY candidate from before the archive. A failure leaves it READY.
+  std::string EnqueueBuild(const proto::Candidate &candidate);
+
   std::optional<proto::Job> GetJob(const std::string &job_id) const;
 
   // Unknown orders are ignored: progress can race the result that retired one.
@@ -97,6 +104,11 @@ class Scheduler {
     std::deque<proto::WorkOrder> pending;             // not yet dispatched
     std::map<std::string, proto::WorkOrder> running;  // keyed by order id
     bool aborted = false;
+    // A build-first job: whom it plays once its build order has succeeded.
+    std::vector<std::string> after_build;
+    int after_build_games = 0;
+    int build_attempts = 0;
+    bool backfill = false;
     // Cleared once the job has finished and is on disk.
     JobRecord record;
   };
@@ -113,14 +125,21 @@ class Scheduler {
   std::optional<proto::WorkOrder> MakeOrderLocked(
       const proto::Candidate &candidate, const std::string &opponent, int games,
       const std::string &job_id);
+  std::string NextOrderIdLocked();
+  proto::WorkOrder MakeBuildOrderLocked(const proto::Candidate &candidate,
+                                        const std::string &job_id);
+  // A build order's result: store what it built, then queue its matches.
+  void OnBuiltLocked(Job *job, const proto::WorkOrder &order,
+                     const proto::OrderResult &result);
   void FillSideLocked(const proto::Candidate &candidate,
                       proto::Side *side) const;
   // |record_patch|: keep the submission's patch in the job log, which only
   // a submission needs; a match's candidate is already in the store.
+  // |build_first|: one build order now, |opponents| once it has built.
   std::string EnqueueLocked(const proto::Candidate &candidate,
                             const std::vector<std::string> &opponents,
                             int games, const std::string &client_id,
-                            bool record_patch = true);
+                            bool record_patch = true, bool build_first = false);
   void AbortJobLocked(Job *job, const std::string &reason);
   void ReleaseReservationLocked(const std::string &client_id);
   void DispatchLocked();
@@ -133,6 +152,9 @@ class Scheduler {
   tournament_broker::GameHistory *history_;  // not owned
   JobLog *job_log_;                          // not owned
   const std::function<void(const proto::Job &)> on_concluded_;
+  ArtifactStore *artifacts_;  // not owned; may be null
+  // The archive's name for the referee this config builds.
+  const std::string referee_ref_;
 
   mutable std::mutex mutex_;
   std::map<std::string, Job> jobs_;

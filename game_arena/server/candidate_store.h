@@ -62,7 +62,8 @@ class CandidateStore : public CandidateView {
   // For a staged resubmit: READY promotes it, anything else drops it.
   bool SetStatus(const std::string &candidate_id,
                  proto::Candidate::Status status,
-                 const std::string &build_error);
+                 const std::string &build_error,
+                 const std::string &artifact = "");
 
   std::size_t size() const;
   bool versions() const { return policy_.versions(); }

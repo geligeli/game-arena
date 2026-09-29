@@ -22,6 +22,7 @@
 #include "game_arena/common/process/process.h"
 #include "game_arena/proto/arena.grpc.pb.h"
 #include "game_arena/sandbox/exec/container_engine.h"
+#include "game_arena/sandbox/worker/artifact_cache.h"
 #include "game_arena/sandbox/worker/order_runner.h"
 
 ABSL_FLAG(std::string, server, "localhost:50051",
@@ -46,6 +47,7 @@ std::string EnvOr(const char *name, const std::string &fallback) {
   return value != nullptr && *value != '\0' ? std::string(value) : fallback;
 }
 
+using tournament_arena::ArtifactCache;
 using tournament_arena::OrderJobConfig;
 using tournament_arena::OrderOutcome;
 using tournament_arena::OrderRunner;
@@ -210,8 +212,12 @@ int main(int argc, char **argv) {
     return 1;
   }
   sandbox_exec::ContainerEngine container_engine({});
+  // Its own channel, reconnecting on its own, for as long as the process.
+  const auto archive = proto::SandboxFleet::NewStub(grpc::CreateChannel(
+      absl::GetFlag(FLAGS_server), grpc::InsecureChannelCredentials()));
+  ArtifactCache artifacts(work_dir / "artifacts", archive.get());
   OrderRunner runner(/*process_engine=*/nullptr, &container_engine,
-                     std::move(job_config), machine_class);
+                     std::move(job_config), machine_class, &artifacts);
 
   LOG(INFO) << "Worker '" << worker_id << "' warming up " << slots
             << " slot(s) under " << work_dir << ", container engine(s)"
@@ -238,6 +244,7 @@ int main(int argc, char **argv) {
     hello.mutable_hello()->set_slots(slots);
     // Up front too, so the arena can schedule on it.
     hello.mutable_hello()->set_machine_class(machine_class);
+    hello.mutable_hello()->set_builds_artifacts(true);
     if (!stream->Write(hello)) {
       LOG(WARNING) << "Cannot reach the arena at "
                    << absl::GetFlag(FLAGS_server) << "; retrying";

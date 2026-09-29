@@ -6,10 +6,12 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "game_arena/proto/arena.pb.h"
 #include "game_arena/sandbox/exec/engine.h"
+#include "game_arena/sandbox/worker/artifact_cache.h"
 #include "game_arena/sandbox/worker/order_job.h"
 #include "game_arena/sandbox/worker/order_outcome.h"
 
@@ -22,9 +24,12 @@ class OrderRunner {
                                           proto::OrderProgress::Phase phase)>;
 
   // Either may be null. An order's image, or its absence, picks the engine.
+  // With |artifacts|, a match plays archived binaries and a build order
+  // archives what it built.
   OrderRunner(sandbox_exec::Engine *process_engine,
               sandbox_exec::Engine *container_engine, OrderJobConfig config,
-              std::string machine_class = {});
+              std::string machine_class = {},
+              ArtifactCache *artifacts = nullptr);
 
   // Creates the per-slot directories up front.
   bool Warmup(int slots, std::string *error);
@@ -36,6 +41,9 @@ class OrderRunner {
   void Cancel(const std::string &order_id);
 
  private:
+  // The order's archived binaries, fetched; nullopt with |result|'s error.
+  std::optional<Prebuilt> Fetch(const proto::WorkOrder &order,
+                                proto::OrderResult *result);
   // Non-empty when this worker must refuse |order| rather than run it.
   std::string Refusal(const proto::WorkOrder &order) const;
   // The engine this order runs on, or null when this worker has none for it.
@@ -50,13 +58,10 @@ class OrderRunner {
   sandbox_exec::Engine *const container_engine_;  // may be null
   const OrderJobConfig config_;
   const std::string machine_class_;
+  ArtifactCache *const artifacts_;  // not owned; may be null
 
   std::mutex mutex_;
   std::map<std::string, InFlight> running_;  // keyed by order id
-  // Per slot, what its output base holds: target -> BuildKeys' key. Bazel
-  // keeps a target's outputs until it builds that target again, so an order
-  // whose every key is here needs no build.
-  std::map<int, std::map<std::string, std::string>> built_;
 };
 
 }  // namespace tournament_arena

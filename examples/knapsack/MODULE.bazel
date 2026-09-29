@@ -7,6 +7,7 @@ module(
 
 bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "abseil-cpp", version = "20250814.1")
+bazel_dep(name = "googletest", version = "1.17.0.bcr.1", dev_dependency = True)
 
 # For the grader's report and process libraries; a grader that printfs its JSON needs neither.
 bazel_dep(name = "game_arena", version = "0.1.0")

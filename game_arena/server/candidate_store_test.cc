@@ -416,6 +416,24 @@ TEST_F(CandidateStoreTest, SurvivesRestart) {
   ASSERT_TRUE(source.has_value()) << error;
 }
 
+// The archive's digest of what it built goes with the code that took over,
+// and survives a restart.
+TEST_F(CandidateStoreTest, AResubmitThatBuildsBringsItsArtifact) {
+  std::string error;
+  ASSERT_TRUE(store_->Create(MakeRequest(), &error).has_value()) << error;
+  store_->SetStatus("my-bot", proto::Candidate::READY, "", "old-digest");
+  proto::SubmitRequest better = MakeRequest();
+  better.mutable_files(0)->set_content("// better\n");
+  ASSERT_TRUE(store_->Create(better, &error).has_value()) << error;
+  EXPECT_EQ(store_->Get("my-bot")->artifact(), "old-digest");
+
+  store_->SetStatus("my-bot", proto::Candidate::READY, "", "new-digest");
+  EXPECT_EQ(store_->Get("my-bot")->artifact(), "new-digest");
+  CandidateStore reopened(dir_);
+  reopened.Load();
+  EXPECT_EQ(reopened.Get("my-bot")->artifact(), "new-digest");
+}
+
 TEST_F(CandidateStoreTest, BuildErrorIsTrimmedToTheCap) {
   CandidateLimits limits;
   limits.max_build_error_bytes = 64;

@@ -1,10 +1,12 @@
-// A worker slot builds each version once: the orders the scheduler makes of
-// a placement, run in one slot against this host's daemon and this problem's
-// sandbox image. Manual and local; the daemon needs the image:
+// A strategy is built once: the scheduler's build order runs on this host's
+// daemon with this problem's sandbox image, its binaries go to the archive,
+// and the placement's matches play them in other slots without building.
+// Manual and local; the daemon needs the image:
 //
 //   bazel run //:sandbox_image_load   # once
 //   bazel test //it:build_once_test
 
+#include <grpcpp/grpcpp.h>
 #include <unistd.h>
 
 #include <cstdlib>
@@ -15,8 +17,11 @@
 #include <vector>
 
 #include "game_arena/sandbox/exec/container_engine.h"
+#include "game_arena/sandbox/worker/artifact_cache.h"
 #include "game_arena/sandbox/worker/order_runner.h"
+#include "game_arena/server/artifact_store.h"
 #include "game_arena/server/candidate_store.h"
+#include "game_arena/server/fleet_service.h"
 #include "game_arena/server/fleet_worker.h"
 #include "game_arena/server/problem_config.h"
 #include "game_arena/server/scheduler.h"
@@ -29,6 +34,7 @@ class CapturingWorker : public FleetWorker {
  public:
   std::string worker_id() const override { return "it"; }
   int slots() const override { return 8; }
+  bool builds_artifacts() const override { return true; }
   bool Send(const proto::FleetMessage &message) override {
     if (message.has_order()) {
       orders.push_back(message.order());
@@ -43,7 +49,7 @@ std::string Read(const std::filesystem::path &path) {
   return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
 }
 
-TEST(BuildOnceTest, ASlotBuildsAVersionOnceAndPlaysItAgainWithoutABuild) {
+TEST(BuildOnceTest, BuiltOnceThenPlayedFromTheArchiveInOtherSlots) {
   const std::filesystem::path runfiles =
       std::filesystem::path(std::getenv("TEST_SRCDIR")) / "_main";
   const std::filesystem::path tmp = std::getenv("TEST_TMPDIR");
@@ -65,35 +71,59 @@ TEST(BuildOnceTest, ASlotBuildsAVersionOnceAndPlaysItAgainWithoutABuild) {
   const auto candidate = store.Create(request, &error);
   ASSERT_TRUE(candidate.has_value()) << error;
 
-  // Placement: one order per builtin, the same code in each.
+  // The coordinator: a scheduler with an archive, served to the worker.
+  ArtifactStore archive(tmp / "archive");
   Scheduler scheduler(SchedulerConfigFor(*problem), &store,
-                      /*standings=*/nullptr);
+                      /*standings=*/nullptr, nullptr, nullptr, {}, &archive);
+  FleetService fleet(&scheduler, &archive);
+  grpc::ServerBuilder builder;
+  int port = 0;
+  builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(),
+                           &port);
+  builder.RegisterService(&fleet);
+  const std::unique_ptr<grpc::Server> server = builder.BuildAndStart();
   auto worker = std::make_shared<CapturingWorker>();
   scheduler.AddWorker(worker);
   auto reservation =
       scheduler.TryReserve("", {}, /*cancel_running=*/false, &error);
   scheduler.EnqueuePlacement(*candidate, std::move(*reservation));
-  ASSERT_GE(worker->orders.size(), 2u);
+  ASSERT_EQ(worker->orders.size(), 1u);
+  ASSERT_TRUE(worker->orders[0].build_only());
 
+  // The worker, on this host's daemon.
+  const auto stub = proto::SandboxFleet::NewStub(grpc::CreateChannel(
+      "127.0.0.1:" + std::to_string(port), grpc::InsecureChannelCredentials()));
+  ArtifactCache cache(tmp / "artifacts", stub.get());
   const std::string prefix = "connect4-it-" + std::to_string(::getpid());
   OrderJobConfig config;
   config.work_dir = tmp / "work";
-  config.disk_cache = tmp / "work" / "disk_cache";
   config.volume_prefix = prefix;
   sandbox_exec::ContainerEngine engine({});
-  OrderRunner runner(/*process_engine=*/nullptr, &engine, config);
-  ASSERT_TRUE(runner.Warmup(1, &error)) << error;
+  OrderRunner runner(/*process_engine=*/nullptr, &engine, config, "", &cache);
+  ASSERT_TRUE(runner.Warmup(3, &error)) << error;
 
-  const OrderOutcome first = runner.RunOrder(0, worker->orders[0], {});
-  ASSERT_TRUE(first.result.build_ok()) << first.result.DebugString();
-  EXPECT_EQ(first.result.games_played(), worker->orders[0].num_games());
+  const OrderOutcome built = runner.RunOrder(0, worker->orders[0], {});
+  ASSERT_TRUE(built.result.build_ok()) << built.result.DebugString();
+  ASSERT_EQ(built.result.artifacts().size(), 2u) << built.result.DebugString();
+  proto::OrderResult result = built.result;  // as sandbox_worker sends it
+  result.set_order_id(worker->orders[0].order_id());
+  scheduler.OnResult("it", result);
+  EXPECT_FALSE(store.Get(candidate->candidate_id())->artifact().empty());
 
-  const OrderOutcome second = runner.RunOrder(0, worker->orders[1], {});
-  EXPECT_TRUE(second.result.build_ok()) << second.result.DebugString();
-  EXPECT_EQ(second.result.build_output(), "reused this slot's earlier build\n");
-  EXPECT_EQ(second.result.games_played(), worker->orders[1].num_games())
-      << second.result.DebugString();
+  // Every placement match plays the archived binaries, each in a slot that
+  // never built anything.
+  ASSERT_EQ(worker->orders.size(), 3u);
+  for (int slot : {1, 2}) {
+    const proto::WorkOrder &match = worker->orders[slot];
+    ASSERT_FALSE(match.candidate().artifact().empty());
+    ASSERT_FALSE(match.referee_artifact().empty());
+    const OrderOutcome played = runner.RunOrder(slot, match, {});
+    EXPECT_EQ(played.result.build_output(), "ran the archived build\n");
+    EXPECT_EQ(played.result.error(), "") << played.result.DebugString();
+    EXPECT_EQ(played.result.games_played(), match.num_games());
+  }
 
+  server->Shutdown();
   // The caches are this test's own.
   EXPECT_EQ(std::system(("docker volume ls -q --filter name=" + prefix +
                          " | xargs -r docker volume rm >/dev/null")

@@ -78,34 +78,54 @@ TEST(JobForOrderTest, AMatchIsABuildPhaseThenAMatchPhase) {
   EXPECT_EQ(job.id(), "saw-0-ok-1");
 }
 
-TEST(JobForOrderTest, WithoutABuildTheMatchRunsWhatTheSlotHolds) {
+TEST(JobForOrderTest, ABuildOrderBuildsThenStashesItsBinaries) {
+  proto::WorkOrder order = MatchOrder();
+  order.set_build_only(true);
+  order.mutable_sandbox()->set_build_cpus(4);
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(
+      JobForOrder(0, order, Config(), ContainerCapabilities(), &job, &error))
+      << error;
+
+  ASSERT_EQ(job.phases_size(), 2);
+  EXPECT_EQ(job.phases(0).name(), "build");
+  EXPECT_EQ(job.phases(0).isolation().cpus(), 4);
+  const sx::Step &stash = job.phases(1).foreground();
+  EXPECT_EQ(job.phases(1).isolation().network(), sx::Isolation::NETWORK_NONE);
+  EXPECT_EQ(ArgvOf(stash),
+            "sh -c cp -L ./bazel-bin/solutions/c-ok/bot {{scratch}}/bot && "
+            "cp -L ./bazel-bin/testgame/match_referee {{scratch}}/referee");
+  EXPECT_EQ(stash.collect_files_size(), 2);
+
+  // With the referee archived already, only the bot.
+  order.clear_referee_target();
+  job.Clear();
+  ASSERT_TRUE(
+      JobForOrder(0, order, Config(), ContainerCapabilities(), &job, &error));
+  EXPECT_EQ(job.phases(1).foreground().collect_files_size(), 1);
+}
+
+TEST(JobForOrderTest, AnArchivedMatchLoadsItsBinariesAndBuildsNothing) {
+  const Prebuilt prebuilt{.referee = "/cache/r",
+                          .bots = {{"c-ok", "/cache/b"}}};
   sx::Job job;
   std::string error;
   ASSERT_TRUE(JobForOrder(0, MatchOrder(), Config(), ContainerCapabilities(),
-                          &job, &error, /*build=*/false))
+                          &job, &error, &prebuilt))
       << error;
+
   ASSERT_EQ(job.phases_size(), 1);
   EXPECT_EQ(job.phases(0).name(), "match");
-}
-
-TEST(BuildKeysTest, EachTargetIsKeyedByItsOwnSidesCode) {
-  const auto keys = BuildKeys(MatchOrder());
-  ASSERT_EQ(keys.size(), 2u);
-  ASSERT_TRUE(keys.contains("//solutions/c-ok:bot"));
-  ASSERT_TRUE(keys.contains("//testgame:match_referee"));
-
-  proto::WorkOrder changed = MatchOrder();
-  changed.mutable_candidate()->set_patch("another patch");
-  const auto changed_keys = BuildKeys(changed);
-  EXPECT_NE(changed_keys.at("//solutions/c-ok:bot"),
-            keys.at("//solutions/c-ok:bot"));
-  EXPECT_EQ(changed_keys.at("//testgame:match_referee"),
-            keys.at("//testgame:match_referee"));
-
-  proto::WorkOrder other_image = MatchOrder();
-  other_image.mutable_sandbox()->set_image("img:2");
-  EXPECT_NE(BuildKeys(other_image).at("//testgame:match_referee"),
-            keys.at("//testgame:match_referee"));
+  const sx::Workspace &ws = job.workspace();
+  EXPECT_EQ(ws.inputs_mount(), "/inputs");
+  ASSERT_EQ(ws.inputs_size(), 2);
+  EXPECT_EQ(ws.inputs(0).source(), "/cache/r");
+  EXPECT_EQ(ws.inputs(0).name(), "referee");
+  EXPECT_EQ(ws.inputs(1).source(), "/cache/b");
+  EXPECT_EQ(ws.inputs(1).name(), "bot-c-ok");
+  EXPECT_EQ(job.phases(0).background(0).argv(0).text(), "/inputs/referee");
+  EXPECT_EQ(job.phases(0).foreground().argv(0).text(), "/inputs/bot-c-ok");
 }
 
 TEST(JobForOrderTest, TheBuildReachesNothingAndTheMatchReachesOnlyItself) {

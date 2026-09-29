@@ -19,6 +19,8 @@ namespace sx = sandbox_exec::proto;
 namespace {
 
 constexpr int kDefaultTimeoutS = 1800;
+constexpr char kInputsMount[] = "/inputs";
+constexpr char kRefereeInput[] = "referee";
 // Fixed: a match's network namespace is private, so nothing can collide.
 constexpr int kMatchPort = 50051;
 
@@ -95,13 +97,13 @@ BuildPaths PathsFor(const OrderJobConfig& config, int slot, bool container) {
   if (container) {
     paths.output_base = sandbox_common::kOutputBaseMount;
     paths.disk_cache = sandbox_common::kDiskCacheMount;
-  } else {
-    paths.output_base = (SlotDir(config, slot) / "bazel_output_base").string();
-    paths.disk_cache = config.disk_cache.string();
+    paths.bazel_bin = "./bazel-bin/";
+    return paths;
   }
-  // In the slot's output base, not the job's workspace: a job that reuses
-  // the slot's build has a fresh workspace and no build to link it.
-  paths.bazel_bin = paths.output_base + "/bazel-bin/";
+  paths.output_base = (SlotDir(config, slot) / "bazel_output_base").string();
+  paths.disk_cache = config.disk_cache.string();
+  paths.bazel_bin =
+      (SlotDir(config, slot) / "repo" / "bazel-bin").string() + "/";
   return paths;
 }
 
@@ -219,6 +221,9 @@ void AddBuildPhase(const proto::WorkOrder& order, const OrderJobConfig& config,
   // few dozen compilers exceed any limit a problem means for a bot.
   isolation->set_memory_limit_mb(order.sandbox().build_memory_limit_mb());
   isolation->set_pids_limit(0);
+  if (container && order.sandbox().build_cpus() > 0) {
+    isolation->set_cpus(order.sandbox().build_cpus());
+  }
 
   sx::Step* build = phase->mutable_foreground();
   build->set_name("build");
@@ -244,8 +249,6 @@ void AddBuildPhase(const proto::WorkOrder& order, const OrderJobConfig& config,
         Verbatim("--output_user_root=" + paths.output_base + "/_user_root");
   }
   *build->add_argv() = Verbatim("build");
-  *build->add_argv() =
-      Verbatim("--symlink_prefix=" + paths.output_base + "/bazel-");
   if (!paths.disk_cache.empty()) {
     *build->add_argv() = Verbatim("--disk_cache=" + paths.disk_cache);
   }
@@ -263,10 +266,50 @@ void AddBuildPhase(const proto::WorkOrder& order, const OrderJobConfig& config,
   }
 }
 
+// A build order's binaries, copied where the engine collects them from.
+void AddStashPhase(const proto::WorkOrder& order, const BuildPaths& paths,
+                   const std::optional<sx::Mount>& output_base, sx::Job* job) {
+  sx::Phase* phase = job->add_phases();
+  phase->set_name("stash");
+  *phase->mutable_isolation() = job->isolation();
+  phase->mutable_isolation()->set_network(sx::Isolation::NETWORK_NONE);
+  sx::Step* stash = phase->mutable_foreground();
+  stash->set_name("stash");
+  MountOutputBase(output_base, /*readonly=*/true, stash);
+  std::string script = "cp -L " + paths.bazel_bin +
+                       BinaryPathForTarget(order.candidate().bot_target()) +
+                       " {{scratch}}/" + kStashedBot;
+  stash->add_collect_files(kStashedBot);
+  if (!order.referee_target().empty()) {
+    script += " && cp -L " + paths.bazel_bin +
+              BinaryPathForTarget(order.referee_target()) + " {{scratch}}/" +
+              kStashedReferee;
+    stash->add_collect_files(kStashedReferee);
+  }
+  *stash->add_argv() = Verbatim("sh");
+  *stash->add_argv() = Verbatim("-c");
+  *stash->add_argv() = Quoted(script);
+}
+
+// Where a match runs a binary: the archive's copy, else the slot's build.
+std::string Binary(const BuildPaths& paths, const std::string& target,
+                   const std::filesystem::path* archived,
+                   const std::string& input, bool container) {
+  if (archived == nullptr) {
+    return paths.bazel_bin + BinaryPathForTarget(target);
+  }
+  return container ? std::string(kInputsMount) + "/" + input
+                   : archived->string();
+}
+
+std::string BotInput(const proto::Side& side) {
+  return "bot-" + sandbox_common::SanitizeContainerName(side.candidate_id());
+}
+
 void AddMatchPhase(const proto::WorkOrder& order, const BuildPaths& paths,
                    const std::optional<sx::Mount>& output_base, bool container,
                    const sandbox_exec::Capabilities& capabilities,
-                   sx::Job* job) {
+                   const Prebuilt* prebuilt, sx::Job* job) {
   const int run_timeout_s =
       order.run_timeout_s() > 0 ? order.run_timeout_s() : kDefaultTimeoutS;
   const int match_deadline_s = order.match_deadline_s() > 0
@@ -292,7 +335,9 @@ void AddMatchPhase(const proto::WorkOrder& order, const BuildPaths& paths,
   referee->set_private_scratch(true);
   referee->add_collect_files(kMatchReport);
   *referee->add_argv() =
-      Quoted(paths.bazel_bin + BinaryPathForTarget(order.referee_target()));
+      Quoted(Binary(paths, order.referee_target(),
+                    prebuilt != nullptr ? &prebuilt->referee : nullptr,
+                    kRefereeInput, container));
 
   std::string server;
   if (capabilities.stable_peer_names) {
@@ -341,8 +386,10 @@ void AddMatchPhase(const proto::WorkOrder& order, const BuildPaths& paths,
                            const std::string& opponent) {
     step->set_keep_after_exit(true);
     MountOutputBase(output_base, /*readonly=*/true, step);
-    *step->add_argv() =
-        Quoted(paths.bazel_bin + BinaryPathForTarget(side.bot_target()));
+    *step->add_argv() = Quoted(Binary(
+        paths, side.bot_target(),
+        prebuilt != nullptr ? &prebuilt->bots.at(side.candidate_id()) : nullptr,
+        BotInput(side), container));
     *step->add_argv() = Quoted("--name=" + side.candidate_id());
     *step->add_argv() = Quoted("--server=" + server);
     *step->add_argv() = Quoted("--opponent=" + opponent);
@@ -412,26 +459,6 @@ void AddGradePhases(const proto::WorkOrder& order,
 
 }  // namespace
 
-std::map<std::string, std::string> BuildKeys(const proto::WorkOrder& order) {
-  // A submission is sources only (the arena writes its BUILD), so no build
-  // runs its code or can touch another target's outputs.
-  std::string base = order.sandbox().image();
-  for (const std::string& flag : order.bazel_flags()) {
-    base += " " + flag;
-  }
-  std::map<std::string, std::string> keys;
-  for (const proto::Side* side : SidesOf(order)) {
-    for (const std::string& target : side->build_targets()) {
-      keys[target] =
-          base + " " + std::to_string(std::hash<std::string>{}(side->patch()));
-    }
-  }
-  if (!order.referee_target().empty()) {
-    keys[order.referee_target()] = base;
-  }
-  return keys;
-}
-
 std::filesystem::path SlotLogDir(const OrderJobConfig& config, int slot) {
   return SlotDir(config, slot) / "logs";
 }
@@ -439,7 +466,7 @@ std::filesystem::path SlotLogDir(const OrderJobConfig& config, int slot) {
 bool JobForOrder(int slot, const proto::WorkOrder& order,
                  const OrderJobConfig& config,
                  const sandbox_exec::Capabilities& capabilities, sx::Job* job,
-                 std::string* error, bool build) {
+                 std::string* error, const Prebuilt* prebuilt) {
   const bool container = capabilities.isolates;
 
   job->set_id(sandbox_exec::SandboxName(
@@ -453,18 +480,34 @@ bool JobForOrder(int slot, const proto::WorkOrder& order,
     return false;
   }
   *job->mutable_workspace() = *workspace;
+  if (prebuilt != nullptr && container) {
+    sx::Workspace* ws = job->mutable_workspace();
+    ws->set_inputs_mount(kInputsMount);
+    const auto input = [&](const std::filesystem::path& source,
+                           const std::string& name) {
+      sx::InputFile* file = ws->add_inputs();
+      file->set_source(source.string());
+      file->set_name(name);
+    };
+    input(prebuilt->referee, kRefereeInput);
+    for (const proto::Side* side : SidesOf(order)) {
+      input(prebuilt->bots.at(side->candidate_id()), BotInput(*side));
+    }
+  }
 
   const BuildPaths paths = PathsFor(config, slot, container);
   const std::optional<sx::Mount> output_base =
       OutputBaseMount(order, config, slot, container);
-  if (build) {
+  if (prebuilt == nullptr) {
     AddBuildPhase(order, config, paths, output_base, container, job);
   }
-
-  if (order.has_grade()) {
+  if (order.build_only()) {
+    AddStashPhase(order, paths, output_base, job);
+  } else if (order.has_grade()) {
     AddGradePhases(order, output_base, container, job);
   } else {
-    AddMatchPhase(order, paths, output_base, container, capabilities, job);
+    AddMatchPhase(order, paths, output_base, container, capabilities, prebuilt,
+                  job);
   }
   return true;
 }

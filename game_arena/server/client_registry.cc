@@ -2,7 +2,6 @@
 
 #include <google/protobuf/text_format.h>
 #include <openssl/mem.h>
-#include <openssl/sha.h>
 
 #include <cstddef>
 #include <fstream>
@@ -16,6 +15,7 @@
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
+#include "game_arena/common/sha256/sha256.h"
 #include "game_arena/standings/game_history.h"
 
 namespace tournament_arena {
@@ -30,13 +30,7 @@ bool ConstantTimeEquals(std::string_view a, std::string_view b) {
 
 }  // namespace
 
-std::string HashToken(std::string_view token) {
-  unsigned char digest[SHA256_DIGEST_LENGTH];
-  ::SHA256(reinterpret_cast<const unsigned char *>(token.data()), token.size(),
-           digest);
-  return absl::BytesToHexString(
-      {reinterpret_cast<const char *>(digest), sizeof(digest)});
-}
+std::string HashToken(std::string_view token) { return sha256::Hex(token); }
 
 std::string MintToken() {
   // The system CSPRNG, never a seeded PRNG: this is a credential.

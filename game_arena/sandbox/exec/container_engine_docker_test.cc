@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -156,6 +157,31 @@ TEST_F(ContainerEngineDockerTest, ABuildWithNoCapHasNone) {
   ASSERT_EQ(result.status().code(), proto::Status::OK);
   EXPECT_NE(Step(result).stdout().find("max"), std::string::npos)
       << Step(result).stdout();
+}
+
+// What a match runs: a binary from the archive, readable and runnable by the
+// sandbox's user and writable by nobody.
+TEST_F(ContainerEngineDockerTest, InputsRunAndCannotBeChanged) {
+  const std::filesystem::path tool = root_ / "tool";
+  std::ofstream(tool) << "#!/bin/sh\necho ran from the archive\n";
+  std::filesystem::permissions(tool, std::filesystem::perms::owner_all |
+                                         std::filesystem::perms::group_read |
+                                         std::filesystem::perms::group_exec |
+                                         std::filesystem::perms::others_read |
+                                         std::filesystem::perms::others_exec);
+  proto::Job job = Job("/inputs/tool && ! touch /inputs/tool 2>/dev/null");
+  proto::InputFile *input = job.mutable_workspace()->add_inputs();
+  input->set_source(tool.string());
+  input->set_name("tool");
+  job.mutable_workspace()->set_inputs_mount("/inputs");
+  job.mutable_isolation()->set_run_as_user("1000:1000");
+  *job.mutable_phases(0)->mutable_isolation() = job.isolation();
+
+  const proto::JobResult result = engine_.Run(job, nullptr);
+  ASSERT_EQ(result.status().code(), proto::Status::OK) << result.DebugString();
+  EXPECT_EQ(Step(result).exit_code(), 0) << Step(result).DebugString();
+  EXPECT_EQ(Step(result).stdout(), "ran from the archive\n");
+  EXPECT_EQ(Leftovers(), "");
 }
 
 // A worker killed mid-job leaves its containers, and they hold the job's

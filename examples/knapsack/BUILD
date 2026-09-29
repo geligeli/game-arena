@@ -1,5 +1,7 @@
 load("@game_arena//game_arena/rules:problem.bzl", "arena_problem")
 
+exports_files(["problem.textproto"])
+
 # The whole tournament: @game_arena//game_arena/rules:problem.bzl lists the targets.
 arena_problem(
     name = "knapsack",

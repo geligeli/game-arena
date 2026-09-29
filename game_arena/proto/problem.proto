@@ -95,6 +95,9 @@ message SandboxSpec {
   // The build's own cap; unset, none. Bazel sizes its JVM heap from it, and
   // without it each concurrent build's server takes a share of the host.
   optional uint32 build_memory_limit_mb = 9;
+  // The build's CPUs, as cpus; unset, cpus. A strategy is built once, so its
+  // build may have more than the bot it makes.
+  optional double build_cpus = 10;
 
   // Off by default: a build that can fetch can exfiltrate.
   optional bool allow_build_network = 7;

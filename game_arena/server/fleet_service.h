@@ -11,10 +11,15 @@
 #include <thread>
 
 #include "game_arena/proto/arena.grpc.pb.h"
+#include "game_arena/server/artifact_store.h"
 #include "game_arena/server/fleet_worker.h"
 #include "game_arena/server/scheduler.h"
 
 namespace tournament_arena {
+
+// Well under any gRPC message limit; a bot is ~15 MB.
+inline constexpr std::size_t kArtifactChunkBytes = 1 << 20;
+inline constexpr std::size_t kMaxArtifactBytes = 512 << 20;
 
 class StreamFleetWorker : public FleetWorker {
  public:
@@ -24,11 +29,13 @@ class StreamFleetWorker : public FleetWorker {
   // A worker that has stopped reading is broken, not busy.
   static constexpr std::size_t kMaxOutbox = 64;
 
-  StreamFleetWorker(std::string worker_id, int slots, Stream *stream);
+  StreamFleetWorker(std::string worker_id, int slots, bool builds_artifacts,
+                    Stream *stream);
   ~StreamFleetWorker() override;
 
   std::string worker_id() const override { return worker_id_; }
   int slots() const override { return slots_; }
+  bool builds_artifacts() const override { return builds_artifacts_; }
   bool Send(const proto::FleetMessage &msg) override;
 
   void Start();
@@ -39,6 +46,7 @@ class StreamFleetWorker : public FleetWorker {
 
   const std::string worker_id_;
   const int slots_;
+  const bool builds_artifacts_;
   Stream *stream_;  // owned by the RPC handler, which outlives this object
 
   std::mutex mutex_;
@@ -50,15 +58,24 @@ class StreamFleetWorker : public FleetWorker {
 
 class FleetService final : public proto::SandboxFleet::Service {
  public:
-  explicit FleetService(Scheduler *scheduler);
+  // Without |artifacts|, the archive RPCs are unimplemented.
+  explicit FleetService(Scheduler *scheduler,
+                        ArtifactStore *artifacts = nullptr);
 
   grpc::Status Attach(
       grpc::ServerContext *context,
       grpc::ServerReaderWriter<proto::FleetMessage, proto::WorkerMessage>
           *stream) override;
+  grpc::Status PutArtifact(grpc::ServerContext *context,
+                           grpc::ServerReader<proto::ArtifactChunk> *reader,
+                           proto::PutArtifactResponse *response) override;
+  grpc::Status GetArtifact(
+      grpc::ServerContext *context, const proto::GetArtifactRequest *request,
+      grpc::ServerWriter<proto::ArtifactChunk> *writer) override;
 
  private:
-  Scheduler *scheduler_;  // not owned
+  Scheduler *scheduler_;      // not owned
+  ArtifactStore *artifacts_;  // not owned; may be null
 };
 
 }  // namespace tournament_arena

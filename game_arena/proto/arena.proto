@@ -59,6 +59,24 @@ message ProblemInfo {
 service SandboxFleet {
   // One stream per worker, opened with `hello`; orders are pushed back on it.
   rpc Attach(stream WorkerMessage) returns (stream FleetMessage);
+  // The archive of built binaries, content-addressed: a worker uploads what a
+  // build order built and fetches what a match order names, in chunks.
+  rpc PutArtifact(stream ArtifactChunk) returns (PutArtifactResponse);
+  rpc GetArtifact(GetArtifactRequest) returns (stream ArtifactChunk);
+}
+
+// A piece of one artifact; every chunk names it.
+message ArtifactChunk {
+  string digest = 1;  // lowercase hex sha256 of the whole artifact
+  bytes data = 2;
+}
+
+message PutArtifactResponse {
+  string digest = 1;
+}
+
+message GetArtifactRequest {
+  string digest = 1;
 }
 
 message SourceFile {
@@ -80,6 +98,8 @@ message Candidate {
   // A unified diff against the problem's tree, whichever form was submitted.
   bytes patch = 15;
   repeated string touched_paths = 16;
+  // The sha256 of its built bot in the coordinator's archive, once built.
+  string artifact = 17;
 
   // As submitted, for display; |patch| is what gets built.
   repeated string file_paths = 8;
@@ -227,6 +247,8 @@ message WorkerHello {
   int32 slots = 2;  // orders it will run concurrently
   // e.g. "bench-c7i", for GradeSpec.require_machine_class.
   string machine_class = 5;
+  // It runs build_only orders and fetches artifacts (SandboxFleet).
+  bool builds_artifacts = 6;
 }
 
 // One buildable side of an order.
@@ -243,6 +265,9 @@ message Side {
   string bot_target = 4;
 
   map<string, string> params = 5;
+  // Its built bot in the archive: a worker that has it runs that and builds
+  // nothing, while an older one still builds the patch.
+  string artifact = 6;
 }
 
 message WorkOrder {
@@ -281,6 +306,12 @@ message WorkOrder {
   reserved 27;
   reserved "max_view_bytes";
 
+  // The built referee in the archive, as Side.artifact.
+  string referee_artifact = 28;
+  // Build the candidate (and the referee, when named) and upload them to the
+  // archive; play nothing. The result's artifacts name what was uploaded.
+  bool build_only = 29;
+
   // ProblemConfig.match.registry_options, forwarded verbatim to the referee.
   map<string, string> registry_options = 20;
 
@@ -317,6 +348,8 @@ message SandboxOrder {
   uint32 pids_limit = 4;
   string run_as_user = 5;
   uint32 build_memory_limit_mb = 8;
+  // The build's CPUs; 0: cpus.
+  double build_cpus = 9;
 
   // A build that can fetch can exfiltrate: a submitted genrule is any code.
   bool allow_build_network = 7;
@@ -357,6 +390,8 @@ message OrderResult {
   string machine_class = 13;
   // The build's last 64 KiB; bytes, as the tail can split a UTF-8 character.
   bytes build_output = 14;
+  // A build_only order's uploads: build target -> sha256.
+  map<string, string> artifacts = 15;
 }
 
 // Sent one per game before the result, which could outgrow a gRPC message.

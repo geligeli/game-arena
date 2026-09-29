@@ -30,6 +30,7 @@ cc_library(
     srcs = ["client_registry.cc"],
     hdrs = ["client_registry.h"],
     deps = [
+        "//game_arena/common/sha256",
         "//game_arena/proto:clients_cc_proto",
         "//game_arena/proto:problem_cc_proto",
         "@abseil-cpp//absl/log",
@@ -61,6 +62,27 @@ cc_test(
     srcs = ["unified_diff_test.cc"],
     deps = [
         ":unified_diff",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "artifact_store",
+    srcs = ["artifact_store.cc"],
+    hdrs = ["artifact_store.h"],
+    deps = [
+        "//game_arena/common/sha256",
+        "//game_arena/standings:game_history",
+        "@abseil-cpp//absl/strings",
+    ],
+)
+
+cc_test(
+    name = "artifact_store_test",
+    srcs = ["artifact_store_test.cc"],
+    deps = [
+        ":artifact_store",
+        "//game_arena/common/sha256",
         "@googletest//:gtest_main",
     ],
 )
@@ -204,6 +226,8 @@ cc_library(
     srcs = ["scheduler.cc"],
     hdrs = ["scheduler.h"],
     deps = [
+        ":artifact_store",
+        "//game_arena/common/sha256",
         ":candidate_store",
         ":fleet_worker",
         ":job_log",
@@ -223,6 +247,8 @@ cc_test(
     name = "scheduler_test",
     srcs = ["scheduler_test.cc"],
     deps = [
+        ":artifact_store",
+        "//game_arena/common/sha256",
         "//game_arena/standings:elo_standings",
         "//game_arena/standings:game_history",
         ":scheduler",
@@ -318,6 +344,7 @@ cc_library(
     srcs = ["fleet_service.cc"],
     hdrs = ["fleet_service.h"],
     deps = [
+        ":artifact_store",
         ":fleet_worker",
         ":scheduler",
         "//game_arena/proto:arena_cc_grpc",
@@ -330,6 +357,7 @@ cc_binary(
     name = "problem_server",
     srcs = ["problem_server.cc"],
     deps = [
+        ":artifact_store",
         ":arena_service",
         ":candidate_store",
         ":dashboard",
@@ -374,6 +402,8 @@ cc_test(
         "manual",
     ],
     deps = [
+        ":candidate_store",
+        "//game_arena/common/sha256",
         "//game_arena/proto:arena_cc_grpc",
         "@googletest//:gtest_main",
         "@grpc//:grpc++",

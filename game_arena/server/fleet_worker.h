@@ -18,6 +18,8 @@ class FleetWorker {
   virtual int slots() const = 0;
   // False means the worker is gone and its orders should be requeued.
   virtual bool Send(const proto::FleetMessage &msg) = 0;
+  // It runs build_only orders and fetches artifacts.
+  virtual bool builds_artifacts() const { return false; }
 };
 
 }  // namespace tournament_arena

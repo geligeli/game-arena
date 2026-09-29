@@ -42,6 +42,9 @@ void Quiet(const std::string &docker, const std::vector<std::string> &args) {
                       std::chrono::seconds(60));
 }
 
+// Where the loader sees the inputs volume, writable.
+constexpr char kLoaderInputs[] = "/load_inputs";
+
 std::string WorkspaceVolume(const proto::Job &job) {
   return SandboxName(job.id(), "ws");
 }
@@ -50,6 +53,9 @@ std::string PatchesVolume(const proto::Job &job) {
 }
 std::string ScratchVolume(const proto::Job &job) {
   return SandboxName(job.id(), "scratch");
+}
+std::string InputsVolume(const proto::Job &job) {
+  return SandboxName(job.id(), "inputs");
 }
 std::string LoaderName(const proto::Job &job) {
   return SandboxName(job.id(), "load");
@@ -84,6 +90,9 @@ std::vector<std::string> JobVolumes(const proto::Job &job) {
   for (const proto::Step *step : PrivateScratchSteps(job)) {
     volumes.push_back(ScratchVolume(job, *step));
   }
+  if (!job.workspace().inputs().empty()) {
+    volumes.push_back(InputsVolume(job));
+  }
   return volumes;
 }
 
@@ -104,6 +113,10 @@ std::vector<std::string> WorkspaceMounts(const proto::Job &job,
                                   sandbox_common::kScratch, false)};
   for (const proto::Mount &mount : job.workspace().mounts()) {
     mounts.push_back(MountArg(mount));
+  }
+  if (!job.workspace().inputs().empty()) {
+    mounts.push_back(sandbox_common::VolumeMount(
+        InputsVolume(job), job.workspace().inputs_mount(), true));
   }
   return mounts;
 }
@@ -224,6 +237,11 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
   for (const proto::Step *step : PrivateScratchSteps(job)) {
     own(ScratchVolume(job, *step), LoaderScratchMount(*step), false);
   }
+  // Not owned: every step reads them and none may write them.
+  if (!ws.inputs().empty()) {
+    spec.mounts.push_back(
+        sandbox_common::VolumeMount(InputsVolume(job), kLoaderInputs, false));
+  }
   for (const proto::Mount &mount : ws.mounts()) {
     if (mount.kind() == proto::Mount::VOLUME) {
       own(mount.source(), mount.target(), mount.readonly());
@@ -260,6 +278,18 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
                log_dir, "load_patches", 120);
     if (!copied.run.started || copied.run.exit_code != 0) {
       return fail_load("cannot load the staged files into the sandbox", copied);
+    }
+  }
+
+  for (const proto::InputFile &input : ws.inputs()) {
+    const StepResult copied =
+        Docker(config_.docker,
+               {"cp", input.source(),
+                loader + ":" + kLoaderInputs + "/" + input.name()},
+               log_dir, "load_input_" + input.name(), 120);
+    if (!copied.run.started || copied.run.exit_code != 0) {
+      return fail_load("cannot load " + input.source() + " into the sandbox",
+                       copied);
     }
   }
 

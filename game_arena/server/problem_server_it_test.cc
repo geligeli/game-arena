@@ -23,7 +23,9 @@
 #include <string>
 #include <thread>
 
+#include "game_arena/common/sha256/sha256.h"
 #include "game_arena/proto/arena.grpc.pb.h"
+#include "game_arena/server/candidate_store.h"
 #include "gtest/gtest.h"
 
 namespace tournament_arena {
@@ -178,6 +180,7 @@ class ProblemServerTest : public ::testing::Test {
     proto::WorkerMessage hello;
     hello.mutable_hello()->set_worker_id("it-worker");
     hello.mutable_hello()->set_slots(slots);
+    hello.mutable_hello()->set_builds_artifacts(true);
     EXPECT_TRUE(stream->Write(hello));
     return stream;
   }
@@ -193,6 +196,48 @@ class ProblemServerTest : public ::testing::Test {
     proto::WorkerMessage message;
     *message.mutable_result() = result;
     EXPECT_TRUE(stream->Write(message));
+  }
+
+  // Uploads |bytes| to the coordinator's archive, as a worker does.
+  std::string Archive(const std::string &bytes) {
+    grpc::ClientContext context;
+    proto::PutArtifactResponse response;
+    const auto writer = fleet_->PutArtifact(&context, &response);
+    proto::ArtifactChunk chunk;
+    chunk.set_digest(sha256::Hex(bytes));
+    chunk.set_data(bytes);
+    EXPECT_TRUE(writer->Write(chunk));
+    writer->WritesDone();
+    EXPECT_TRUE(writer->Finish().ok());
+    return response.digest();
+  }
+
+  std::string Fetch(const std::string &digest) {
+    grpc::ClientContext context;
+    proto::GetArtifactRequest request;
+    request.set_digest(digest);
+    const auto reader = fleet_->GetArtifact(&context, request);
+    std::string bytes;
+    proto::ArtifactChunk chunk;
+    while (reader->Read(&chunk)) {
+      bytes += chunk.data();
+    }
+    return reader->Finish().ok() ? bytes : "";
+  }
+
+  // Answers a build order as a worker would: the binaries into the archive.
+  proto::OrderResult Built(const proto::WorkOrder &order) {
+    EXPECT_TRUE(order.build_only()) << order.DebugString();
+    proto::OrderResult result;
+    result.set_order_id(order.order_id());
+    result.set_build_ok(true);
+    (*result.mutable_artifacts())[order.candidate().bot_target()] =
+        Archive("bot " + order.candidate().candidate_id());
+    if (!order.referee_target().empty()) {
+      (*result.mutable_artifacts())[order.referee_target()] =
+          Archive("the referee");
+    }
+    return result;
   }
 
   static proto::OrderResult Played(const proto::WorkOrder &order) {
@@ -237,11 +282,14 @@ TEST_F(ProblemServerTest, ARestartClosesOpenJobsAndPlacesPendingAgain) {
   EXPECT_EQ(before.error(), "interrupted by a restart");
   EXPECT_EQ(Candidate("alice-v01").status(), proto::Candidate::PENDING);
 
-  // Placed again: the order reaches the first worker to attach.
+  // Placed again: built, then played, by the first worker to attach.
   grpc::ClientContext context;
   const std::unique_ptr<Stream> worker = Attach(1, &context);
+  const proto::WorkOrder build = NextOrder(worker.get());
+  EXPECT_EQ(build.candidate().candidate_id(), "alice-v01");
+  Answer(worker.get(), Built(build));
   const proto::WorkOrder order = NextOrder(worker.get());
-  EXPECT_EQ(order.candidate().candidate_id(), "alice-v01");
+  EXPECT_FALSE(order.build_only());
   Answer(worker.get(), Played(order));
   EXPECT_TRUE(Eventually([&] {
     return Candidate("alice-v01").status() == proto::Candidate::READY;
@@ -249,7 +297,7 @@ TEST_F(ProblemServerTest, ARestartClosesOpenJobsAndPlacesPendingAgain) {
   context.TryCancel();
 }
 
-TEST_F(ProblemServerTest, AnEngineErrorBlamesNoOnesCode) {
+TEST_F(ProblemServerTest, AnEngineErrorRetriesTheBuildAndBlamesNoOne) {
   grpc::ClientContext context;
   const std::unique_ptr<Stream> worker = Attach(1, &context);
 
@@ -262,20 +310,21 @@ TEST_F(ProblemServerTest, AnEngineErrorBlamesNoOnesCode) {
       "predefined address pools have been fully subnetted");
   Answer(worker.get(), result);
 
-  // A broken build names whose it was; that one is failed.
-  Submit("bob", "// bob\n");
+  // The same build again, and alice's code not blamed.
   order = NextOrder(worker.get());
-  ASSERT_EQ(order.candidate().candidate_id(), "bob-v01");
+  EXPECT_TRUE(order.build_only());
+  EXPECT_EQ(order.candidate().candidate_id(), "alice-v01");
+  EXPECT_EQ(Candidate("alice-v01").status(), proto::Candidate::PENDING);
+
+  // A broken build names whose it was; that one is failed.
   result.Clear();
   result.set_order_id(order.order_id());
-  result.set_build_failed_candidate_id("bob-v01");
+  result.set_build_failed_candidate_id("alice-v01");
   result.set_build_log("strategy.h:1:1: error: expected unqualified-id");
   Answer(worker.get(), result);
-
   EXPECT_TRUE(Eventually([&] {
-    return Candidate("bob-v01").status() == proto::Candidate::BUILD_FAILED;
+    return Candidate("alice-v01").status() == proto::Candidate::BUILD_FAILED;
   }));
-  EXPECT_EQ(Candidate("alice-v01").status(), proto::Candidate::PENDING);
   context.TryCancel();
 }
 
@@ -284,12 +333,20 @@ TEST_F(ProblemServerTest, MatchPagesShowTheCodeAndANameItsNewestVersion) {
   const std::unique_ptr<Stream> worker = Attach(1, &context);
   for (const char *code : {"// alice one\n", "// alice two\n"}) {
     Submit("alice", code);
+    Answer(worker.get(), Built(NextOrder(worker.get())));
     Answer(worker.get(), Played(NextOrder(worker.get())));
   }
 
-  // Both READY and nothing queued: the matchmaker pairs them.
+  // Both READY and nothing queued: the matchmaker pairs them, from the
+  // archive: nothing in the order is built again.
   const proto::WorkOrder match = NextOrder(worker.get());
   ASSERT_TRUE(match.has_opponent()) << match.DebugString();
+  EXPECT_FALSE(match.build_only());
+  EXPECT_EQ(Fetch(match.candidate().artifact()),
+            "bot " + match.candidate().candidate_id());
+  EXPECT_EQ(Fetch(match.opponent().artifact()),
+            "bot " + match.opponent().candidate_id());
+  EXPECT_EQ(Fetch(match.referee_artifact()), "the referee");
   Answer(worker.get(), Played(match));
 
   // A match records no patch; its page shows the versions' stored code.
@@ -308,6 +365,51 @@ TEST_F(ProblemServerTest, MatchPagesShowTheCodeAndANameItsNewestVersion) {
   EXPECT_NE(alice.find("// alice two"), std::string::npos) << alice;
   EXPECT_NE(alice.find("solutions/alice-v02/strategy.h"), std::string::npos);
   context.TryCancel();
+}
+
+// A season from before the archive: every READY version is built into it
+// once at startup, plays nothing, and is not built again after a restart.
+TEST_F(ProblemServerTest, ReadyVersionsFromBeforeTheArchiveAreBackfilled) {
+  Stop();
+  {
+    proto::SubmissionPolicy rules;
+    rules.set_files_submit_dir("solutions");
+    rules.add_allow_paths("solutions/{submission_id}/**");
+    rules.set_versions(true);
+    rules.mutable_harness()->set_api_dep("//problem/harness:api");
+    rules.mutable_harness()->set_main_src("//problem/harness:main.cc");
+    CandidateStore old_season(dir_ / "data" / "candidates", CandidateLimits{},
+                              rules);
+    proto::SubmitRequest request;
+    request.set_display_name("carol");
+    request.set_game("nim");
+    request.set_entry_header("strategy.h");
+    auto *file = request.add_files();
+    file->set_path("strategy.h");
+    file->set_content("// carol\n");
+    std::string error;
+    ASSERT_TRUE(old_season.Create(request, &error).has_value()) << error;
+    old_season.SetStatus("carol-v01", proto::Candidate::READY, "");
+  }
+  Start();
+
+  grpc::ClientContext context;
+  std::unique_ptr<Stream> worker = Attach(1, &context);
+  const proto::WorkOrder build = NextOrder(worker.get());
+  EXPECT_TRUE(build.build_only());
+  EXPECT_EQ(build.candidate().candidate_id(), "carol-v01");
+  Answer(worker.get(), Built(build));
+  EXPECT_TRUE(
+      Eventually([&] { return !Candidate("carol-v01").artifact().empty(); }));
+  EXPECT_EQ(Candidate("carol-v01").status(), proto::Candidate::READY);
+  const std::string digest = Candidate("carol-v01").artifact();
+  context.TryCancel();
+
+  Stop();
+  Start();
+  EXPECT_EQ(Candidate("carol-v01").artifact(), digest);
+  EXPECT_EQ(Fetch(digest), "bot carol-v01");
+  EXPECT_EQ(Get("/api/candidates").find("\"PENDING\""), std::string::npos);
 }
 
 }  // namespace

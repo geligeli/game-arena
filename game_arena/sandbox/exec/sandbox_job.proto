@@ -67,6 +67,16 @@ message Workspace {
 
   repeated Mount mounts = 14;    // every step's
   string sandbox_work_dir = 15;  // cwd for every step; empty -> the tree root
+
+  // Host files loaded into a volume of their own, mounted read-only at
+  // inputs_mount in every step.
+  repeated InputFile inputs = 16;
+  string inputs_mount = 17;
+}
+
+message InputFile {
+  string source = 1;  // a file on this host
+  string name = 2;    // a file name in inputs_mount
 }
 
 message Endpoint {
