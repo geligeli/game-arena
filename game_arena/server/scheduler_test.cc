@@ -487,6 +487,23 @@ TEST_F(SchedulerTest, ResubmitSupersedesTheCandidatesUnfinishedJob) {
             proto::Candidate::PENDING);
 }
 
+TEST_F(SchedulerTest, AnOrderTheEngineCouldNotRunBlamesNoOnesCode) {
+  const auto candidate = AddCandidate("Fine", proto::Candidate::READY);
+  auto worker = std::make_shared<FakeWorker>("w1", 2);
+  scheduler_->AddWorker(worker);
+  scheduler_->EnqueuePlacement(candidate, Reserve());
+  ASSERT_GE(worker->orders.size(), 1u);
+
+  proto::OrderResult result =
+      Result(worker->orders[0].order_id(), /*build_ok=*/false);
+  result.set_error(
+      "cannot create the phase network: all predefined address pools have "
+      "been fully subnetted");
+  scheduler_->OnResult("w1", result);
+  EXPECT_EQ(store_->Get(candidate.candidate_id())->status(),
+            proto::Candidate::READY);
+}
+
 TEST_F(SchedulerTest, AMatchBetweenBuiltinsBuildsNeitherAndReportsItsEnd) {
   std::vector<proto::Job> concluded;
   scheduler_ = std::make_unique<Scheduler>(

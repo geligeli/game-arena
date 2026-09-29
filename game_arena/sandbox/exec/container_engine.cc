@@ -273,6 +273,16 @@ bool ContainerEngine::LoadWorkspace(const proto::Job &job,
 }
 
 void ContainerEngine::RemoveVolumes(const proto::Job &job) {
+  // A killed attempt's containers hold its volumes, and `volume rm` then
+  // fails quietly: a redelivered job would find its patches applied.
+  Quiet(config_.docker, {"rm", "-f", LoaderName(job)});
+  for (const proto::Phase &phase : job.phases()) {
+    for (const proto::Step &step : phase.background()) {
+      Quiet(config_.docker, {"rm", "-f", SandboxName(job.id(), step.name())});
+    }
+    Quiet(config_.docker,
+          {"rm", "-f", SandboxName(job.id(), phase.foreground().name())});
+  }
   for (const std::string &volume : JobVolumes(job)) {
     Quiet(config_.docker, {"volume", "rm", "-f", volume});
   }

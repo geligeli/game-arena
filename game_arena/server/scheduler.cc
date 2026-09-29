@@ -483,7 +483,10 @@ void Scheduler::OnResult(const std::string &worker_id,
   job.status.set_draws(job.status.draws() + result.draws());
   job.status.set_losses(job.status.losses() + result.losses());
 
-  if (!result.build_ok()) {
+  // A job the engine could not run carries an error and blames no one: it
+  // says nothing about anyone's code.
+  if (!result.build_ok() &&
+      (!result.build_failed_candidate_id().empty() || result.error().empty())) {
     // Only the worker knows whose build broke; an older one does not say.
     const std::string &broken = result.build_failed_candidate_id().empty()
                                     ? job.status.candidate_id()
