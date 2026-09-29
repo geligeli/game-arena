@@ -84,9 +84,6 @@ class SwissRun {
   // Reads back |state_|; under mutex_.
   void Resume(std::set<std::pair<std::string, std::string>> *played,
               std::set<std::string> *had_bye);
-  void Append(int round,
-              const std::map<std::string, tournament_broker::trueskill::Rating>
-                  &snapshot) const;
   std::map<std::string, tournament_broker::trueskill::Rating> Snapshot() const;
 
   const std::vector<SwissEntry> entries_;
@@ -105,9 +102,6 @@ class SwissRun {
   std::vector<std::vector<Match>> played_;
   std::vector<std::string> byes_;
   std::map<std::string, proto::Job> concluded_;  // by job id
-  // [0] before any game, then one after each round.
-  std::vector<std::map<std::string, tournament_broker::trueskill::Rating>>
-      snapshots_;
   std::thread thread_;
 };
 

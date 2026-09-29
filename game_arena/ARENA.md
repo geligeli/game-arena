@@ -224,13 +224,13 @@ Two opt-in settings change what a submission is and how often the fleet plays.
   - TrueSkill runs without dynamics (tau 0): a version never changes.
 - **`match.matchmaking { pool: 10 }`** (needs versions and TRUESKILL): the
   coordinator keeps the fleet busy.
-  - The pool is the top `pool` by mu - 3 sigma, plus every version with fewer
-    than `newcomer_games` pool games. The rest drop out and stop being
+  - The pool is every version plausibly in the top `pool`: its mu + 2 sigma
+    reaches the `pool`-th best mu - 2 sigma. The rest drop out and stop being
     scheduled, so the work grows with the pool, not with every version ever
-    submitted.
-  - Whenever nothing is queued and a slot is free, the pool's least certain
-    member plays the rival where a game moves the ratings most: TrueSkill's
-    match quality times their combined variance.
+    submitted, and a version keeps playing until its own games show it out.
+  - Whenever nothing is queued and a slot is free, the least certain member
+    whose place is still open plays the rival where a game moves the ratings
+    most: TrueSkill's match quality times their combined variance.
   - Placement jobs are queued, so they never wait behind a match.
   - The leaderboard shows the pool apart from those that dropped out.
   - `/pool` has the matches and the Swiss re-rank's charts, live, from

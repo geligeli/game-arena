@@ -4,19 +4,19 @@
 // Continuous matches between submissions (problem.proto's Matchmaking): the
 // fleet never idles while a rating is uncertain.
 //
-// The pool is the top |pool| READY versions by TrueSkill mu - 3 sigma, plus
-// every READY version with fewer than |newcomer_games| pool games; the rest
-// have dropped out and are not scheduled, so the work grows with the pool,
-// not with every version ever submitted. Whenever nothing is queued and a
-// slot is free, the least certain member (sigma, discounted by the matches it
-// already has running) plays the rival that maximises TrueSkill's match
+// The pool is every READY version that is plausibly in the top |pool|: its
+// mu + 2 sigma reaches the |pool|-th best mu - 2 sigma. The rest have dropped
+// out and are not scheduled, so the work grows with the pool, not with every
+// version ever submitted; and a version stays until its own games show it
+// out, however new. Whenever nothing is queued and a slot is free, the least
+// certain member whose place is still open (sigma, discounted by the matches
+// it already has running) plays the rival that maximises TrueSkill's match
 // quality times their combined variance, skipping its last few opponents.
 // Placement jobs are queued, so they never wait behind a match.
 //
 // <data_dir>/matchmaking.tsv keeps, across restarts, every finished match
-// ("G  <unix ms>  <job>  <a>  <b>  <games>  <a's wins>  <b's wins>") and
-// every rating every snapshot_s ("S  <unix ms>  <id>  <mu>  <sigma>"), for
-// /pool: the Swiss re-rank's charts, live.
+// ("G  <unix ms>  <job>  <a>  <b>  <games>  <a's wins>  <b's wins>"), for
+// /pool.
 
 #include <condition_variable>
 #include <cstdint>
@@ -45,14 +45,13 @@ namespace tournament_arena {
 struct PoolMember {
   std::string id;
   tournament_broker::trueskill::Rating rating;
-  int pool_games = 0;
   int running = 0;  // matches of its in flight
+  // Surely in the top: no version outside it could plausibly overtake it.
+  bool settled = false;
 };
 
-// The pool out of every READY version: the top |size| by mu - 3 sigma, plus
-// newcomers. Best first.
-std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size,
-                               int newcomer_games);
+// The pool out of every READY version, as above. Best first, by mu - 2 sigma.
+std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size);
 
 // The next match, or nullopt with fewer than two members. |recent| maps a
 // member to its last opponents, which it does not meet again while another
@@ -92,11 +91,9 @@ class Matchmaker {
 
   void Run();
   void TopUp();
-  void MaybeSnapshot();
   void Load();
-  // Every READY version, rated; a copy of pool_games_ taken under mutex_.
+  // Every READY version, rated.
   std::vector<PoolMember> Rated(
-      const std::map<std::string, int> &pool_games,
       const std::map<std::string, int> &running) const;
   void Append(const std::string &line) const;
 
@@ -115,10 +112,7 @@ class Matchmaker {
   std::map<std::string, Match> running_;  // by job id
   std::set<std::string> early_;  // concluded before TopUp recorded them
   std::deque<Match> finished_;   // newest first, the last 30
-  std::map<std::string, int> pool_games_;
   std::map<std::string, std::deque<std::string>> recent_;
-  std::vector<ChartSnapshot> history_;
-  int64_t last_snapshot_ms_ = 0;
   int64_t matches_done_ = 0;
   std::thread thread_;
 };

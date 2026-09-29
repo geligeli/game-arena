@@ -4,7 +4,6 @@
 #include <climits>
 #include <cmath>
 #include <cstdio>
-#include <functional>
 #include <sstream>
 
 #include "absl/strings/str_cat.h"
@@ -69,11 +68,8 @@ std::string Fixed(double value, int digits) {
   return text;
 }
 
-std::string SkillCharts(
-    const std::vector<ChartEntry> &entries,
-    const std::vector<ChartSnapshot> &history,
-    const std::vector<std::pair<double, std::string>> &history_ticks,
-    const ChartNotes &notes) {
+std::string SkillCharts(const std::vector<ChartEntry> &entries,
+                        std::string_view converge_note) {
   std::map<std::string, int> slot;
   for (const ChartEntry &entry : entries) {
     if (!entry.participant.empty() && !slot.contains(entry.participant)) {
@@ -98,11 +94,6 @@ std::string SkillCharts(
     lo = std::min(lo, r.mu - 2 * r.sigma);
     hi = std::max(hi, r.mu + 2 * r.sigma);
   };
-  for (const ChartSnapshot &snapshot : history) {
-    for (const auto &[id, r] : snapshot.ratings) {
-      widen(r);
-    }
-  }
   for (const ChartEntry &entry : entries) {
     widen(entry.rating);
   }
@@ -156,168 +147,109 @@ std::string SkillCharts(
           << "\" stroke=\"var(--surface)\" stroke-width=2 /></g>";
     }
     html << "<h2>Where each entry's skill converges</h2><p class=note>"
-         << notes.converge << "</p><svg viewBox=\"0 0 " << left + width + 20
+         << converge_note << "</p><svg viewBox=\"0 0 " << left + width + 20
          << " " << top + row * by_mu.size() + 10 << "\">" << svg.str()
          << "</svg>";
   }
 
-  // Each participant's versions along |at|, mu +-1 sigma; builtins as levels.
-  const auto by_participant =
-      [&](std::string_view title, std::string_view note,
-          const std::function<double(const ChartEntry &)> &at,
-          const std::vector<std::pair<double, std::string>> &ticks) {
-        double first = ticks.front().first, last_x = ticks.back().first;
-        for (const ChartEntry &e : entries) {
-          if (!e.participant.empty()) {
-            first = std::min(first, at(e));
-            last_x = std::max(last_x, at(e));
-          }
-        }
-        const double left = 40, width = 680, top = 10, height = 260;
-        const Scale x{first, last_x, left + 10, left + width - 90};
-        const Scale y{lo, hi, top + height, top};
-        std::ostringstream svg;
-        YAxis(y, 5, left, width, svg);
-        for (const auto &[at_tick, label] : ticks) {
-          svg << "<text class=tick x=" << x(at_tick)
-              << " y=" << top + height + 16 << " text-anchor=middle>"
-              << HtmlEscape(label) << "</text>";
-        }
-        // Placed last, and nudged apart where two would overlap.
-        struct Label {
-          double y, x;
-          std::string text;
-        };
-        std::vector<Label> labels;
-        for (const ChartEntry &e : entries) {
-          if (!e.participant.empty()) {
-            continue;
-          }
-          const double level = y(e.rating.mu);
-          svg << "<line x1=" << left << " x2=" << left + width - 90
-              << " y1=" << level << " y2=" << level << " stroke=\"" << kGrey
-              << "\" stroke-width=1.5 stroke-dasharray=\"4 4\" />";
-          labels.push_back({level + 4, left + width - 86, e.id});
-        }
-        for (const auto &[participant, index] : slot) {
-          const std::string color = kSeries[index % std::size(kSeries)];
-          std::string path;
-          const ChartEntry *last = nullptr;
-          std::ostringstream marks;
-          for (const ChartEntry &e : entries) {
-            if (e.participant != participant) {
-              continue;
-            }
-            const Rating &r = e.rating;
-            absl::StrAppend(&path, path.empty() ? "M" : "L", x(at(e)), " ",
-                            y(r.mu));
-            marks << "<g><title>" << HtmlEscape(e.id) << ": mu " << Fixed(r.mu)
-                  << " sigma " << Fixed(r.sigma)
-                  << "</title><line x1=" << x(at(e)) << " x2=" << x(at(e))
-                  << " y1=" << y(r.mu - r.sigma) << " y2=" << y(r.mu + r.sigma)
-                  << " stroke=\"" << color
-                  << "\" stroke-width=1 opacity=0.6 /><circle cx=" << x(at(e))
-                  << " cy=" << y(r.mu) << " r=4 fill=\"" << ink(e)
-                  << "\" stroke=\"var(--surface)\" stroke-width=2 /></g>";
-            last = &e;
-          }
-          svg << "<path d=\"" << path << "\" fill=none stroke=\"" << color
-              << "\" stroke-width=2 />" << marks.str();
-          if (last != nullptr) {
-            labels.push_back(
-                {y(last->rating.mu) + 4, x(at(*last)) + 8, participant});
-          }
-        }
-        std::sort(labels.begin(), labels.end(),
-                  [](const Label &a, const Label &b) { return a.y < b.y; });
-        for (std::size_t i = 0; i < labels.size(); ++i) {
-          for (std::size_t j = 0; j < i; ++j) {
-            if (std::abs(labels[i].x - labels[j].x) < 80 &&
-                labels[i].y < labels[j].y + 12) {
-              labels[i].y = labels[j].y + 12;
-            }
-          }
-          svg << "<text class=lbl x=" << labels[i].x << " y=" << labels[i].y
-              << ">" << HtmlEscape(labels[i].text) << "</text>";
-        }
-        html << "<h2>" << title << "</h2><p class=note>" << note
-             << "</p><svg viewBox=\"0 0 " << left + width << " "
-             << top + height + 24 << "\">" << svg.str() << "</svg>";
-      };
-
-  // 2. Every version on one clock: who moved when, and whether they converged.
+  // 2. Every version where it was submitted, on one clock, mu +-1 sigma: who
+  // moved when, and whether they converged; builtins as levels.
   {
-    int64_t first = INT64_MAX, last = 0;
+    int64_t from = INT64_MAX, to = 0;
     for (const ChartEntry &e : entries) {
       if (!e.participant.empty()) {
-        first = std::min(first, e.submitted_unix_ms);
-        last = std::max(last, e.submitted_unix_ms);
+        from = std::min(from, e.submitted_unix_ms);
+        to = std::max(to, e.submitted_unix_ms);
       }
     }
-    if (first > last) {
-      first = last = 0;
+    if (from > to) {
+      from = to = 0;
     }
     std::vector<std::pair<double, std::string>> ticks;
     for (int i = 0; i <= 5; ++i) {
-      const double t = first + (last - first) * i / 5.0;
+      const double t = from + (to - from) * i / 5.0;
       ticks.emplace_back(
           t, absl::FormatTime("%b %d %H:%M",
                               absl::FromUnixMillis(static_cast<int64_t>(t)),
                               absl::LocalTimeZone()));
     }
-    by_participant(
-        "Skill by submission time",
-        "Every version where it was submitted, mu &plusmn;1&sigma;, all "
-        "participants on one clock: whether they climbed together, and who "
-        "stalled while the others moved.",
-        [](const ChartEntry &e) {
-          return static_cast<double>(e.submitted_unix_ms);
-        },
-        ticks);
-  }
-
-  // 3. Convergence: mu at each snapshot. An entry that did not exist yet
-  // starts where it first appears.
-  if (!history_ticks.empty()) {
+    const auto at = [](const ChartEntry &e) {
+      return static_cast<double>(e.submitted_unix_ms);
+    };
     const double left = 40, width = 680, top = 10, height = 260;
-    const Scale x{history_ticks.front().first, history_ticks.back().first,
-                  left + 10, left + width - 10};
+    const Scale x{static_cast<double>(from), static_cast<double>(to), left + 10,
+                  left + width - 90};
     const Scale y{lo, hi, top + height, top};
     std::ostringstream svg;
     YAxis(y, 5, left, width, svg);
-    for (const auto &[at, label] : history_ticks) {
-      svg << "<text class=tick x=" << x(at) << " y=" << top + height + 16
+    for (const auto &[at_tick, label] : ticks) {
+      svg << "<text class=tick x=" << x(at_tick) << " y=" << top + height + 16
           << " text-anchor=middle>" << HtmlEscape(label) << "</text>";
     }
-    // The bold ones last, so they draw on top.
-    std::vector<const ChartEntry *> order;
+    // Placed last, and nudged apart where two would overlap.
+    struct Label {
+      double y, x;
+      std::string text;
+    };
+    std::vector<Label> labels;
     for (const ChartEntry &e : entries) {
-      order.push_back(&e);
-    }
-    std::stable_partition(order.begin(), order.end(),
-                          [](auto *e) { return !e->bold; });
-    for (const ChartEntry *e : order) {
-      std::string path;
-      for (const ChartSnapshot &snapshot : history) {
-        const auto it = snapshot.ratings.find(e->id);
-        if (it != snapshot.ratings.end()) {
-          absl::StrAppend(&path, path.empty() ? "M" : "L", x(snapshot.x), " ",
-                          y(it->second.mu));
-        }
-      }
-      if (path.empty()) {
+      if (!e.participant.empty()) {
         continue;
       }
-      svg << "<path d=\"" << path << "\" fill=none stroke=\"" << ink(*e)
-          << "\" stroke-width=" << (e->bold ? 2 : 1)
-          << " opacity=" << (e->bold ? 1 : 0.4)
-          << (e->participant.empty() ? " stroke-dasharray=\"4 4\"" : "")
-          << "><title>" << HtmlEscape(e->id) << "</title></path>";
+      const double level = y(e.rating.mu);
+      svg << "<line x1=" << left << " x2=" << left + width - 90
+          << " y1=" << level << " y2=" << level << " stroke=\"" << kGrey
+          << "\" stroke-width=1.5 stroke-dasharray=\"4 4\" />";
+      labels.push_back({level + 4, left + width - 86, e.id});
     }
-    html << "<h2>Convergence</h2><p class=note>" << notes.convergence
-         << "</p><svg viewBox=\"0 0 " << left + width << " "
-         << top + height + 24 << "\">" << svg.str() << "</svg>";
+    for (const auto &[participant, index] : slot) {
+      const std::string color = kSeries[index % std::size(kSeries)];
+      std::string path;
+      const ChartEntry *last = nullptr;
+      std::ostringstream marks;
+      for (const ChartEntry &e : entries) {
+        if (e.participant != participant) {
+          continue;
+        }
+        const Rating &r = e.rating;
+        absl::StrAppend(&path, path.empty() ? "M" : "L", x(at(e)), " ",
+                        y(r.mu));
+        marks << "<g><title>" << HtmlEscape(e.id) << ": mu " << Fixed(r.mu)
+              << " sigma " << Fixed(r.sigma) << "</title><line x1=" << x(at(e))
+              << " x2=" << x(at(e)) << " y1=" << y(r.mu - r.sigma)
+              << " y2=" << y(r.mu + r.sigma) << " stroke=\"" << color
+              << "\" stroke-width=1 opacity=0.6 /><circle cx=" << x(at(e))
+              << " cy=" << y(r.mu) << " r=4 fill=\"" << ink(e)
+              << "\" stroke=\"var(--surface)\" stroke-width=2 /></g>";
+        last = &e;
+      }
+      svg << "<path d=\"" << path << "\" fill=none stroke=\"" << color
+          << "\" stroke-width=2 />" << marks.str();
+      if (last != nullptr) {
+        labels.push_back(
+            {y(last->rating.mu) + 4, x(at(*last)) + 8, participant});
+      }
+    }
+    std::sort(labels.begin(), labels.end(),
+              [](const Label &a, const Label &b) { return a.y < b.y; });
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+      for (std::size_t j = 0; j < i; ++j) {
+        if (std::abs(labels[i].x - labels[j].x) < 80 &&
+            labels[i].y < labels[j].y + 12) {
+          labels[i].y = labels[j].y + 12;
+        }
+      }
+      svg << "<text class=lbl x=" << labels[i].x << " y=" << labels[i].y << ">"
+          << HtmlEscape(labels[i].text) << "</text>";
+    }
+    html << "<h2>Skill by submission time</h2><p class=note>Every version "
+            "where it was submitted, mu &plusmn;1&sigma;, all participants on "
+            "one clock: whether they climbed together, and who stalled while "
+            "the others moved.</p><svg viewBox=\"0 0 "
+         << left + width << " " << top + height + 24 << "\">" << svg.str()
+         << "</svg>";
   }
+
   return html.str();
 }
 

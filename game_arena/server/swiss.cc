@@ -207,18 +207,8 @@ std::map<std::string, Rating> SwissRun::Snapshot() const {
   return ratings;
 }
 
-void SwissRun::Append(int round,
-                      const std::map<std::string, Rating> &snapshot) const {
-  std::ofstream out(state_, std::ios::app);
-  for (const auto &[id, rating] : snapshot) {
-    out << "S\t" << round << "\t" << id << "\t" << Fixed(rating.mu, 6) << "\t"
-        << Fixed(rating.sigma, 6) << "\n";
-  }
-}
-
 // State lines, tab-separated: "M <round> <a> <b> <job id>" as a match is
-// queued, "B <round> <id>" for a bye, and "S <round> <id> <mu> <sigma>" after
-// each round, round 0 being before any game.
+// queued and "B <round> <id>" for a bye.
 void SwissRun::Resume(std::set<std::pair<std::string, std::string>> *played,
                       std::set<std::string> *had_bye) {
   std::ifstream in(state_);
@@ -242,17 +232,9 @@ void SwissRun::Resume(std::set<std::pair<std::string, std::string>> *played,
       byes_.resize(std::max(byes_.size(), round));
       byes_[round - 1] = f[2];
       had_bye->insert(f[2]);
-    } else {
-      snapshots_.resize(std::max(snapshots_.size(), round + 1));
-      snapshots_[round][f[2]] = {std::stod(f[3]), std::stod(f[4])};
     }
   }
   byes_.resize(played_.size());
-  // A round cut short counts as played, with the games it got.
-  while (snapshots_.size() < played_.size() + 1) {
-    snapshots_.push_back(Snapshot());
-    Append(static_cast<int>(snapshots_.size()) - 1, snapshots_.back());
-  }
 }
 
 void SwissRun::Run() {
@@ -344,8 +326,6 @@ void SwissRun::Run() {
     if (stopping_) {
       return;
     }
-    snapshots_.push_back(Snapshot());
-    Append(round + 1, snapshots_.back());
   }
   LOG(INFO) << "Swiss: all " << rounds_ << " rounds played";
 }
@@ -376,14 +356,6 @@ std::optional<std::pair<std::string, std::string>> SwissRun::Route(
          .bold = e.live,
          .note = e.live ? absl::StrCat("board #", e.board_rank) : ""});
   }
-  std::vector<ChartSnapshot> history;
-  for (std::size_t round = 0; round < snapshots_.size(); ++round) {
-    history.push_back({static_cast<double>(round), snapshots_[round]});
-  }
-  std::vector<std::pair<double, std::string>> ticks;
-  for (int round = 0; round <= rounds_; ++round) {
-    ticks.emplace_back(round, std::to_string(round));
-  }
   std::vector<const SwissEntry *> by_mu;
   for (const SwissEntry &entry : entries_) {
     by_mu.push_back(&entry);
@@ -403,18 +375,16 @@ std::optional<std::pair<std::string, std::string>> SwissRun::Route(
     }
   }
   const bool finished =
-      snapshots_.size() == static_cast<std::size_t>(rounds_) + 1;
+      static_cast<int>(played_.size()) == rounds_ && done == total;
   html << "<p>" << (finished ? "Finished: " : "Round ")
        << (finished ? rounds_ : static_cast<int>(played_.size())) << " of "
        << rounds_ << " &middot; " << entries_.size() << " entries &middot; "
        << done << " of " << total << " matches done (" << running
        << " running, " << queued << " queued) &middot; " << workers
        << " worker(s) &middot; " << games_ << " games per match</p>";
-  html << SkillCharts(
-      entries, history, ticks,
-      {.converge = "TrueSkill mu, the bar &plusmn;2&sigma;; bold rows are the "
-                   "versions on the board, with their place there.",
-       .convergence = "Mu after each round; the live versions drawn heavier."});
+  html << SkillCharts(entries,
+                      "TrueSkill mu, the bar &plusmn;2&sigma;; bold rows are "
+                      "the versions on the board, with their place there.");
 
   // The same numbers as a table.
   html << "<h2>Standings</h2><table><tr><th>#</th><th>entry</th><th>mu</th>"

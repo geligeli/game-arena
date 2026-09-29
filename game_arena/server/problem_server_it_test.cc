@@ -53,7 +53,7 @@ constexpr char kConfig[] = R"pb(
     referee_target: "//game_arena/testgame:match_referee"
     games_per_order: 2
     placement_opponents: "builtin:random"
-    matchmaking { pool: 10 games: 2 newcomer_games: 100 }
+    matchmaking { pool: 10 games: 2 }
   }
   ranking { kind: TRUESKILL }
 )pb";

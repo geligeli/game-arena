@@ -2,14 +2,12 @@
 #define GAME_ARENA_GAME_ARENA_SERVER_SKILL_CHARTS_H
 
 // Where TrueSkill puts each version, as inline SVG: the Swiss re-rank's page
-// (/swiss) and continuous matchmaking's (/pool) draw the same four charts.
+// (/swiss) and continuous matchmaking's (/pool) draw the same charts.
 //
 // 1. Where each skill converges: every entry by mu, a 2-sigma bar.
 // 2. Skill by submission time: every version on one clock.
-// 3. Convergence: mu over |history|.
 
 #include <cstdint>
-#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -32,28 +30,14 @@ struct ChartEntry {
   std::string note;   // after its label, e.g. "board #2"
 };
 
-// Every entry's rating at one point of |x|.
-struct ChartSnapshot {
-  double x = 0;
-  std::map<std::string, tournament_broker::trueskill::Rating> ratings;
-};
-
 // The charts' style, once per page, and a number as the charts print it.
 extern const std::string_view kSkillChartStyle;
 std::string Fixed(double value, int digits = 1);
 
-struct ChartNotes {
-  std::string converge;     // under "Where each entry's skill converges"
-  std::string convergence;  // under "Convergence"
-};
-
-// The legend and the four charts, as HTML, for inside a `.viz` div.
-// |history_ticks| label chart 4's x axis.
-std::string SkillCharts(
-    const std::vector<ChartEntry> &entries,
-    const std::vector<ChartSnapshot> &history,
-    const std::vector<std::pair<double, std::string>> &history_ticks,
-    const ChartNotes &notes);
+// The legend and the charts, as HTML, for inside a `.viz` div;
+// |converge_note| under "Where each entry's skill converges".
+std::string SkillCharts(const std::vector<ChartEntry> &entries,
+                        std::string_view converge_note);
 
 }  // namespace tournament_arena
 

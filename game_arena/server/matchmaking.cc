@@ -44,15 +44,28 @@ double Quality(const Rating &a, const Rating &b, double beta) {
 
 }  // namespace
 
-std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size,
-                               int newcomer_games) {
-  std::stable_sort(rated.begin(), rated.end(),
-                   [](const auto &a, const auto &b) {
-                     return a.rating.Conservative() > b.rating.Conservative();
-                   });
+std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size) {
+  const auto low = [](const PoolMember &m) {
+    return m.rating.mu - 2 * m.rating.sigma;
+  };
+  const auto high = [](const PoolMember &m) {
+    return m.rating.mu + 2 * m.rating.sigma;
+  };
+  std::ranges::stable_sort(rated, std::greater{}, low);
+  const std::size_t top = std::min<std::size_t>(size, rated.size());
+  if (top == 0) {
+    return {};
+  }
+  // The bar to plausibly make the top, and the best any outsider could do.
+  const double bar = low(rated[top - 1]);
+  double challenger = -INFINITY;
+  for (std::size_t i = top; i < rated.size(); ++i) {
+    challenger = std::max(challenger, high(rated[i]));
+  }
   std::vector<PoolMember> pool;
   for (std::size_t i = 0; i < rated.size(); ++i) {
-    if (static_cast<int>(i) < size || rated[i].pool_games < newcomer_games) {
+    if (i < top || high(rated[i]) >= bar) {
+      rated[i].settled = i < top && low(rated[i]) > challenger;
       pool.push_back(rated[i]);
     }
   }
@@ -66,9 +79,11 @@ std::optional<std::pair<std::string, std::string>> ChoosePair(
   if (pool.size() < 2) {
     return std::nullopt;
   }
-  // The least certain first, less so the more it is already playing.
-  const auto urgency = [](const PoolMember &m) {
-    return m.rating.sigma / (1 + m.running);
+  // The least certain first, less so the more it is already playing; while
+  // anyone's place is open, one of those.
+  const bool open = !std::ranges::all_of(pool, &PoolMember::settled);
+  const auto urgency = [open](const PoolMember &m) {
+    return open && m.settled ? -1 : m.rating.sigma / (1 + m.running);
   };
   const PoolMember &a = *std::ranges::max_element(
       pool,
@@ -131,7 +146,6 @@ void Matchmaker::Start() { thread_ = std::thread(&Matchmaker::Run, this); }
 
 void Matchmaker::Load() {
   std::ifstream in(state_);
-  std::map<int64_t, ChartSnapshot> snapshots;
   for (std::string line; std::getline(in, line);) {
     const std::vector<std::string> f = absl::StrSplit(line, '\t');
     int64_t ms = 0;
@@ -145,26 +159,12 @@ void Matchmaker::Load() {
           !absl::SimpleAtoi(f[7], &m.b_wins)) {
         continue;
       }
-      pool_games_[m.a] += m.games;
-      pool_games_[m.b] += m.games;
       finished_.push_front(m);
       if (finished_.size() > kFinished) {
         finished_.pop_back();
       }
       ++matches_done_;
-    } else if (f[0] == "S" && f.size() == 5) {
-      Rating r;
-      if (!absl::SimpleAtod(f[3], &r.mu) || !absl::SimpleAtod(f[4], &r.sigma)) {
-        continue;
-      }
-      ChartSnapshot &snapshot = snapshots[ms];
-      snapshot.x = static_cast<double>(ms);
-      snapshot.ratings[f[2]] = r;
-      last_snapshot_ms_ = std::max(last_snapshot_ms_, ms);
     }
-  }
-  for (auto &[ms, snapshot] : snapshots) {
-    history_.push_back(std::move(snapshot));
   }
   if (matches_done_ > 0) {
     LOG(INFO) << "Matchmaking: resumed after " << matches_done_ << " matches";
@@ -176,33 +176,24 @@ void Matchmaker::Append(const std::string &line) const {
 }
 
 std::vector<PoolMember> Matchmaker::Rated(
-    const std::map<std::string, int> &pool_games,
     const std::map<std::string, int> &running) const {
   std::vector<PoolMember> rated;
   for (const proto::Candidate &c : candidates_->List()) {
     if (c.status() != proto::Candidate::READY) {
       continue;
     }
-    const auto games = pool_games.find(c.candidate_id());
     const auto playing = running.find(c.candidate_id());
     rated.push_back(
         {.id = c.candidate_id(),
          .rating = ratings_->RatingOf(c.candidate_id()),
-         .pool_games = games == pool_games.end() ? 0 : games->second,
          .running = playing == running.end() ? 0 : playing->second});
   }
   return rated;
 }
 
 std::set<std::string> Matchmaker::Members() const {
-  std::map<std::string, int> games;
-  {
-    std::lock_guard lock(mutex_);
-    games = pool_games_;
-  }
   std::set<std::string> ids;
-  for (const PoolMember &m :
-       PoolOf(Rated(games, {}), config_.pool(), config_.newcomer_games())) {
+  for (const PoolMember &m : PoolOf(Rated({}), config_.pool())) {
     ids.insert(m.id);
   }
   return ids;
@@ -218,7 +209,6 @@ void Matchmaker::Run() {
       }
     }
     TopUp();
-    MaybeSnapshot();
   }
 }
 
@@ -231,19 +221,17 @@ void Matchmaker::TopUp() {
   if (free <= 0) {
     return;
   }
-  std::map<std::string, int> games, running;
+  std::map<std::string, int> running;
   std::map<std::string, std::deque<std::string>> recent;
   {
     std::lock_guard lock(mutex_);
-    games = pool_games_;
     recent = recent_;
     for (const auto &[job, m] : running_) {
       ++running[m.a];
       ++running[m.b];
     }
   }
-  std::vector<PoolMember> pool =
-      PoolOf(Rated(games, running), config_.pool(), config_.newcomer_games());
+  std::vector<PoolMember> pool = PoolOf(Rated(running), config_.pool());
   for (; free > 0; --free) {
     const auto pair = ChoosePair(pool, recent, params_);
     if (!pair.has_value()) {
@@ -291,8 +279,6 @@ void Matchmaker::OnConcluded(const proto::Job &job) {
   m.games = job.games_played();
   m.a_wins = job.wins();
   m.b_wins = job.losses();
-  pool_games_[m.a] += m.games;
-  pool_games_[m.b] += m.games;
   finished_.push_front(m);
   if (finished_.size() > kFinished) {
     finished_.pop_back();
@@ -305,38 +291,6 @@ void Matchmaker::OnConcluded(const proto::Job &job) {
   wake_.notify_all();
 }
 
-void Matchmaker::MaybeSnapshot() {
-  const int64_t now = NowMs();
-  {
-    std::lock_guard lock(mutex_);
-    if (now - last_snapshot_ms_ < int64_t{config_.snapshot_s()} * 1000) {
-      return;
-    }
-    last_snapshot_ms_ = now;
-  }
-  ChartSnapshot snapshot;
-  snapshot.x = static_cast<double>(now);
-  std::vector<std::string> ids = builtins_;
-  for (const proto::Candidate &c : candidates_->List()) {
-    if (c.status() == proto::Candidate::READY) {
-      ids.push_back(c.candidate_id());
-    }
-  }
-  std::string lines;
-  for (const std::string &id : ids) {
-    if (!ratings_->has(id)) {
-      continue;  // not a game yet: nothing to draw
-    }
-    const Rating r = ratings_->RatingOf(id);
-    snapshot.ratings[id] = r;
-    absl::StrAppend(&lines, "S\t", now, "\t", id, "\t", Fixed(r.mu, 6), "\t",
-                    Fixed(r.sigma, 6), "\n");
-  }
-  std::lock_guard lock(mutex_);
-  history_.push_back(std::move(snapshot));
-  std::ofstream(state_, std::ios::app) << lines;
-}
-
 std::optional<std::pair<std::string, std::string>> Matchmaker::Route(
     std::string_view target) const {
   if (target != "/pool") {
@@ -347,31 +301,26 @@ std::optional<std::pair<std::string, std::string>> Matchmaker::Route(
   const int slots = scheduler_->total_slots();
   const int in_flight = scheduler_->in_flight_orders();
   const std::vector<proto::Candidate> candidates = candidates_->List();
-  std::map<std::string, int> games;
   std::vector<Match> running, finished;
-  std::vector<ChartSnapshot> history;
   int64_t done = 0;
   {
     std::lock_guard lock(mutex_);
-    games = pool_games_;
     for (const auto &[job, m] : running_) {
       running.push_back(m);
     }
     finished.assign(finished_.begin(), finished_.end());
-    history = history_;
     done = matches_done_;
   }
-  const std::vector<PoolMember> pool =
-      PoolOf(Rated(games, {}), config_.pool(), config_.newcomer_games());
+  const std::vector<PoolMember> pool = PoolOf(Rated({}), config_.pool());
+  std::map<std::string, const PoolMember *> member;
   std::map<std::string, int> place;  // 1-based, in the pool
   for (std::size_t i = 0; i < pool.size(); ++i) {
+    member[pool[i].id] = &pool[i];
     place[pool[i].id] = static_cast<int>(i) + 1;
   }
 
   // Every version that has played, and the builtins as levels.
   std::vector<ChartEntry> entries;
-  ChartSnapshot now;
-  now.x = static_cast<double>(NowMs());
   static const std::regex kVersion(".*-v([0-9]+)");
   std::vector<proto::Candidate> oldest_first(candidates.rbegin(),
                                              candidates.rend());
@@ -383,8 +332,6 @@ std::optional<std::pair<std::string, std::string>> Matchmaker::Route(
     const Standing standing = ratings_->Get(id);
     std::smatch version;
     const bool in_pool = place.contains(id);
-    const auto played = games.find(id);
-    const int pool_games = played == games.end() ? 0 : played->second;
     ChartEntry &e = entries.emplace_back();
     e.id = id;
     e.participant = c.author().empty() ? id : c.author();
@@ -398,11 +345,8 @@ std::optional<std::pair<std::string, std::string>> Matchmaker::Route(
     e.bold = in_pool;
     e.dim = !in_pool;
     e.note = !in_pool ? "out"
-             : pool_games < static_cast<int>(config_.newcomer_games())
-                 ? absl::StrCat("newcomer ", pool_games, "/",
-                                config_.newcomer_games())
-                 : absl::StrCat("pool #", place[id]);
-    now.ratings[id] = e.rating;
+                      : absl::StrCat("pool #", place[id],
+                                     member[id]->settled ? "" : ", place open");
   }
   for (const std::string &builtin : builtins_) {
     if (ratings_->has(builtin)) {
@@ -412,7 +356,6 @@ std::optional<std::pair<std::string, std::string>> Matchmaker::Route(
       e.rating = ratings_->RatingOf(builtin);
       e.wins = standing.wins;
       e.losses = standing.losses;
-      now.ratings[builtin] = e.rating;
     }
   }
   // The charts walk a participant's versions in order.
@@ -421,32 +364,19 @@ std::optional<std::pair<std::string, std::string>> Matchmaker::Route(
                      return std::pair(a.participant, a.version) <
                             std::pair(b.participant, b.version);
                    });
-  history.push_back(now);
-  std::vector<std::pair<double, std::string>> ticks;
-  const double first = history.front().x, last = history.back().x;
-  for (int i = 0; i <= 5; ++i) {
-    const double t = first + (last - first) * i / 5.0;
-    ticks.emplace_back(t, When(static_cast<int64_t>(t)));
-  }
-
   std::ostringstream html;
   html << tournament_broker::PageStart("Matchmaking", /*refresh=*/true)
        << kSkillChartStyle << "<div class=viz>";
   html << "<p>Pool of " << pool.size() << " (the top " << config_.pool()
-       << " by mu &minus; 3&sigma;, and newcomers until "
-       << config_.newcomer_games() << " pool games) &middot; " << running.size()
+       << ": every version whose mu + 2&sigma; reaches the " << config_.pool()
+       << "th best mu &minus; 2&sigma;) &middot; " << running.size()
        << " matches running, " << done << " done &middot; " << in_flight
        << " of " << slots << " slots busy on " << workers << " worker(s) "
        << "&middot; " << config_.games() << " games per match</p>";
-  html << SkillCharts(
-      entries, history, ticks,
-      {.converge = "TrueSkill mu, the bar &plusmn;2&sigma;. Bold: the pool, "
-                   "which keeps playing; grey: dropped out, no longer "
-                   "scheduled.",
-       .convergence = absl::StrCat(
-           "Mu every ", config_.snapshot_s() / 60,
-           " minutes; the pool drawn heavier. Versions join where they "
-           "first played.")});
+  html << SkillCharts(entries,
+                      "TrueSkill mu, the bar &plusmn;2&sigma;. Bold: the pool, "
+                      "which keeps playing; grey: dropped out, no longer "
+                      "scheduled.");
 
   const auto link = [](const std::string &job) {
     return absl::StrCat("<a href=\"/jobs/", job, "\">", job, "</a>");
