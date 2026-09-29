@@ -214,9 +214,9 @@ void AddBuildPhase(const proto::WorkOrder& order, const OrderJobConfig& config,
   isolation->set_network(order.sandbox().allow_build_network()
                              ? sx::Isolation::NETWORK_EGRESS
                              : sx::Isolation::NETWORK_NONE);
-  // The memory and pid caps are the solution's: bazel's JVM and a few dozen
-  // compilers exceed any limit a problem means for a bot.
-  isolation->set_memory_limit_mb(0);
+  // The solution's memory and pid caps are not the build's: bazel's JVM and a
+  // few dozen compilers exceed any limit a problem means for a bot.
+  isolation->set_memory_limit_mb(order.sandbox().build_memory_limit_mb());
   isolation->set_pids_limit(0);
 
   sx::Step* build = phase->mutable_foreground();

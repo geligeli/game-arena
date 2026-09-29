@@ -92,6 +92,9 @@ message SandboxSpec {
   optional uint32 memory_limit_mb = 2 [default = 4096];
   optional double cpus = 3;
   optional uint32 pids_limit = 4 [default = 512];
+  // The build's own cap; unset, none. Bazel sizes its JVM heap from it, and
+  // without it each concurrent build's server takes a share of the host.
+  optional uint32 build_memory_limit_mb = 9;
 
   // Off by default: a build that can fetch can exfiltrate.
   optional bool allow_build_network = 7;

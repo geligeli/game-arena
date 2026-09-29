@@ -123,6 +123,7 @@ tournament_arena::SchedulerConfig SchedulerConfigFor(
   order_sandbox->set_memory_limit_mb(sandbox.memory_limit_mb());
   order_sandbox->set_cpus(sandbox.cpus());
   order_sandbox->set_pids_limit(sandbox.pids_limit());
+  order_sandbox->set_build_memory_limit_mb(sandbox.build_memory_limit_mb());
   order_sandbox->set_run_as_user(sandbox.run_as_user());
   order_sandbox->set_allow_build_network(sandbox.allow_build_network());
   if (problem.has_match()) {
@@ -299,6 +300,28 @@ int main(int argc, char** argv) {
                                  problem->match().placement_opponents().end()),
         &scheduler, &candidates, ratings, trueskill_params,
         data_dir / "matchmaking.tsv");
+  }
+  // Nothing in flight survives a restart: close what the log still has open,
+  // and place again whatever was waiting on its placement.
+  for (tournament_arena::JobRecord record : job_log.List()) {
+    auto* job = record.mutable_job();
+    if (job->state() == tournament_arena::proto::Job::QUEUED ||
+        job->state() == tournament_arena::proto::Job::RUNNING) {
+      job->set_state(tournament_arena::proto::Job::CANCELLED);
+      job->set_error("interrupted by a restart");
+      job_log.Put(record);
+    }
+  }
+  for (const auto& candidate : candidates.List()) {
+    if (candidate.status() == tournament_arena::proto::Candidate::PENDING) {
+      // Unmetered, like a match: the client asked once already.
+      std::string error;
+      auto reservation =
+          scheduler.TryReserve("", {}, /*cancel_running=*/false, &error);
+      LOG(INFO) << "Placing " << candidate.candidate_id() << " again as "
+                << scheduler.EnqueuePlacement(candidate,
+                                              std::move(*reservation));
+    }
   }
   // Curated: the operator's image names and timeouts are not a submitter's.
   tournament_arena::proto::ProblemInfo info;

@@ -126,6 +126,14 @@ TEST_F(DashboardTest, AJobShowsItsBuildOutputItsGamesAndItsSource) {
   EXPECT_THAT(html, HasSubstr("// alice&#39;s &lt;strategy&gt;"));
 }
 
+TEST_F(DashboardTest, AMatchWithNoPatchShowsTheCandidatesCode) {
+  JobRecord record;
+  record.mutable_job()->set_job_id("j2_2");
+  record.mutable_job()->set_candidate_id("alice");
+  jobs_->Put(record);
+  EXPECT_THAT(Page("/jobs/j2_2"), HasSubstr("// alice&#39;s &lt;strategy&gt;"));
+}
+
 TEST_F(DashboardTest, AParticipantHasTheirCodeAndEverySubmission) {
   const std::string html = Page("/participants/alice");
   EXPECT_THAT(html, HasSubstr("<a href=\"/jobs/j1_1\">"));

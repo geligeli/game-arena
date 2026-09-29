@@ -41,6 +41,8 @@ class Dashboard {
   std::string JobsPage() const;
   std::optional<std::string> JobPage(const std::string& job_id) const;
   std::optional<std::string> ParticipantPage(const std::string& id) const;
+  // Its files, and why it failed to build if it did.
+  std::string CodeOf(const proto::Candidate& candidate) const;
   std::string GamesPage(int page, const std::string& player) const;
   std::optional<std::string> ReplayPage(const std::string& game_id) const;
 

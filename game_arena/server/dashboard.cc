@@ -454,16 +454,30 @@ std::optional<std::string> Dashboard::JobPage(const std::string& job_id) const {
     }
   }
 
-  html << "<h2>Submission</h2>"
-       << (show_source_ ? SourceOf(record->submission().patch())
-                        : std::string(kHidden))
-       << kPageEnd;
+  html << "<h2>Submission</h2>";
+  const std::optional<proto::Candidate> candidate =
+      candidates_->Get(job.candidate_id());
+  if (!show_source_) {
+    html << kHidden;
+  } else if (!record->submission().patch().empty()) {
+    html << SourceOf(record->submission().patch());
+  } else if (candidate.has_value()) {
+    // A match the coordinator starts records no patch: a version never changes.
+    html << CodeOf(*candidate);
+  }
+  html << kPageEnd;
   return html.str();
 }
 
 std::optional<std::string> Dashboard::ParticipantPage(
     const std::string& id) const {
   const std::optional<proto::Candidate> candidate = candidates_->Get(id);
+  // A participant's name stands for its newest version, as in arena_cli.
+  if (!candidate.has_value() && candidates_->versions()) {
+    if (const auto latest = candidates_->Latest(id)) {
+      return ParticipantPage(latest->candidate_id());
+    }
+  }
   std::vector<JobRecord> submissions;
   for (JobRecord& record : jobs_->List()) {
     if (record.job().candidate_id() == id) {
@@ -493,23 +507,25 @@ std::optional<std::string> Dashboard::ParticipantPage(
     html << "<h2>Current code</h2><p>"
          << proto::Candidate::Status_Name(candidate->status()) << ", submitted "
          << Time(candidate->submitted_unix_ms()) << "</p>";
-    if (!show_source_) {
-      html << kHidden;
-    } else {
-      if (!candidate->build_error().empty()) {
-        html << Pre(candidate->build_error());
-      }
-      for (const std::string& path : candidate->file_paths()) {
-        std::string error;
-        const std::optional<std::string> source =
-            candidates_->ReadSource(id, path, &error);
-        html << "<h3>" << HtmlEscape(path) << "</h3>"
-             << Pre(source.value_or(error));
-      }
-    }
+    html << (show_source_ ? CodeOf(*candidate) : std::string(kHidden));
   }
   html << kPageEnd;
   return html.str();
+}
+
+std::string Dashboard::CodeOf(const proto::Candidate& candidate) const {
+  std::string html;
+  if (!candidate.build_error().empty()) {
+    html += Pre(candidate.build_error());
+  }
+  for (const std::string& path : candidate.file_paths()) {
+    std::string error;
+    const std::optional<std::string> source =
+        candidates_->ReadSource(candidate.candidate_id(), path, &error);
+    absl::StrAppend(&html, "<h3>", HtmlEscape(path), "</h3>",
+                    Pre(source.value_or(error)));
+  }
+  return html;
 }
 
 std::string Dashboard::GamesPage(int page, const std::string& player) const {

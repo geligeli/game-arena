@@ -316,6 +316,7 @@ message SandboxOrder {
   double cpus = 3;
   uint32 pids_limit = 4;
   string run_as_user = 5;
+  uint32 build_memory_limit_mb = 8;
 
   // A build that can fetch can exfiltrate: a submitted genrule is any code.
   bool allow_build_network = 7;

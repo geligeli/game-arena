@@ -321,6 +321,17 @@ TEST(JobForOrderTest, TheBuildCarriesNoMemoryOrPidCap) {
   EXPECT_EQ(job.phases(1).isolation().pids_limit(), 512u);
 }
 
+TEST(JobForOrderTest, TheBuildHasItsOwnCapWhenTheProblemSetsOne) {
+  proto::WorkOrder order = MatchOrder();
+  order.mutable_sandbox()->set_build_memory_limit_mb(2048);
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(
+      JobForOrder(0, order, Config(), ContainerCapabilities(), &job, &error));
+  EXPECT_EQ(job.phases(0).isolation().memory_limit_mb(), 2048u);
+  EXPECT_EQ(job.phases(1).isolation().memory_limit_mb(), 4096u);
+}
+
 TEST(JobForOrderTest, AGradedOrderIsOnePhasePerRun) {
   proto::WorkOrder order = MatchOrder();
   order.clear_referee_target();
