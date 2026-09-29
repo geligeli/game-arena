@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "game_arena/proto/problem.pb.h"
+#include "game_arena/server/scheduler_config.pb.h"
 
 namespace tournament_arena {
 
@@ -31,6 +32,9 @@ std::string ExpandSubmissionId(std::string_view text,
                                std::string_view submission_id);
 
 // Safe as a standings key and a path component.
+// What the scheduler makes of |problem|: every order's template.
+SchedulerConfig SchedulerConfigFor(const proto::ProblemConfig &problem);
+
 bool IsValidProblemId(std::string_view problem_id);
 
 }  // namespace tournament_arena

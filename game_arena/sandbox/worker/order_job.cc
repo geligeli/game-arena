@@ -95,13 +95,13 @@ BuildPaths PathsFor(const OrderJobConfig& config, int slot, bool container) {
   if (container) {
     paths.output_base = sandbox_common::kOutputBaseMount;
     paths.disk_cache = sandbox_common::kDiskCacheMount;
-    paths.bazel_bin = "./bazel-bin/";
-    return paths;
+  } else {
+    paths.output_base = (SlotDir(config, slot) / "bazel_output_base").string();
+    paths.disk_cache = config.disk_cache.string();
   }
-  paths.output_base = (SlotDir(config, slot) / "bazel_output_base").string();
-  paths.disk_cache = config.disk_cache.string();
-  paths.bazel_bin =
-      (SlotDir(config, slot) / "repo" / "bazel-bin").string() + "/";
+  // In the slot's output base, not the job's workspace: a job that reuses
+  // the slot's build has a fresh workspace and no build to link it.
+  paths.bazel_bin = paths.output_base + "/bazel-bin/";
   return paths;
 }
 
@@ -244,6 +244,8 @@ void AddBuildPhase(const proto::WorkOrder& order, const OrderJobConfig& config,
         Verbatim("--output_user_root=" + paths.output_base + "/_user_root");
   }
   *build->add_argv() = Verbatim("build");
+  *build->add_argv() =
+      Verbatim("--symlink_prefix=" + paths.output_base + "/bazel-");
   if (!paths.disk_cache.empty()) {
     *build->add_argv() = Verbatim("--disk_cache=" + paths.disk_cache);
   }

@@ -114,6 +114,21 @@ cc_test(
     ],
 )
 
+# Against this host's daemon: manual, local and never cached.
+cc_test(
+    name = "container_engine_docker_test",
+    srcs = ["container_engine_docker_test.cc"],
+    tags = [
+        "external",
+        "local",
+        "manual",
+    ],
+    deps = [
+        ":container_engine",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # Not a boundary, and test-only: no binary that runs a submission may link it.
 cc_library(
     name = "process_engine",

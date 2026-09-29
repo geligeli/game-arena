@@ -359,6 +359,7 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log,
                     "exec bazel --output_base=/output_base "
                     "--output_user_root=/output_base/_user_root build "
+                    "--symlink_prefix=/output_base/bazel- "
                     "--disk_cache=/disk_cache '//solutions/"
                     "c-ok:bot'");
 
@@ -366,11 +367,15 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log, "docker network create --internal saw-0-ok-1-net");
   ExpectLogContains(log, "docker network rm saw-0-ok-1-net");
 
+  // Its links live in the slot's output base, where a later job that reuses
+  // the build finds them.
+  ExpectLogContains(log, "--symlink_prefix=/output_base/bazel-");
+
   // The referee is started detached on that network, and judges the match.
   ExpectLogContains(log, "--name saw-0-ok-1-referee");
   ExpectLogContains(log, "--network saw-0-ok-1-net");
   ExpectLogContains(log,
-                    "exec './bazel-bin/game_arena/testgame/"
+                    "exec '/output_base/bazel-bin/game_arena/testgame/"
                     "match_referee' '--port=50051' '--game=nim' "
                     "'--games=2' '--player_a=c-ok' "
                     "'--player_b=builtin:random'");
@@ -380,7 +385,8 @@ TEST_F(OrderRunnerContainerTest, OrderBuildsInContainerAndParsesResult) {
   ExpectLogContains(log, "--name saw-0-ok-1-bot");
   ExpectLogContains(log, "--memory 4096m");
   ExpectLogContains(log,
-                    "exec './bazel-bin/solutions/c-ok/bot' '--name=c-ok' "
+                    "exec '/output_base/bazel-bin/solutions/c-ok/bot' "
+                    "'--name=c-ok' "
                     "'--server=saw-0-ok-1-referee:50051' "
                     "'--opponent=builtin:random' '--games=2' "
                     "'--params=iterations=100'");

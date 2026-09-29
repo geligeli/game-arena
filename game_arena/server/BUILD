@@ -70,6 +70,7 @@ cc_library(
     srcs = ["problem_config.cc"],
     hdrs = ["problem_config.h"],
     deps = [
+        ":scheduler_config_cc_proto",
         "//game_arena/common/kv_options",
         "//game_arena/proto:problem_cc_proto",
         "@abseil-cpp//absl/strings",
@@ -360,6 +361,23 @@ sh_test(
     name = "no_problem_code_test",
     srcs = ["no_problem_code_test.sh"],
     data = [":problem_server"],
+)
+
+# The problem_server binary itself, restarted for real: manual and local.
+cc_test(
+    name = "problem_server_it_test",
+    srcs = ["problem_server_it_test.cc"],
+    data = [":problem_server"],
+    tags = [
+        "external",
+        "local",
+        "manual",
+    ],
+    deps = [
+        "//game_arena/proto:arena_cc_grpc",
+        "@googletest//:gtest_main",
+        "@grpc//:grpc++",
+    ],
 )
 
 cc_test(

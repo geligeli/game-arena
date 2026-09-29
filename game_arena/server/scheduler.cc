@@ -561,10 +561,16 @@ void Scheduler::PersistLocked(Job *job) {
 std::optional<proto::Job> Scheduler::GetJob(const std::string &job_id) const {
   std::lock_guard lock(mutex_);
   const auto it = jobs_.find(job_id);
-  if (it == jobs_.end()) {
-    return std::nullopt;
+  if (it != jobs_.end()) {
+    return it->second.status;
   }
-  return it->second.status;
+  // From before a restart: the log has how it ended.
+  if (job_log_ != nullptr) {
+    if (const auto record = job_log_->Get(job_id)) {
+      return record->job();
+    }
+  }
+  return std::nullopt;
 }
 
 int Scheduler::worker_count() const {

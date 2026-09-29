@@ -108,64 +108,6 @@ std::optional<tournament_arena::ReplayAssets> LoadReplayAssets(
   return assets;
 }
 
-tournament_arena::SchedulerConfig SchedulerConfigFor(
-    const tournament_arena::proto::ProblemConfig& problem) {
-  tournament_arena::SchedulerConfig config;
-  *config.mutable_build_targets() = problem.build().targets();
-  tournament_arena::proto::WorkOrder* order = config.mutable_order();
-  order->set_build_timeout_s(static_cast<int>(problem.build().timeout_s()));
-  *order->mutable_bazel_flags() = problem.build().bazel_flags();
-
-  // The sandbox, translated rather than embedded: see SandboxOrder.
-  const auto& sandbox = problem.sandbox();
-  auto* order_sandbox = order->mutable_sandbox();
-  order_sandbox->set_image(sandbox.image());
-  order_sandbox->set_memory_limit_mb(sandbox.memory_limit_mb());
-  order_sandbox->set_cpus(sandbox.cpus());
-  order_sandbox->set_pids_limit(sandbox.pids_limit());
-  order_sandbox->set_build_memory_limit_mb(sandbox.build_memory_limit_mb());
-  order_sandbox->set_run_as_user(sandbox.run_as_user());
-  order_sandbox->set_allow_build_network(sandbox.allow_build_network());
-  if (problem.has_match()) {
-    const auto& match = problem.match();
-    *config.mutable_placement_opponents() = match.placement_opponents();
-    config.set_placement_games(static_cast<int>(match.games_per_order()));
-    order->set_run_timeout_s(static_cast<int>(match.timeout_s()));
-    order->set_referee_target(match.referee_target());
-    order->set_turn_timeout_ms(match.turn_timeout_ms());
-    order->set_game_time_budget_ms(match.game_time_budget_ms());
-    order->set_max_moves_per_game(match.max_moves_per_game());
-    *order->mutable_registry_options() = match.registry_options();
-    // Under the run timeout, so a stuck match comes back as a partial tally.
-    order->set_match_deadline_s(std::max(1, order->run_timeout_s() - 30));
-    const auto& targets = config.build_targets();
-    const auto bot = std::find_if(
-        targets.begin(), targets.end(), [](const std::string& target) {
-          return target.find("{submission_id}") != std::string::npos;
-        });
-    if (!targets.empty()) {
-      config.set_bot_target(bot != targets.end() ? *bot : targets[0]);
-    }
-  } else {
-    const auto& grade = problem.grade();
-    config.set_placement_games(static_cast<int>(grade.repeats()));
-    order->set_run_timeout_s(static_cast<int>(grade.timeout_s()));
-
-    auto* graded = order->mutable_grade();
-    *graded->mutable_argv() = grade.argv();  // "{submission_id}" still in it
-    graded->set_repeats(static_cast<int>(grade.repeats()));
-    graded->set_aggregate(
-        static_cast<tournament_arena::proto::GradeOrder::Aggregate>(
-            static_cast<int>(grade.aggregate())));
-    for (const auto& metric : grade.metrics()) {
-      graded->add_metric_names(metric.name());
-    }
-    graded->set_timeout_s(static_cast<int>(grade.timeout_s()));
-    graded->set_require_machine_class(grade.require_machine_class());
-  }
-  return config;
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -284,8 +226,9 @@ int main(int argc, char** argv) {
   std::unique_ptr<tournament_arena::SwissRun> swiss;
   std::unique_ptr<tournament_arena::Matchmaker> matchmaker;
   tournament_arena::Scheduler scheduler(
-      SchedulerConfigFor(*problem), &candidates, standings.get(), &history,
-      &job_log, [&swiss, &matchmaker](const tournament_arena::proto::Job& job) {
+      tournament_arena::SchedulerConfigFor(*problem), &candidates,
+      standings.get(), &history, &job_log,
+      [&swiss, &matchmaker](const tournament_arena::proto::Job& job) {
         if (swiss) {
           swiss->OnConcluded(job);
         }
