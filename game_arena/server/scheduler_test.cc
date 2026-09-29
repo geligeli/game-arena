@@ -512,32 +512,6 @@ TEST_F(SchedulerTest, ABrokenBuildFailsTheCandidateBeforeItPlays) {
             proto::Candidate::BUILD_FAILED);
 }
 
-TEST_F(SchedulerTest, ABackfillArchivesAReadyCandidateAndPlaysNothing) {
-  WithArchive();
-  auto worker = std::make_shared<FakeWorker>("w1", 4);
-  scheduler_->AddWorker(worker);
-  const auto candidate = AddCandidate("Old");
-  const std::string job_id = scheduler_->EnqueueBuild(candidate);
-  ASSERT_EQ(worker->orders.size(), 1u);
-
-  proto::OrderResult broken;
-  broken.set_order_id(worker->orders[0].order_id());
-  broken.set_build_failed_candidate_id(candidate.candidate_id());
-  scheduler_->OnResult("w1", broken);
-  // It built before: it stays READY and plays the old way.
-  EXPECT_EQ(store_->Get(candidate.candidate_id())->status(),
-            proto::Candidate::READY);
-
-  scheduler_->EnqueueBuild(candidate);
-  const std::string bot = Archive("the old bot");
-  scheduler_->OnResult(
-      "w1", Built(worker->orders[1],
-                  {{worker->orders[1].candidate().bot_target(), bot}}));
-  EXPECT_EQ(store_->Get(candidate.candidate_id())->artifact(), bot);
-  EXPECT_EQ(worker->orders.size(), 2u);
-  EXPECT_EQ(scheduler_->GetJob(job_id)->state(), proto::Job::FAILED);
-}
-
 TEST_F(SchedulerTest, BuildFailureFailsTheJobAndMarksTheCandidate) {
   const auto candidate = AddCandidate("Broken", proto::Candidate::PENDING);
   auto worker = std::make_shared<FakeWorker>("w1", 2);

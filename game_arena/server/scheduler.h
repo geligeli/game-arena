@@ -74,10 +74,6 @@ class Scheduler {
   std::string EnqueueMatch(const proto::Candidate &candidate,
                            const std::string &opponent, int games);
 
-  // Builds |candidate| into the archive and plays nothing, unmetered: for a
-  // READY candidate from before the archive. A failure leaves it READY.
-  std::string EnqueueBuild(const proto::Candidate &candidate);
-
   std::optional<proto::Job> GetJob(const std::string &job_id) const;
 
   // Unknown orders are ignored: progress can race the result that retired one.
@@ -108,7 +104,6 @@ class Scheduler {
     std::vector<std::string> after_build;
     int after_build_games = 0;
     int build_attempts = 0;
-    bool backfill = false;
     // Cleared once the job has finished and is on disk.
     JobRecord record;
   };

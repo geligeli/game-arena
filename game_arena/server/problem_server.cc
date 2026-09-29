@@ -268,12 +268,6 @@ int main(int argc, char** argv) {
       LOG(INFO) << "Placing " << candidate.candidate_id() << " again as "
                 << scheduler.EnqueuePlacement(candidate,
                                               std::move(*reservation));
-    } else if (!graded &&
-               candidate.status() ==
-                   tournament_arena::proto::Candidate::READY &&
-               candidate.artifact().empty()) {
-      LOG(INFO) << "Archiving " << candidate.candidate_id() << " as "
-                << scheduler.EnqueueBuild(candidate);
     }
   }
   // Curated: the operator's image names and timeouts are not a submitter's.

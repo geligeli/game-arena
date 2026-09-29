@@ -133,7 +133,6 @@ std::vector<SwissEntry> SeedVersions(const JobLog &jobs,
       }
       made = created->candidate_id();
     }
-    store->SetStatus(made, proto::Candidate::READY, "");
     store->Backdate(made, submission.submitted_unix_ms());
     SwissEntry &entry = entries.emplace_back();
     entry.id = made;
@@ -266,6 +265,26 @@ void SwissRun::Run() {
   {
     std::lock_guard lock(mutex_);
     Resume(&played, &had_bye);
+  }
+  {
+    // A seed is placed, and built, like any submission; one that fails to
+    // build sits out.
+    std::unique_lock lock(mutex_);
+    const auto status = [&](const std::string &id) {
+      return IsBuiltin(id) ? proto::Candidate::READY
+                           : candidates_->Get(id)->status();
+    };
+    cv_.wait(lock, [&] {
+      return stopping_ || std::ranges::none_of(ids, [&](const auto &id) {
+               return status(id) == proto::Candidate::PENDING;
+             });
+    });
+    if (stopping_) {
+      return;
+    }
+    std::erase_if(ids, [&](const auto &id) {
+      return status(id) != proto::Candidate::READY;
+    });
   }
   if (played_.empty()) {
     // No prior: the first round is drawn, reproducibly.

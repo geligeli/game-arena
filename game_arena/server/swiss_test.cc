@@ -110,7 +110,8 @@ TEST_F(SeedVersionsTest, EveryPlayedVersionIsAnEntryInItsOwnDirectory) {
 
   const auto stored = store.Get("alice-v02");
   ASSERT_TRUE(stored.has_value());
-  EXPECT_EQ(stored->status(), proto::Candidate::READY);
+  // Placed like any submission: built into the archive, then played.
+  EXPECT_EQ(stored->status(), proto::Candidate::PENDING);
   EXPECT_NE(stored->patch().find("solutions/alice-v02/strategy.h"),
             std::string::npos);
   EXPECT_EQ(stored->patch().find("solutions/alice/"), std::string::npos);

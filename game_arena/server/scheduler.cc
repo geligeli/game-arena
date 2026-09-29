@@ -326,15 +326,6 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
       /*build_first=*/artifacts_ != nullptr && candidate.artifact().empty());
 }
 
-std::string Scheduler::EnqueueBuild(const proto::Candidate &candidate) {
-  std::lock_guard lock(mutex_);
-  const std::string job_id = EnqueueLocked(candidate, {}, 0, "",
-                                           /*record_patch=*/false,
-                                           /*build_first=*/true);
-  jobs_[job_id].backfill = true;
-  return job_id;
-}
-
 std::string Scheduler::EnqueueMatch(const proto::Candidate &candidate,
                                     const std::string &opponent, int games) {
   std::lock_guard lock(mutex_);
@@ -601,11 +592,8 @@ void Scheduler::OnBuiltLocked(Job *job, const proto::WorkOrder &order,
     job->aborted = true;
     job->status.set_state(proto::Job::FAILED);
     job->status.set_error(id + ": " + result.build_log());
-    // A backfill's candidate built before, and keeps playing the old way.
-    if (!job->backfill) {
-      candidates_->SetStatus(id, proto::Candidate::BUILD_FAILED,
-                             result.build_log());
-    }
+    candidates_->SetStatus(id, proto::Candidate::BUILD_FAILED,
+                           result.build_log());
     return;
   }
   if (!result.build_ok() || artifact == result.artifacts().end() ||

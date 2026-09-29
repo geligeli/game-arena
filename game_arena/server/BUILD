@@ -402,7 +402,6 @@ cc_test(
         "manual",
     ],
     deps = [
-        ":candidate_store",
         "//game_arena/common/sha256",
         "//game_arena/proto:arena_cc_grpc",
         "@googletest//:gtest_main",

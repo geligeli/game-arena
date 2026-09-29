@@ -25,7 +25,6 @@
 
 #include "game_arena/common/sha256/sha256.h"
 #include "game_arena/proto/arena.grpc.pb.h"
-#include "game_arena/server/candidate_store.h"
 #include "gtest/gtest.h"
 
 namespace tournament_arena {
@@ -364,51 +363,6 @@ TEST_F(ProblemServerTest, MatchPagesShowTheCodeAndANameItsNewestVersion) {
   EXPECT_NE(alice.find("// alice two"), std::string::npos) << alice;
   EXPECT_NE(alice.find("solutions/alice-v02/strategy.h"), std::string::npos);
   context.TryCancel();
-}
-
-// A season from before the archive: every READY version is built into it
-// once at startup, plays nothing, and is not built again after a restart.
-TEST_F(ProblemServerTest, ReadyVersionsFromBeforeTheArchiveAreBackfilled) {
-  Stop();
-  {
-    proto::SubmissionPolicy rules;
-    rules.set_files_submit_dir("solutions");
-    rules.add_allow_paths("solutions/{submission_id}/**");
-    rules.set_versions(true);
-    rules.mutable_harness()->set_api_dep("//problem/harness:api");
-    rules.mutable_harness()->set_main_src("//problem/harness:main.cc");
-    CandidateStore old_season(dir_ / "data" / "candidates", CandidateLimits{},
-                              rules);
-    proto::SubmitRequest request;
-    request.set_display_name("carol");
-    request.set_game("nim");
-    request.set_entry_header("strategy.h");
-    auto *file = request.add_files();
-    file->set_path("strategy.h");
-    file->set_content("// carol\n");
-    std::string error;
-    ASSERT_TRUE(old_season.Create(request, &error).has_value()) << error;
-    old_season.SetStatus("carol-v01", proto::Candidate::READY, "");
-  }
-  Start();
-
-  grpc::ClientContext context;
-  std::unique_ptr<Stream> worker = Attach(1, &context);
-  const proto::WorkOrder build = NextOrder(worker.get());
-  EXPECT_TRUE(build.build_only());
-  EXPECT_EQ(build.candidate().candidate_id(), "carol-v01");
-  Answer(worker.get(), Built(build));
-  EXPECT_TRUE(
-      Eventually([&] { return !Candidate("carol-v01").artifact().empty(); }));
-  EXPECT_EQ(Candidate("carol-v01").status(), proto::Candidate::READY);
-  const std::string digest = Candidate("carol-v01").artifact();
-  context.TryCancel();
-
-  Stop();
-  Start();
-  EXPECT_EQ(Candidate("carol-v01").artifact(), digest);
-  EXPECT_EQ(Fetch(digest), "bot carol-v01");
-  EXPECT_EQ(Get("/api/candidates").find("\"PENDING\""), std::string::npos);
 }
 
 }  // namespace
