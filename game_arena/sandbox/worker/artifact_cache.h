@@ -6,8 +6,6 @@
 // names its bytes for good.
 
 #include <filesystem>
-#include <map>
-#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -31,8 +29,8 @@ class ArtifactCache {
   const std::filesystem::path dir_;
   proto::SandboxFleet::StubInterface *fleet_;  // not owned
 
+  // Held across a fetch: each digest comes once, and seldom.
   std::mutex mutex_;
-  std::map<std::string, std::shared_ptr<std::mutex>> fetching_;
 };
 
 }  // namespace tournament_arena

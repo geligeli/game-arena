@@ -67,11 +67,6 @@ proto::JobResult ProcessEngine::Run(const proto::Job &job, Observer *observer) {
     Fail(status, proto::Status::INVALID_JOB, "a job needs at least one phase");
     return result;
   }
-  // A read-only mount has no process equivalent: name the host files.
-  if (!job.workspace().inputs().empty()) {
-    Fail(status, proto::Status::INVALID_JOB, "inputs need a container engine");
-    return result;
-  }
 
   const std::filesystem::path log_dir(job.log_dir());
   if (!PrepareWorkspace(job.workspace(), log_dir, status)) {

@@ -33,16 +33,7 @@ std::optional<std::filesystem::path> ArtifactCache::Fetch(
     return std::nullopt;
   }
   const std::filesystem::path path = dir_ / digest;
-  std::shared_ptr<std::mutex> lock;
-  {
-    std::lock_guard guard(mutex_);
-    auto &entry = fetching_[digest];
-    if (entry == nullptr) {
-      entry = std::make_shared<std::mutex>();
-    }
-    lock = entry;
-  }
-  std::lock_guard fetching(*lock);
+  std::lock_guard lock(mutex_);
   if (std::filesystem::exists(path)) {
     return path;
   }
