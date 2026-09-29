@@ -4,6 +4,7 @@
 // A work order as a sandbox job: where the arena's vocabulary meets exec/'s.
 
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -33,11 +34,17 @@ struct OrderJobConfig {
 };
 
 // |capabilities| decides the rendezvous: a named referee on a fixed port, or a
-// port file.
+// port file. Without |build|, the job runs what the slot's output base holds.
 bool JobForOrder(int slot, const proto::WorkOrder &order,
                  const OrderJobConfig &config,
                  const sandbox_exec::Capabilities &capabilities,
-                 sandbox_exec::proto::Job *job, std::string *error);
+                 sandbox_exec::proto::Job *job, std::string *error,
+                 bool build = true);
+
+// Each target the order builds, and what its outputs depend on beyond the
+// image's tree: the flags, and its own side's patch. A slot whose last build
+// of a target had the same key holds the same binary.
+std::map<std::string, std::string> BuildKeys(const proto::WorkOrder &order);
 
 std::filesystem::path SlotLogDir(const OrderJobConfig &config, int slot);
 

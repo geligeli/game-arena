@@ -51,7 +51,10 @@ class OrderRunnerContainerTest : public ::testing::Test {
     sandbox_exec::ContainerEngineConfig engine_config;
     engine_config.docker = fake_docker_.string();
     engine_ = std::make_unique<sandbox_exec::ContainerEngine>(engine_config);
+  }
 
+  // A runner per test: it remembers what each slot built.
+  void SetUp() override {
     OrderJobConfig config;
     config.work_dir = root_ / "work";
     config.disk_cache = root_ / "work" / "disk_cache";
@@ -230,6 +233,30 @@ TEST_F(OrderRunnerContainerTest, TheTreeIsTheImagesNotTheWorkers) {
   EXPECT_FALSE(std::filesystem::exists(root_ / "work" / "slot0" / "repo"));
   // Bind-mount sources that docker would otherwise conjure up exist up front.
   EXPECT_TRUE(std::filesystem::is_directory(root_ / "work" / "disk_cache"));
+}
+
+TEST_F(OrderRunnerContainerTest, ASlotBuildsEachVersionOnce) {
+  ASSERT_TRUE(
+      runner_->RunOrder(0, MakeOrder("once-1", "c-ok"), {}).result.build_ok());
+
+  // The same code in the same slot: its output base holds the binaries.
+  std::size_t before = ReadFile(root_ / "docker.log").size();
+  const OrderOutcome again =
+      runner_->RunOrder(0, MakeOrder("once-2", "c-ok"), {});
+  EXPECT_TRUE(again.result.build_ok());
+  std::string mine = ReadFile(root_ / "docker.log").substr(before);
+  EXPECT_EQ(mine.find("saw-0-once-2-build"), std::string::npos) << mine;
+  ExpectLogContains(mine, "--name saw-0-once-2-bot");
+
+  // Another slot has its own output base; changed code is another binary.
+  before = ReadFile(root_ / "docker.log").size();
+  runner_->RunOrder(1, MakeOrder("once-3", "c-ok"), {});
+  proto::WorkOrder changed = MakeOrder("once-4", "c-ok");
+  changed.mutable_candidate()->mutable_patch()->append("+// v2\n");
+  runner_->RunOrder(0, changed, {});
+  mine = ReadFile(root_ / "docker.log").substr(before);
+  ExpectLogContains(mine, "--name saw-1-once-3-build");
+  ExpectLogContains(mine, "--name saw-0-once-4-build");
 }
 
 // The problem's registry_options have to survive all the way to the referee's

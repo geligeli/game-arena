@@ -143,7 +143,7 @@ void ReadGrade(const proto::WorkOrder &order, const sx::JobResult &result,
 }  // namespace
 
 OrderOutcome OutcomeFor(const proto::WorkOrder &order,
-                        const sx::JobResult &result) {
+                        const sx::JobResult &result, bool build_reused) {
   OrderOutcome outcome;
   proto::OrderResult &out = outcome.result;
 
@@ -165,19 +165,20 @@ OrderOutcome OutcomeFor(const proto::WorkOrder &order,
     return outcome;
   }
 
-  if (build_step == nullptr) {
+  const std::string build_output =
+      build_step != nullptr ? build_step->stdout() + build_step->stderr() : "";
+  if (build_reused) {
+    out.set_build_output("reused this slot's earlier build\n");
+  } else if (build_step == nullptr) {
     out.set_error("the job reported no build");
     return outcome;
-  }
-  const std::string build_output = build_step->stdout() + build_step->stderr();
-  if (build_step->timed_out()) {
+  } else if (build_step->timed_out()) {
     out.set_build_log(CompactBuildLog(build_output));
     // The timeout the engine enforced, not the order's, which may be unset.
     out.set_error("build timed out after " +
                   std::to_string(build_step->timeout_s()) + "s");
     return outcome;
-  }
-  if (build_step->exit_code() != 0) {
+  } else if (build_step->exit_code() != 0) {
     // The candidate's fault, not the order's: completed, with diagnostics.
     out.set_build_log(CompactBuildLog(build_output));
     out.set_build_failed_candidate_id(BlameForBuild(order, build_output));

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -409,6 +410,26 @@ void AddGradePhases(const proto::WorkOrder& order,
 
 }  // namespace
 
+std::map<std::string, std::string> BuildKeys(const proto::WorkOrder& order) {
+  // A submission is sources only (the arena writes its BUILD), so no build
+  // runs its code or can touch another target's outputs.
+  std::string base = order.sandbox().image();
+  for (const std::string& flag : order.bazel_flags()) {
+    base += " " + flag;
+  }
+  std::map<std::string, std::string> keys;
+  for (const proto::Side* side : SidesOf(order)) {
+    for (const std::string& target : side->build_targets()) {
+      keys[target] =
+          base + " " + std::to_string(std::hash<std::string>{}(side->patch()));
+    }
+  }
+  if (!order.referee_target().empty()) {
+    keys[order.referee_target()] = base;
+  }
+  return keys;
+}
+
 std::filesystem::path SlotLogDir(const OrderJobConfig& config, int slot) {
   return SlotDir(config, slot) / "logs";
 }
@@ -416,7 +437,7 @@ std::filesystem::path SlotLogDir(const OrderJobConfig& config, int slot) {
 bool JobForOrder(int slot, const proto::WorkOrder& order,
                  const OrderJobConfig& config,
                  const sandbox_exec::Capabilities& capabilities, sx::Job* job,
-                 std::string* error) {
+                 std::string* error, bool build) {
   const bool container = capabilities.isolates;
 
   job->set_id(sandbox_exec::SandboxName(
@@ -434,7 +455,9 @@ bool JobForOrder(int slot, const proto::WorkOrder& order,
   const BuildPaths paths = PathsFor(config, slot, container);
   const std::optional<sx::Mount> output_base =
       OutputBaseMount(order, config, slot, container);
-  AddBuildPhase(order, config, paths, output_base, container, job);
+  if (build) {
+    AddBuildPhase(order, config, paths, output_base, container, job);
+  }
 
   if (order.has_grade()) {
     AddGradePhases(order, output_base, container, job);

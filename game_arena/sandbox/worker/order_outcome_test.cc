@@ -89,6 +89,20 @@ TEST(OutcomeForTest, AGoodMatchCarriesTheRefereesTally) {
             tournament_broker::proto::GameRecord::DRAW);
 }
 
+TEST(OutcomeForTest, AReusedBuildIsABuildThatSucceeded) {
+  sx::JobResult result;
+  sx::PhaseResult *match = result.add_phases();
+  match->set_name("match");
+  AddStep(match, "bot", 0);
+  Report(AddStep(match, "referee", 0), "w");
+
+  const OrderOutcome outcome =
+      OutcomeFor(MatchOrder(1), result, /*build_reused=*/true);
+  EXPECT_TRUE(outcome.result.build_ok());
+  EXPECT_EQ(outcome.result.error(), "");
+  EXPECT_EQ(outcome.result.wins(), 1);
+}
+
 TEST(OutcomeForTest, APrintedTallyIsNotAResult) {
   sx::JobResult result;
   WithBuild(&result, 0);

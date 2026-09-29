@@ -53,6 +53,10 @@ class OrderRunner {
 
   std::mutex mutex_;
   std::map<std::string, InFlight> running_;  // keyed by order id
+  // Per slot, what its output base holds: target -> BuildKeys' key. Bazel
+  // keeps a target's outputs until it builds that target again, so an order
+  // whose every key is here needs no build.
+  std::map<int, std::map<std::string, std::string>> built_;
 };
 
 }  // namespace tournament_arena

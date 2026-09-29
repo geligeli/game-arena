@@ -17,8 +17,10 @@ struct OrderOutcome {
   std::vector<tournament_broker::proto::GameRecord> games;
 };
 
+// |build_reused|: the job had no build phase, as the slot held its binaries.
 OrderOutcome OutcomeFor(const proto::WorkOrder &order,
-                        const sandbox_exec::proto::JobResult &result);
+                        const sandbox_exec::proto::JobResult &result,
+                        bool build_reused = false);
 
 }  // namespace tournament_arena
 

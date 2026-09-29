@@ -104,11 +104,22 @@ OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
     return outcome;
   }
 
+  const std::map<std::string, std::string> keys = BuildKeys(order);
+  bool reuse = !keys.empty();
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto &held = built_[slot];
+    for (const auto &[target, key] : keys) {
+      const auto it = held.find(target);
+      reuse = reuse && it != held.end() && it->second == key;
+    }
+  }
+
   sandbox_exec::Engine *engine = EngineFor(order);
   sandbox_exec::proto::Job job;
   std::string error;
-  if (!JobForOrder(slot, order, config_, engine->capabilities(), &job,
-                   &error)) {
+  if (!JobForOrder(slot, order, config_, engine->capabilities(), &job, &error,
+                   /*build=*/!reuse)) {
     outcome.result.set_error(error);
     return outcome;
   }
@@ -119,12 +130,21 @@ OrderOutcome OrderRunner::RunOrder(int slot, const proto::WorkOrder &order,
   }
   ProgressObserver observer(order.order_id(), &progress);
   const sandbox_exec::proto::JobResult result = engine->Run(job, &observer);
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    running_.erase(order.order_id());
+  outcome = OutcomeFor(order, result, reuse);
+  std::lock_guard<std::mutex> lock(mutex_);
+  running_.erase(order.order_id());
+  if (!reuse) {
+    // A failed build may have replaced some of these outputs, or none.
+    auto &held = built_[slot];
+    for (const auto &[target, key] : keys) {
+      if (outcome.result.build_ok()) {
+        held[target] = key;
+      } else {
+        held.erase(target);
+      }
+    }
   }
-
-  return OutcomeFor(order, result);
+  return outcome;
 }
 
 void OrderRunner::Cancel(const std::string &order_id) {

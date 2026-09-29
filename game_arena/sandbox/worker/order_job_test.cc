@@ -78,6 +78,36 @@ TEST(JobForOrderTest, AMatchIsABuildPhaseThenAMatchPhase) {
   EXPECT_EQ(job.id(), "saw-0-ok-1");
 }
 
+TEST(JobForOrderTest, WithoutABuildTheMatchRunsWhatTheSlotHolds) {
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(JobForOrder(0, MatchOrder(), Config(), ContainerCapabilities(),
+                          &job, &error, /*build=*/false))
+      << error;
+  ASSERT_EQ(job.phases_size(), 1);
+  EXPECT_EQ(job.phases(0).name(), "match");
+}
+
+TEST(BuildKeysTest, EachTargetIsKeyedByItsOwnSidesCode) {
+  const auto keys = BuildKeys(MatchOrder());
+  ASSERT_EQ(keys.size(), 2u);
+  ASSERT_TRUE(keys.contains("//solutions/c-ok:bot"));
+  ASSERT_TRUE(keys.contains("//testgame:match_referee"));
+
+  proto::WorkOrder changed = MatchOrder();
+  changed.mutable_candidate()->set_patch("another patch");
+  const auto changed_keys = BuildKeys(changed);
+  EXPECT_NE(changed_keys.at("//solutions/c-ok:bot"),
+            keys.at("//solutions/c-ok:bot"));
+  EXPECT_EQ(changed_keys.at("//testgame:match_referee"),
+            keys.at("//testgame:match_referee"));
+
+  proto::WorkOrder other_image = MatchOrder();
+  other_image.mutable_sandbox()->set_image("img:2");
+  EXPECT_NE(BuildKeys(other_image).at("//testgame:match_referee"),
+            keys.at("//testgame:match_referee"));
+}
+
 TEST(JobForOrderTest, TheBuildReachesNothingAndTheMatchReachesOnlyItself) {
   sx::Job job;
   std::string error;
