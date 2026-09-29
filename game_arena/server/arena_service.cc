@@ -157,11 +157,40 @@ grpc::Status ArenaService::Submit(grpc::ServerContext *context,
   return grpc::Status::OK;
 }
 
+std::optional<proto::Candidate> ArenaService::Resolve(
+    const std::string &id) const {
+  if (auto candidate = candidates_->Get(id)) {
+    return candidate;
+  }
+  // With versions a participant's name is no candidate, but it stands for
+  // their newest version that built, under the name: the id, and paths in
+  // <submit_dir>/<name>/. A kit restores it, and `source` and `spar` pull it,
+  // exactly where they always did.
+  std::optional<proto::Candidate> latest;
+  if (candidates_->versions()) {
+    latest = candidates_->Latest(id);
+  }
+  if (!latest.has_value()) {
+    return std::nullopt;
+  }
+  const std::string &dir = problem_info_.files_submit_dir();
+  const std::string version = latest->candidate_id();
+  latest->set_candidate_id(id);
+  latest->set_patch(MovePatchDir(latest->patch(), dir, version, id));
+  for (std::string &path : *latest->mutable_file_paths()) {
+    path = MovePatchDir(path, dir, version, id);
+  }
+  for (std::string &path : *latest->mutable_touched_paths()) {
+    path = MovePatchDir(path, dir, version, id);
+  }
+  return latest;
+}
+
 grpc::Status ArenaService::GetCandidate(
     grpc::ServerContext *context, const proto::GetCandidateRequest *request,
     proto::Candidate *response) {
   const std::string reader = Reader(context);
-  const auto candidate = candidates_->Get(request->candidate_id());
+  const auto candidate = Resolve(request->candidate_id());
   if (!candidate.has_value()) {
     return {grpc::StatusCode::NOT_FOUND,
             "unknown candidate '" + request->candidate_id() + "'"};
@@ -181,7 +210,7 @@ grpc::Status ArenaService::GetSource(grpc::ServerContext *context,
       !Authenticate(context, &reader, &status)) {
     return status;
   }
-  const auto candidate = candidates_->Get(request->candidate_id());
+  const auto candidate = Resolve(request->candidate_id());
   if (!candidate.has_value()) {
     return {grpc::StatusCode::NOT_FOUND,
             "unknown candidate '" + request->candidate_id() + "'"};
@@ -193,9 +222,18 @@ grpc::Status ArenaService::GetSource(grpc::ServerContext *context,
                 ? "this tournament serves only your own submissions' source"
                 : "this tournament does not serve candidate source"};
   }
+  // A name's paths are its version's, moved: back to where they are stored.
+  std::string stored = request->candidate_id();
+  std::string path = request->path();
+  if (!candidates_->Get(stored).has_value()) {
+    const std::string version =
+        candidates_->Latest(request->candidate_id())->candidate_id();
+    path =
+        MovePatchDir(path, problem_info_.files_submit_dir(), stored, version);
+    stored = version;
+  }
   std::string error;
-  const auto content =
-      candidates_->ReadSource(request->candidate_id(), request->path(), &error);
+  const auto content = candidates_->ReadSource(stored, path, &error);
   if (!content.has_value()) {
     return {grpc::StatusCode::NOT_FOUND, error};
   }

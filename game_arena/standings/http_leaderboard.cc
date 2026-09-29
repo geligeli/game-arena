@@ -189,44 +189,83 @@ std::string HttpLeaderboard::RenderLeaderboardHtml() const {
   const std::string title =
       problem_name_.empty() ? "Leaderboard" : problem_name_;
   const std::string score = standings_->score_label();
+  // Graded rows show the host that measured it: what a reader must trust.
+  const bool graded = standings_->graded();
+  const std::vector<Standing> rows = standings_->Rank(0);
+  const bool rated = !rows.empty() && rows.front().mu.has_value();
+  const std::set<std::string> pool = pool_ ? pool_() : std::set<std::string>{};
+
+  const auto table = [&](const std::vector<const Standing *> &section,
+                         int first_rank) {
+    std::ostringstream html;
+    html << "<table><tr><th>Rank</th><th>Submission</th>"
+            "<th>Author</th><th>"
+         << HtmlEscape(score) << "</th>"
+         << (rated ? "<th>mu</th><th>sigma</th>" : "")
+         << (graded ? "<th>runs</th><th class=\"d\">machine</th>"
+                    : "<th>W</th><th>D</th><th>L</th>")
+         << "</tr>";
+    int rank = first_rank;
+    for (const Standing *row : section) {
+      // Without a registry, the player name is its own display name; with
+      // matchmaking every version of a participant shares one, so the id.
+      const auto candidate = candidates_ != nullptr
+                                 ? candidates_->Get(row->candidate_id)
+                                 : std::nullopt;
+      const std::string name = candidate.has_value() && !pool_
+                                   ? candidate->display_name()
+                                   : row->candidate_id;
+      const std::string author =
+          candidate.has_value() ? candidate->author() : std::string("-");
+      html << "<tr><td>" << rank++
+           << "</td><td class=\"l\"><a href=\"/participants/"
+           << HtmlEscape(row->candidate_id) << "\">" << HtmlEscape(name)
+           << "</a></td><td class=\"l\">" << HtmlEscape(author) << "</td><td>"
+           << absl::StrFormat("%.*f", graded ? 3 : 1, row->score) << "</td>";
+      if (rated) {
+        html << "<td>" << absl::StrFormat("%.1f", row->mu.value_or(0))
+             << "</td><td>" << absl::StrFormat("%.2f", row->sigma.value_or(0))
+             << "</td>";
+      }
+      if (graded) {
+        html << "<td>" << row->runs << "</td><td class=\"d l\">"
+             << HtmlEscape(row->machine_class.empty() ? "-"
+                                                      : row->machine_class)
+             << "</td>";
+      } else {
+        html << "<td>" << row->wins << "</td><td>" << row->draws << "</td><td>"
+             << row->losses << "</td>";
+      }
+      html << "</tr>";
+    }
+    html << "</table>";
+    return html.str();
+  };
 
   std::ostringstream html;
-  html << PageStart(title, /*refresh=*/true)
-       << "<table><tr><th>Rank</th><th>Submission</th>"
-          "<th>Author</th><th>"
-       << HtmlEscape(score) << "</th>";
-  // A graded row shows the host that measured it: what a reader must trust.
-  const bool graded = standings_->graded();
-  html << (graded ? "<th>runs</th><th class=\"d\">machine</th>"
-                  : "<th>W</th><th>D</th><th>L</th>");
-  html << "</tr>";
-
-  int rank = 1;
-  for (const Standing &row : standings_->Rank(0)) {
-    // Without a registry, the player name is its own display name.
-    const auto candidate = candidates_ != nullptr
-                               ? candidates_->Get(row.candidate_id)
-                               : std::nullopt;
-    const std::string name =
-        candidate.has_value() ? candidate->display_name() : row.candidate_id;
-    const std::string author =
-        candidate.has_value() ? candidate->author() : std::string("-");
-    html << "<tr><td>" << rank++
-         << "</td><td class=\"l\"><a href=\"/participants/"
-         << HtmlEscape(row.candidate_id) << "\">" << HtmlEscape(name)
-         << "</a></td><td class=\"l\">" << HtmlEscape(author) << "</td><td>"
-         << absl::StrFormat("%.*f", graded ? 3 : 1, row.score) << "</td>";
-    if (graded) {
-      html << "<td>" << row.runs << "</td><td class=\"d l\">"
-           << HtmlEscape(row.machine_class.empty() ? "-" : row.machine_class)
-           << "</td>";
-    } else {
-      html << "<td>" << row.wins << "</td><td>" << row.draws << "</td><td>"
-           << row.losses << "</td>";
+  html << PageStart(title, /*refresh=*/true);
+  if (pool_) {
+    // The pool keeps playing; the rest dropped out and keep their rating.
+    std::vector<const Standing *> in, out;
+    for (const Standing &row : rows) {
+      (pool.contains(row.candidate_id) ? in : out).push_back(&row);
     }
-    html << "</tr>";
+    html << "<p>The pool: its ratings are still being measured, "
+            "continuously (<a href=\"/pool\">matches and charts</a>).</p>"
+         << table(in, 1);
+    if (!out.empty()) {
+      html << "<h2>Dropped out</h2><p>No longer matched; rated as they "
+              "left.</p>"
+           << table(out, static_cast<int>(in.size()) + 1);
+    }
+  } else {
+    std::vector<const Standing *> all;
+    for (const Standing &row : rows) {
+      all.push_back(&row);
+    }
+    html << table(all, 1);
   }
-  html << "</table><p><a href=\"/api/leaderboard\">JSON</a> &middot; "
+  html << "<p><a href=\"/api/leaderboard\">JSON</a> &middot; "
           "<a href=\"/api/candidates\">candidates</a> &middot; "
           "<a href=\"/api/games\">recent games</a></p></body></html>";
   return html.str();
@@ -257,6 +296,7 @@ std::string HttpLeaderboard::RenderCandidatesJson() const {
 }
 
 std::string HttpLeaderboard::RenderLeaderboardJson() const {
+  const std::set<std::string> pool = pool_ ? pool_() : std::set<std::string>{};
   json::array rows;
   int rank = 1;
   for (const Standing &row : standings_->Rank(0)) {
@@ -284,6 +324,13 @@ std::string HttpLeaderboard::RenderLeaderboardJson() const {
         {"machine_class", row.machine_class},
         {"metrics", std::move(metrics)},
     });
+    if (row.mu.has_value()) {
+      rows.back().as_object()["mu"] = *row.mu;
+      rows.back().as_object()["sigma"] = *row.sigma;
+    }
+    if (pool_) {
+      rows.back().as_object()["pool"] = pool.contains(row.candidate_id);
+    }
   }
   return json::serialize(json::object{
       {"score_label", standings_->score_label()},

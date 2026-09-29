@@ -203,7 +203,8 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
 
 std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
                                      const std::vector<std::string> &opponents,
-                                     int games, const std::string &client_id) {
+                                     int games, const std::string &client_id,
+                                     bool record_patch) {
   const std::string job_id = "j" +
                              std::to_string(absl::ToUnixMillis(absl::Now())) +
                              "_" + std::to_string(++job_counter_);
@@ -215,6 +216,9 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
   job.status.set_state(proto::Job::QUEUED);
   job.status.set_created_unix_ms(absl::ToUnixMillis(absl::Now()));
   *job.record.mutable_submission() = candidate;
+  if (!record_patch) {
+    job.record.mutable_submission()->clear_patch();
+  }
 
   int requested = 0;
   for (const std::string &opponent : opponents) {
@@ -269,8 +273,7 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
   }
   std::vector<std::string> opponents(config_.placement_opponents().begin(),
                                      config_.placement_opponents().end());
-  const std::vector<std::string> ladder =
-      LadderLocked(candidate.candidate_id());
+  const std::vector<std::string> ladder = LadderLocked(candidate);
   opponents.insert(opponents.end(), ladder.begin(), ladder.end());
   return EnqueueLocked(candidate, opponents, config_.placement_games(),
                        client_id);
@@ -279,16 +282,27 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
 std::string Scheduler::EnqueueMatch(const proto::Candidate &candidate,
                                     const std::string &opponent, int games) {
   std::lock_guard lock(mutex_);
-  return EnqueueLocked(candidate, {opponent}, games, "");
+  return EnqueueLocked(candidate, {opponent}, games, "",
+                       /*record_patch=*/false);
 }
 
 // Rated rivals, evenly spaced from the top of the board to the bottom.
 std::vector<std::string> Scheduler::LadderLocked(
-    const std::string &self) const {
+    const proto::Candidate &candidate) const {
+  // Not itself, nor, when every submission is a version, its author's other
+  // versions: placement measures a newcomer against other participants.
+  const auto same_author = [&](const std::string &id) {
+    if (id == candidate.candidate_id()) {
+      return true;
+    }
+    const auto rival = candidates_->Get(id);
+    return !candidate.author().empty() && rival.has_value() &&
+           rival->author() == candidate.author();
+  };
   std::vector<std::string> rated;
   if (standings_ != nullptr) {
     for (const Standing &row : standings_->Rank(0)) {
-      if (row.candidate_id != self) {
+      if (!same_author(row.candidate_id)) {
         rated.push_back(row.candidate_id);
       }
     }
@@ -553,6 +567,15 @@ std::optional<proto::Job> Scheduler::GetJob(const std::string &job_id) const {
 int Scheduler::worker_count() const {
   std::lock_guard lock(mutex_);
   return static_cast<int>(workers_.size());
+}
+
+int Scheduler::total_slots() const {
+  std::lock_guard lock(mutex_);
+  int slots = 0;
+  for (const auto &[id, state] : workers_) {
+    slots += state.worker->slots();
+  }
+  return slots;
 }
 
 int Scheduler::queued_orders() const {

@@ -230,6 +230,46 @@ cc_test(
 )
 
 cc_library(
+    name = "skill_charts",
+    srcs = ["skill_charts.cc"],
+    hdrs = ["skill_charts.h"],
+    deps = [
+        "//game_arena/standings:http_leaderboard",
+        "//game_arena/standings:trueskill",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/time",
+    ],
+)
+
+cc_library(
+    name = "matchmaking",
+    srcs = ["matchmaking.cc"],
+    hdrs = ["matchmaking.h"],
+    deps = [
+        ":candidate_store",
+        ":scheduler",
+        ":skill_charts",
+        "//game_arena/proto:arena_cc_proto",
+        "//game_arena/proto:problem_cc_proto",
+        "//game_arena/standings:http_leaderboard",
+        "//game_arena/standings:trueskill",
+        "//game_arena/standings:trueskill_standings",
+        "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/time",
+    ],
+)
+
+cc_test(
+    name = "matchmaking_test",
+    srcs = ["matchmaking_test.cc"],
+    deps = [
+        ":matchmaking",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "swiss",
     srcs = ["swiss.cc"],
     hdrs = ["swiss.h"],
@@ -237,6 +277,7 @@ cc_library(
         ":candidate_store",
         ":job_log",
         ":scheduler",
+        ":skill_charts",
         "//game_arena/proto:arena_cc_proto",
         "//game_arena/standings:http_leaderboard",
         "//game_arena/standings:trueskill",
@@ -301,6 +342,7 @@ cc_binary(
         "//game_arena/standings:trueskill",
         "//game_arena/standings:trueskill_standings",
         ":problem_config",
+        ":matchmaking",
         ":scheduler",
         ":swiss",
         "//game_arena/standings:standings",

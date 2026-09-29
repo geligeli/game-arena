@@ -41,7 +41,6 @@ std::optional<proto::ProblemConfig> Load(const std::string& text,
   if (!config) {
     return std::nullopt;
   }
-  ApplyProblemDefaults(&*config);
   if (!ValidateProblemConfig(*config, error)) {
     return std::nullopt;
   }
@@ -92,7 +91,7 @@ TEST(ProblemConfigTest, RejectsUnknownFields) {
   EXPECT_FALSE(ParseProblemConfigText("problem_i: \"typo\"", &error));
 }
 
-TEST(ProblemConfigTest, AppliesDefaultsAndIsIdempotent) {
+TEST(ProblemConfigTest, UnsetLimitsReadAsTheProtosDefaults) {
   std::string error;
   auto config = Load(kMatchConfig, &error);
   ASSERT_TRUE(config.has_value()) << error;
@@ -103,10 +102,44 @@ TEST(ProblemConfigTest, AppliesDefaultsAndIsIdempotent) {
   EXPECT_EQ(config->match().games_per_order(), 10u);
   EXPECT_EQ(config->clients().default_quota().max_active_evaluations(), 1u);
   EXPECT_EQ(config->clients().default_quota().max_queued_jobs(), 8u);
+  // Even inside a message the config never mentions.
+  EXPECT_FALSE(config->match().has_matchmaking());
+  EXPECT_EQ(config->match().matchmaking().pool(), 10u);
+  EXPECT_FALSE(config->submission().versions());
+}
 
-  const std::string once = config->DebugString();
-  ApplyProblemDefaults(&*config);
-  EXPECT_EQ(config->DebugString(), once);
+TEST(ProblemConfigTest, VersionsNeedEachVersionInItsOwnDirectory) {
+  const std::string base = R"pb(
+    problem_id: "risk2"
+    build { targets: "//bot" }
+    sandbox { image: "arena/sandbox:test" }
+    match {
+      game: "risk2"
+      referee_target: "//r"
+      matchmaking {}
+    }
+    ranking { kind: TRUESKILL }
+  )pb";
+  std::string error;
+  EXPECT_TRUE(Load(base + R"pb(submission {
+                                 versions: true
+                                 files_submit_dir: "bots"
+                                 allow_paths: "bots/{submission_id}/**"
+                               })pb",
+                   &error)
+                  .has_value())
+      << error;
+  EXPECT_FALSE(Load(base + R"pb(submission {
+                                  versions: true
+                                  files_submit_dir: "bots"
+                                  allow_paths: "bots/**"
+                                })pb",
+                    &error)
+                   .has_value());
+  EXPECT_NE(error.find("submission.versions"), std::string::npos) << error;
+  // Matchmaking rates versions: none, no matchmaking.
+  EXPECT_FALSE(Load(base, &error).has_value());
+  EXPECT_NE(error.find("match.matchmaking"), std::string::npos) << error;
 }
 
 TEST(ProblemConfigTest, KeepsExplicitValuesOverDefaults) {

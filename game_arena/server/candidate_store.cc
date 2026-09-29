@@ -4,10 +4,15 @@
 #include <array>
 #include <cstdio>
 #include <fstream>
+#include <regex>
 #include <string_view>
 
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_replace.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "game_arena/server/generated_build.h"
@@ -169,6 +174,46 @@ static std::string CandidateIdFor(const proto::SubmitRequest &request) {
                                           : request.author());
 }
 
+std::string MovePatchDir(std::string_view patch, std::string_view submit_dir,
+                         std::string_view from, std::string_view to) {
+  return absl::StrReplaceAll(patch, {{absl::StrCat(submit_dir, "/", from, "/"),
+                                      absl::StrCat(submit_dir, "/", to, "/")}});
+}
+
+std::string CandidateStore::IdForLocked(
+    const proto::SubmitRequest &request) const {
+  const std::string base = CandidateIdFor(request);
+  if (!policy_.versions()) {
+    return base;
+  }
+  // One past the highest version on record: a version that failed to build
+  // keeps its number, which its job and games still name.
+  int highest = 0;
+  const std::string prefix = base + "-v";
+  for (const auto &[id, candidate] : candidates_) {
+    int n = 0;
+    if (id.starts_with(prefix) &&
+        absl::SimpleAtoi(std::string_view(id).substr(prefix.size()), &n)) {
+      highest = std::max(highest, n);
+    }
+  }
+  return absl::StrFormat("%s-v%02d", base, highest + 1);
+}
+
+std::optional<std::string> CandidateStore::FinalPatchLocked(
+    const proto::SubmitRequest &request, const std::string &id,
+    std::string *error) const {
+  if (!policy_.versions()) {
+    return PatchForLocked(request, id, error);
+  }
+  const std::string base = CandidateIdFor(request);
+  std::optional<std::string> patch = PatchForLocked(request, base, error);
+  if (patch.has_value()) {
+    *patch = MovePatchDir(*patch, policy_.files_submit_dir(), base, id);
+  }
+  return patch;
+}
+
 bool CandidateStore::Validate(const proto::SubmitRequest &request,
                               std::string *error) const {
   if (request.display_name().empty()) {
@@ -238,9 +283,16 @@ bool CandidateStore::Validate(const proto::SubmitRequest &request,
     }
   }
 
+  if (policy_.versions() &&
+      std::regex_match(CandidateIdFor(request), std::regex(".*-v[0-9]+"))) {
+    *error =
+        "a participant named like a version (<name>-vNN) would be "
+        "mistaken for one";
+    return false;
+  }
   // A synthesized patch is checked too: it is what actually gets built.
-  const std::string id = CandidateIdFor(request);
-  const std::optional<std::string> patch = PatchForLocked(request, id, error);
+  const std::string id = IdForLocked(request);
+  const std::optional<std::string> patch = FinalPatchLocked(request, id, error);
   if (!patch.has_value()) {
     return false;
   }
@@ -344,9 +396,13 @@ std::optional<proto::Candidate> CandidateStore::Create(
   }
 
   proto::Candidate candidate;
-  candidate.set_candidate_id(CandidateIdFor(request));
+  candidate.set_candidate_id(IdForLocked(request));
   candidate.set_display_name(request.display_name());
-  candidate.set_author(request.author());
+  // With versions the author is the participant a version belongs to, even
+  // where nothing authenticated the request.
+  candidate.set_author(policy_.versions() && request.author().empty()
+                           ? CandidateIdFor(request)
+                           : request.author());
   candidate.set_game(request.game());
   candidate.set_parent_id(request.parent_id());
   candidate.set_notes(request.notes());
@@ -357,7 +413,7 @@ std::optional<proto::Candidate> CandidateStore::Create(
   candidate.set_submitted_unix_ms(absl::ToUnixMillis(absl::Now()));
 
   const std::optional<std::string> patch =
-      PatchForLocked(request, candidate.candidate_id(), error);
+      FinalPatchLocked(request, candidate.candidate_id(), error);
   if (!patch.has_value()) {
     return std::nullopt;
   }
@@ -434,6 +490,33 @@ std::optional<proto::Candidate> CandidateStore::Create(
             << candidate.author() << "' (" << patch->size() << " byte patch, "
             << candidate.touched_paths_size() << " path(s) touched)";
   return candidate;
+}
+
+void CandidateStore::Backdate(const std::string &candidate_id,
+                              int64_t submitted_unix_ms) {
+  std::lock_guard lock(mutex_);
+  const auto it = candidates_.find(candidate_id);
+  if (it != candidates_.end()) {
+    it->second.set_submitted_unix_ms(submitted_unix_ms);
+    WriteManifestLocked(CandidateDir(candidate_id), it->second);
+  }
+}
+
+std::optional<proto::Candidate> CandidateStore::Latest(
+    const std::string &author) const {
+  std::lock_guard lock(mutex_);
+  const proto::Candidate *latest = nullptr;
+  for (const auto &[id, candidate] : candidates_) {
+    if (candidate.author() == author &&
+        candidate.status() == proto::Candidate::READY &&
+        // Two in one millisecond: the later version.
+        (latest == nullptr ||
+         std::pair(candidate.submitted_unix_ms(), id) >
+             std::pair(latest->submitted_unix_ms(), latest->candidate_id()))) {
+      latest = &candidate;
+    }
+  }
+  return latest == nullptr ? std::nullopt : std::optional(*latest);
 }
 
 std::optional<proto::Candidate> CandidateStore::Get(

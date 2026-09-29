@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -31,6 +32,10 @@ struct Standing {
   std::string worker_id;
   std::string machine_class;
   int runs = 0;
+
+  // TrueSkill: the rating behind the score, which is mu - 3 sigma.
+  std::optional<double> mu;
+  std::optional<double> sigma;
 };
 
 class Standings {

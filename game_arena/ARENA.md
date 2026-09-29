@@ -208,6 +208,37 @@ worker starts both bots beside one referee, each told
 rendezvous exists for. A side named `builtin:<spec>` has no code: the referee
 plays it, and when both sides are builtins it plays the whole match itself.
 
+## Versions and continuous matchmaking
+
+Two opt-in settings change what a submission is and how often the fleet plays.
+
+- **`submission.versions: true`:** every submission is a candidate of its own.
+  - Each one is `<participant>-vNN`, immutable and rated on its own, instead of
+    replacing the participant's entry.
+  - Its patch is moved to `<files_submit_dir>/<participant>-vNN/`, so two
+    versions share an order's tree. That is why `allow_paths` must be exactly
+    `<files_submit_dir>/{submission_id}/**`.
+  - A participant's bare name still stands for their newest version that
+    built, under the name, in `GetCandidate` and `GetSource`. A kit's restore,
+    `arena_cli source <name>` and `spar <name>` behave as they always did.
+  - TrueSkill runs without dynamics (tau 0): a version never changes.
+- **`match.matchmaking { pool: 10 }`** (needs versions and TRUESKILL): the
+  coordinator keeps the fleet busy.
+  - The pool is the top `pool` by mu - 3 sigma, plus every version with fewer
+    than `newcomer_games` pool games. The rest drop out and stop being
+    scheduled, so the work grows with the pool, not with every version ever
+    submitted.
+  - Whenever nothing is queued and a slot is free, the pool's least certain
+    member plays the rival where a game moves the ratings most: TrueSkill's
+    match quality times their combined variance.
+  - Placement jobs are queued, so they never wait behind a match.
+  - The leaderboard shows the pool apart from those that dropped out.
+  - `/pool` has the matches and the Swiss re-rank's charts, live, from
+    `<data_dir>/matchmaking.tsv`.
+- **Moving a tournament to versions:** `arena_tournament up
+  --import_versions_from=<its old data dir>` makes every submission in its job
+  log a version first.
+
 ## Re-ranking every version
 
 A resubmit replaces the code behind a participant, and placement is sparse,

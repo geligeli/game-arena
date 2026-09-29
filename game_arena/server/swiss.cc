@@ -11,9 +11,9 @@
 
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_replace.h"
 #include "absl/strings/str_split.h"
 #include "absl/time/time.h"
+#include "game_arena/server/skill_charts.h"
 #include "game_arena/standings/http_leaderboard.h"
 
 namespace tournament_arena {
@@ -31,54 +31,6 @@ std::pair<std::string, std::string> Key(const std::string &a,
 }
 
 bool IsBuiltin(const std::string &id) { return id.starts_with(kBuiltinPrefix); }
-
-// The reference categorical order (light), by participant; builtins are grey.
-constexpr const char *kSeries[] = {"#2a78d6", "#eb6834", "#1baf7a", "#eda100",
-                                   "#e87ba4", "#008300", "#4a3aa7", "#e34948"};
-constexpr const char *kBuiltinInk = "#898781";
-
-std::string Fixed(double value, int digits = 1) {
-  char text[32];
-  std::snprintf(text, sizeof(text), "%.*f", digits, value);
-  return text;
-}
-
-// A linear map from [lo, hi] onto [a, b].
-struct Scale {
-  double lo, hi, a, b;
-  double operator()(double v) const {
-    return hi == lo ? a : a + (v - lo) * (b - a) / (hi - lo);
-  }
-};
-
-// Gridlines and labels every |step| along y, for a chart |width| wide.
-void YAxis(const Scale &y, double step, double left, double width,
-           std::ostringstream &svg) {
-  for (double v = std::ceil(y.lo / step) * step; v <= y.hi; v += step) {
-    svg << "<line class=grid x1=" << left << " x2=" << left + width
-        << " y1=" << y(v) << " y2=" << y(v) << " />"
-        << "<text class=tick x=" << left - 6 << " y=" << y(v) + 4
-        << " text-anchor=end>" << Fixed(v, 0) << "</text>";
-  }
-}
-
-constexpr std::string_view kStyle = R"(<style>
-.viz{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
---grid:#e1e0d9;--axis:#c3c2b7;background:var(--surface);color:var(--ink);
-font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:900px}
-.viz svg{display:block;width:100%;height:auto;overflow:visible}
-.viz .grid{stroke:var(--grid);stroke-width:1}
-.viz .tick{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
-.viz .lbl{fill:var(--ink2);font-size:11px}
-.viz .live{fill:var(--ink);font-weight:600}
-.viz h2{font-size:16px;margin:28px 0 4px}
-.viz p.note{color:var(--ink2);font-size:13px;margin:0 0 8px}
-.legend{display:flex;gap:16px;font-size:12px;color:var(--ink2);margin:4px 0}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:5px;
-margin-right:5px;vertical-align:-1px}
-.viz circle,.viz path.hit{cursor:default}
-td.l{text-align:left}
-</style>)";
 
 }  // namespace
 
@@ -139,35 +91,52 @@ std::vector<SwissEntry> SeedVersions(const JobLog &jobs,
                       return !order.game_ids().empty();
                     });
     const proto::Candidate &submission = record.submission();
-    const std::string &participant = submission.candidate_id();
-    if (!played || !seen[participant].insert(submission.patch()).second) {
+    // A job log from a versioned coordinator names versions; its author is
+    // always the participant.
+    const std::string participant = submission.author().empty()
+                                        ? submission.candidate_id()
+                                        : submission.author();
+    // The participant's own patch, whichever directory it was stored under.
+    const std::string patch = MovePatchDir(
+        submission.patch(), submit_dir, submission.candidate_id(), participant);
+    // A match's record carries no patch: only submissions are versions.
+    if (!played || submission.patch().empty() ||
+        !seen[participant].insert(patch).second) {
       continue;
     }
     char id[64];
     std::snprintf(id, sizeof(id), "%s-v%02zu", participant.c_str(),
                   seen[participant].size());
 
+    // A versioned store names and moves the version itself; otherwise the
+    // version is made to look like a participant of its own.
     proto::SubmitRequest request;
-    request.set_author(id);
+    request.set_author(store->versions() ? participant : id);
     request.set_display_name(id);
     request.set_game(submission.game());
-    request.set_patch(absl::StrReplaceAll(
-        submission.patch(), {{absl::StrCat(submit_dir, "/", participant, "/"),
-                              absl::StrCat(submit_dir, "/", id, "/")}}));
+    request.set_patch(store->versions()
+                          ? patch
+                          : MovePatchDir(patch, submit_dir, participant, id));
     request.set_entry_header(submission.entry_header());
     *request.mutable_extra_deps() = submission.extra_deps();
     *request.mutable_params() = submission.params();
     std::string error;
     // Already there when a run resumes on its own data dir.
-    if (!store->Get(id).has_value() &&
-        !store->Create(request, &error).has_value()) {
-      LOG(WARNING) << "Swiss: skipping " << id << " (job "
-                   << record.job().job_id() << "): " << error;
-      continue;
+    std::string made = id;
+    if (!store->Get(id).has_value()) {
+      const std::optional<proto::Candidate> created =
+          store->Create(request, &error);
+      if (!created.has_value()) {
+        LOG(WARNING) << "Swiss: skipping " << id << " (job "
+                     << record.job().job_id() << "): " << error;
+        continue;
+      }
+      made = created->candidate_id();
     }
-    store->SetStatus(id, proto::Candidate::READY, "");
+    store->SetStatus(made, proto::Candidate::READY, "");
+    store->Backdate(made, submission.submitted_unix_ms());
     SwissEntry &entry = entries.emplace_back();
-    entry.id = id;
+    entry.id = made;
     entry.participant = participant;
     entry.version = static_cast<int>(seen[participant].size());
     entry.submitted_unix_ms = submission.submitted_unix_ms();
@@ -374,18 +343,28 @@ std::optional<std::pair<std::string, std::string>> SwissRun::Route(
   const std::map<std::string, Rating> now = Snapshot();
 
   std::lock_guard lock(mutex_);
-  std::map<std::string, int> slot;
-  for (const SwissEntry &entry : entries_) {
-    if (!entry.participant.empty() && !slot.contains(entry.participant)) {
-      const int next = static_cast<int>(slot.size());
-      slot[entry.participant] = next;
-    }
+  std::vector<ChartEntry> entries;
+  for (const SwissEntry &e : entries_) {
+    const Standing standing = ratings_->Get(e.id);
+    entries.push_back(
+        {.id = e.id,
+         .participant = e.participant,
+         .version = e.version,
+         .submitted_unix_ms = e.submitted_unix_ms,
+         .rating = now.at(e.id),
+         .wins = standing.wins,
+         .losses = standing.losses,
+         .bold = e.live,
+         .note = e.live ? absl::StrCat("board #", e.board_rank) : ""});
   }
-  const auto ink = [&](const SwissEntry &entry) -> std::string {
-    return entry.participant.empty()
-               ? kBuiltinInk
-               : kSeries[slot.at(entry.participant) % std::size(kSeries)];
-  };
+  std::vector<ChartSnapshot> history;
+  for (std::size_t round = 0; round < snapshots_.size(); ++round) {
+    history.push_back({static_cast<double>(round), snapshots_[round]});
+  }
+  std::vector<std::pair<double, std::string>> ticks;
+  for (int round = 0; round <= rounds_; ++round) {
+    ticks.emplace_back(round, std::to_string(round));
+  }
   std::vector<const SwissEntry *> by_mu;
   for (const SwissEntry &entry : entries_) {
     by_mu.push_back(&entry);
@@ -393,23 +372,10 @@ std::optional<std::pair<std::string, std::string>> SwissRun::Route(
   std::sort(by_mu.begin(), by_mu.end(), [&](auto *a, auto *b) {
     return now.at(a->id).mu > now.at(b->id).mu;
   });
-  double lo = 1e9, hi = -1e9;
-  for (const auto &snapshot : snapshots_) {
-    for (const auto &[id, r] : snapshot) {
-      lo = std::min(lo, r.mu - 2 * r.sigma);
-      hi = std::max(hi, r.mu + 2 * r.sigma);
-    }
-  }
-  for (const auto &[id, r] : now) {
-    lo = std::min(lo, r.mu - 2 * r.sigma);
-    hi = std::max(hi, r.mu + 2 * r.sigma);
-  }
-  lo = std::floor(lo / 5) * 5;
-  hi = std::ceil(hi / 5) * 5;
 
   std::ostringstream html;
   html << tournament_broker::PageStart("Swiss re-rank", /*refresh=*/true)
-       << kStyle << "<div class=viz>";
+       << kSkillChartStyle << "<div class=viz>";
   int done = 0, total = 0;
   for (const auto &round : played_) {
     for (const Match &m : round) {
@@ -425,225 +391,11 @@ std::optional<std::pair<std::string, std::string>> SwissRun::Route(
        << done << " of " << total << " matches done (" << running
        << " running, " << queued << " queued) &middot; " << workers
        << " worker(s) &middot; " << games_ << " games per match</p>";
-
-  html << "<div class=legend>";
-  for (const auto &[participant, index] : slot) {
-    html << "<span><i style=\"background:"
-         << kSeries[index % std::size(kSeries)] << "\"></i>"
-         << HtmlEscape(participant) << "</span>";
-  }
-  html << "<span><i style=\"background:" << kBuiltinInk
-       << "\"></i>builtin</span></div>";
-
-  // 1. Where everyone stands now: mu with a 2-sigma interval.
-  {
-    const double left = 230, width = 520, row = 16, top = 20;
-    const Scale x{lo, hi, left, left + width};
-    std::ostringstream svg;
-    for (double v = lo; v <= hi; v += 5) {
-      svg << "<line class=grid x1=" << x(v) << " x2=" << x(v)
-          << " y1=" << top - 6 << " y2=" << top + row * by_mu.size()
-          << " /><text class=tick x=" << x(v) << " y=" << top - 10
-          << " text-anchor=middle>" << Fixed(v, 0) << "</text>";
-    }
-    for (std::size_t i = 0; i < by_mu.size(); ++i) {
-      const SwissEntry &e = *by_mu[i];
-      const Rating &r = now.at(e.id);
-      const double y = top + row * i + row / 2;
-      const tournament_arena::Standing s = ratings_->Get(e.id);
-      const std::string tip = absl::StrCat(
-          e.id, ": mu ", Fixed(r.mu), " sigma ", Fixed(r.sigma), ", ", s.wins,
-          "-", s.losses,
-          e.live ? absl::StrCat(", live, #", e.board_rank, " on the board")
-                 : "");
-      svg << "<text class=\"lbl" << (e.live ? " live" : "")
-          << "\" x=" << left - 8 << " y=" << y + 4 << " text-anchor=end>"
-          << i + 1 << ". " << HtmlEscape(e.id)
-          << (e.live ? absl::StrCat(" (board #", e.board_rank, ")") : "")
-          << "</text><g><title>" << HtmlEscape(tip) << "</title>"
-          << "<rect x=" << left << " y=" << y - row / 2 << " width=" << width
-          << " height=" << row << " fill=transparent />"
-          << "<line x1=" << x(r.mu - 2 * r.sigma)
-          << " x2=" << x(r.mu + 2 * r.sigma) << " y1=" << y << " y2=" << y
-          << " stroke=\"" << ink(e) << "\" stroke-width=2 stroke-linecap=round "
-          << "opacity=0.55 /><circle cx=" << x(r.mu) << " cy=" << y
-          << " r=4.5 fill=\"" << ink(e)
-          << "\" stroke=\"var(--surface)\" stroke-width=2 /></g>";
-    }
-    html
-        << "<h2>Where each entry's skill converges</h2><p class=note>TrueSkill "
-           "mu, the bar &plusmn;2&sigma;; bold rows are the versions on the "
-           "board, with their place there.</p><svg viewBox=\"0 0 "
-        << left + width + 20 << " " << top + row * by_mu.size() + 10 << "\">"
-        << svg.str() << "</svg>";
-  }
-
-  // Each participant's versions along |at|, mu +-1 sigma; builtins as levels.
-  const auto by_participant =
-      [&](std::string_view title, std::string_view note,
-          const std::function<double(const SwissEntry &)> &at,
-          const std::vector<std::pair<double, std::string>> &ticks) {
-        double first = ticks.front().first, last_x = ticks.back().first;
-        for (const SwissEntry &e : entries_) {
-          if (!e.participant.empty()) {
-            first = std::min(first, at(e));
-            last_x = std::max(last_x, at(e));
-          }
-        }
-        const double left = 40, width = 680, top = 10, height = 260;
-        const Scale x{first, last_x, left + 10, left + width - 90};
-        const Scale y{lo, hi, top + height, top};
-        std::ostringstream svg;
-        YAxis(y, 5, left, width, svg);
-        for (const auto &[at_tick, label] : ticks) {
-          svg << "<text class=tick x=" << x(at_tick)
-              << " y=" << top + height + 16 << " text-anchor=middle>"
-              << HtmlEscape(label) << "</text>";
-        }
-        // Placed last, and nudged apart where two would overlap.
-        struct Label {
-          double y, x;
-          std::string text;
-        };
-        std::vector<Label> labels;
-        for (const SwissEntry &e : entries_) {
-          if (!e.participant.empty()) {
-            continue;
-          }
-          const double level = y(now.at(e.id).mu);
-          svg << "<line x1=" << left << " x2=" << left + width - 90
-              << " y1=" << level << " y2=" << level << " stroke=\""
-              << kBuiltinInk
-              << "\" stroke-width=1.5 stroke-dasharray=\"4 4\" />";
-          labels.push_back({level + 4, left + width - 86, e.id});
-        }
-        for (const auto &[participant, index] : slot) {
-          const std::string color = kSeries[index % std::size(kSeries)];
-          std::string path;
-          const SwissEntry *last = nullptr;
-          std::ostringstream marks;
-          for (const SwissEntry &e : entries_) {
-            if (e.participant != participant) {
-              continue;
-            }
-            const Rating &r = now.at(e.id);
-            absl::StrAppend(&path, path.empty() ? "M" : "L", x(at(e)), " ",
-                            y(r.mu));
-            marks << "<g><title>" << HtmlEscape(e.id) << ": mu " << Fixed(r.mu)
-                  << " sigma " << Fixed(r.sigma)
-                  << "</title><line x1=" << x(at(e)) << " x2=" << x(at(e))
-                  << " y1=" << y(r.mu - r.sigma) << " y2=" << y(r.mu + r.sigma)
-                  << " stroke=\"" << color
-                  << "\" stroke-width=1 opacity=0.6 /><circle cx=" << x(at(e))
-                  << " cy=" << y(r.mu) << " r=4 fill=\"" << color
-                  << "\" stroke=\"var(--surface)\" stroke-width=2 /></g>";
-            last = &e;
-          }
-          svg << "<path d=\"" << path << "\" fill=none stroke=\"" << color
-              << "\" stroke-width=2 />" << marks.str();
-          if (last != nullptr) {
-            labels.push_back(
-                {y(now.at(last->id).mu) + 4, x(at(*last)) + 8, participant});
-          }
-        }
-        std::sort(labels.begin(), labels.end(),
-                  [](const Label &a, const Label &b) { return a.y < b.y; });
-        for (std::size_t i = 0; i < labels.size(); ++i) {
-          for (std::size_t j = 0; j < i; ++j) {
-            if (std::abs(labels[i].x - labels[j].x) < 80 &&
-                labels[i].y < labels[j].y + 12) {
-              labels[i].y = labels[j].y + 12;
-            }
-          }
-          svg << "<text class=lbl x=" << labels[i].x << " y=" << labels[i].y
-              << ">" << HtmlEscape(labels[i].text) << "</text>";
-        }
-        html << "<h2>" << title << "</h2><p class=note>" << note
-             << "</p><svg viewBox=\"0 0 " << left + width << " "
-             << top + height + 24 << "\">" << svg.str() << "</svg>";
-      };
-
-  // 2. Did later versions get stronger?
-  {
-    int versions = 2;
-    for (const SwissEntry &e : entries_) {
-      versions = std::max(versions, e.version);
-    }
-    std::vector<std::pair<double, std::string>> ticks;
-    for (int v = 1; v <= versions; ++v) {
-      ticks.emplace_back(v, absl::StrCat("v", v));
-    }
-    by_participant(
-        "Skill by version",
-        "Each participant's versions in submission order, mu &plusmn;1&sigma;; "
-        "dashed lines are the builtins. A curve that flattens or falls is "
-        "iteration that stopped paying.",
-        [](const SwissEntry &e) { return e.version; }, ticks);
-  }
-  // 2b. The same on one clock: who moved when, and whether they converged.
-  {
-    int64_t first = INT64_MAX, last = 0;
-    for (const SwissEntry &e : entries_) {
-      if (!e.participant.empty()) {
-        first = std::min(first, e.submitted_unix_ms);
-        last = std::max(last, e.submitted_unix_ms);
-      }
-    }
-    std::vector<std::pair<double, std::string>> ticks;
-    for (int i = 0; i <= 5; ++i) {
-      const double t = first + (last - first) * i / 5.0;
-      ticks.emplace_back(
-          t, absl::FormatTime("%b %d %H:%M",
-                              absl::FromUnixMillis(static_cast<int64_t>(t)),
-                              absl::LocalTimeZone()));
-    }
-    by_participant(
-        "Skill by submission time",
-        "Every version where it was submitted, mu &plusmn;1&sigma;, all "
-        "participants on one clock: whether they climbed together, and who "
-        "stalled while the others moved.",
-        [](const SwissEntry &e) {
-          return static_cast<double>(e.submitted_unix_ms);
-        },
-        ticks);
-  }
-
-  // 3. Convergence: mu after each round, every entry.
-  {
-    const double left = 40, width = 680, top = 10, height = 260;
-    const Scale x{0, static_cast<double>(std::max(1, rounds_)), left + 10,
-                  left + width - 10};
-    const Scale y{lo, hi, top + height, top};
-    std::ostringstream svg;
-    YAxis(y, 5, left, width, svg);
-    for (int round = 0; round <= rounds_; ++round) {
-      svg << "<text class=tick x=" << x(round) << " y=" << top + height + 16
-          << " text-anchor=middle>" << round << "</text>";
-    }
-    // The live versions last, so they draw on top.
-    std::vector<const SwissEntry *> order;
-    for (const SwissEntry &e : entries_) {
-      order.push_back(&e);
-    }
-    std::stable_partition(order.begin(), order.end(),
-                          [](auto *e) { return !e->live; });
-    for (const SwissEntry *e : order) {
-      std::string path;
-      for (std::size_t round = 0; round < snapshots_.size(); ++round) {
-        absl::StrAppend(&path, round == 0 ? "M" : "L", x(round), " ",
-                        y(snapshots_[round].at(e->id).mu));
-      }
-      svg << "<path d=\"" << path << "\" fill=none stroke=\"" << ink(*e)
-          << "\" stroke-width=" << (e->live ? 2 : 1)
-          << " opacity=" << (e->live ? 1 : 0.4)
-          << (e->participant.empty() ? " stroke-dasharray=\"4 4\"" : "")
-          << "><title>" << HtmlEscape(e->id) << "</title></path>";
-    }
-    html << "<h2>Convergence</h2><p class=note>Mu after each round; the live "
-            "versions drawn heavier.</p><svg viewBox=\"0 0 "
-         << left + width << " " << top + height + 24 << "\">" << svg.str()
-         << "</svg>";
-  }
+  html << SkillCharts(
+      entries, history, ticks,
+      {.converge = "TrueSkill mu, the bar &plusmn;2&sigma;; bold rows are the "
+                   "versions on the board, with their place there.",
+       .convergence = "Mu after each round; the live versions drawn heavier."});
 
   // The same numbers as a table.
   html << "<h2>Standings</h2><table><tr><th>#</th><th>entry</th><th>mu</th>"

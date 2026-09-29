@@ -63,6 +63,9 @@ ABSL_FLAG(std::string, data_dir, "",
 ABSL_FLAG(std::string, swiss_from, "",
           "swiss: the tournament whose every version is re-ranked. Default: "
           "$ARENA_STATE_DIR/<problem_id>");
+ABSL_FLAG(std::string, import_versions_from, "",
+          "up, with submission.versions: first make every submission in this "
+          "data dir's job log a version here (see problem_server)");
 ABSL_FLAG(int, swiss_rounds, 0, "swiss: rounds. 0: ceil(log2(entries)) + 3");
 ABSL_FLAG(int, swiss_games, 2, "swiss: games per match");
 ABSL_FLAG(int, grpc_port, 50051, "up: the Arena and SandboxFleet port");
@@ -595,6 +598,10 @@ int RunUp(const ArenaRunfiles& runfiles, bool swiss = false) {
       absl::StrCat("--http_port=", http_port),
       "--clients=" + clients.string(),
   };
+  if (const std::string from = absl::GetFlag(FLAGS_import_versions_from);
+      !from.empty()) {
+    server_args.push_back("--import_versions_from=" + Resolve(from).string());
+  }
   if (swiss) {
     server_args.push_back("--swiss_from=" +
                           PathFlag(FLAGS_swiss_from, state).string());

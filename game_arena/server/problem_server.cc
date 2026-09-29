@@ -25,6 +25,7 @@
 #include "game_arena/server/dashboard.h"
 #include "game_arena/server/fleet_service.h"
 #include "game_arena/server/job_log.h"
+#include "game_arena/server/matchmaking.h"
 #include "game_arena/server/problem_config.h"
 #include "game_arena/server/scheduler.h"
 #include "game_arena/server/swiss.h"
@@ -70,6 +71,10 @@ ABSL_FLAG(int, swiss_rounds, 0,
           "after the ones already played. 0: ceil(log2(entries)) + 3");
 ABSL_FLAG(int, swiss_games, 2,
           "Games per Swiss match: two gives each side each seat once");
+ABSL_FLAG(std::string, import_versions_from, "",
+          "With submission.versions: before serving, make every submission in "
+          "this data dir's job log that played a game a READY version here. "
+          "For moving a tournament to versions; reads it, never writes it");
 ABSL_FLAG(int, shutdown_grace_s, 5,
           "How long a shutdown waits for in-flight RPCs to finish before "
           "cancelling them");
@@ -221,6 +226,20 @@ int main(int argc, char** argv) {
     // No dynamics: a version's code never changes, so every game is evidence.
     trueskill_params.tau = 0;
   }
+  if (problem->submission().versions()) {
+    trueskill_params.tau = 0;
+  }
+  if (const std::filesystem::path from =
+          absl::GetFlag(FLAGS_import_versions_from);
+      !from.empty()) {
+    tournament_broker::GameHistory old_games(from / "games");
+    const tournament_arena::TrueSkillStandings board(old_games, nullptr,
+                                                     trueskill_params);
+    const auto imported = tournament_arena::SeedVersions(
+        tournament_arena::JobLog(from / "jobs"),
+        problem->submission().files_submit_dir(), board, &candidates);
+    LOG(INFO) << "Imported " << imported.size() << " version(s) from " << from;
+  }
 
   std::unique_ptr<tournament_arena::Standings> standings;
   const tournament_arena::TrueSkillStandings* ratings = nullptr;
@@ -262,13 +281,25 @@ int main(int argc, char** argv) {
 
   tournament_arena::JobLog job_log(data_dir / "jobs");
   std::unique_ptr<tournament_arena::SwissRun> swiss;
+  std::unique_ptr<tournament_arena::Matchmaker> matchmaker;
   tournament_arena::Scheduler scheduler(
       SchedulerConfigFor(*problem), &candidates, standings.get(), &history,
-      &job_log, [&swiss](const tournament_arena::proto::Job& job) {
+      &job_log, [&swiss, &matchmaker](const tournament_arena::proto::Job& job) {
         if (swiss) {
           swiss->OnConcluded(job);
         }
+        if (matchmaker) {
+          matchmaker->OnConcluded(job);
+        }
       });
+  if (problem->match().has_matchmaking() && swiss_from.empty()) {
+    matchmaker = std::make_unique<tournament_arena::Matchmaker>(
+        problem->match().matchmaking(), problem->match().game(),
+        std::vector<std::string>(problem->match().placement_opponents().begin(),
+                                 problem->match().placement_opponents().end()),
+        &scheduler, &candidates, ratings, trueskill_params,
+        data_dir / "matchmaking.tsv");
+  }
   // Curated: the operator's image names and timeouts are not a submitter's.
   tournament_arena::proto::ProblemInfo info;
   info.set_problem_id(problem->problem_id());
@@ -342,14 +373,22 @@ int main(int argc, char** argv) {
       absl::GetFlag(FLAGS_http_port), &history, &candidates, standings.get(),
       problem->display_name().empty() ? problem->problem_id()
                                       : problem->display_name(),
-      [&dashboard, &swiss](std::string_view target) {
+      [&dashboard, &swiss, &matchmaker](std::string_view target) {
         if (swiss) {
           if (auto page = swiss->Route(target)) {
             return page;
           }
         }
+        if (matchmaker) {
+          if (auto page = matchmaker->Route(target)) {
+            return page;
+          }
+        }
         return dashboard.Route(target);
       });
+  if (matchmaker) {
+    leaderboard.set_pool([&matchmaker] { return matchmaker->Members(); });
+  }
   if (!leaderboard.Start()) {
     return 1;
   }
@@ -382,6 +421,12 @@ int main(int argc, char** argv) {
               << "/swiss";
   }
 
+  if (matchmaker) {
+    matchmaker->Start();
+    LOG(INFO) << "Matchmaking: http://localhost:"
+              << absl::GetFlag(FLAGS_http_port) << "/pool";
+  }
+
   int signum = 0;
   sigwait(&shutdown_signals, &signum);
   LOG(INFO) << "Shutting down";
@@ -391,5 +436,6 @@ int main(int argc, char** argv) {
                    std::chrono::seconds(absl::GetFlag(FLAGS_shutdown_grace_s)));
   leaderboard.Stop();
   swiss.reset();
+  matchmaker.reset();
   return 0;
 }

@@ -84,6 +84,8 @@ class Scheduler {
   void OnGame(const proto::OrderGame &game);
 
   int worker_count() const;
+  // Every attached worker's slots: what the fleet can run at once.
+  int total_slots() const;
   int queued_orders() const;
   int in_flight_orders() const;
 
@@ -104,16 +106,21 @@ class Scheduler {
     std::vector<std::string> in_flight;  // order ids
   };
 
-  std::vector<std::string> LadderLocked(const std::string &self) const;
+  // Rated rivals for |candidate|: never its author's other versions.
+  std::vector<std::string> LadderLocked(
+      const proto::Candidate &candidate) const;
   // Nullopt when the rival cannot play. Not const: it consumes an order id.
   std::optional<proto::WorkOrder> MakeOrderLocked(
       const proto::Candidate &candidate, const std::string &opponent, int games,
       const std::string &job_id);
   void FillSideLocked(const proto::Candidate &candidate,
                       proto::Side *side) const;
+  // |record_patch|: keep the submission's patch in the job log, which only
+  // a submission needs; a match's candidate is already in the store.
   std::string EnqueueLocked(const proto::Candidate &candidate,
                             const std::vector<std::string> &opponents,
-                            int games, const std::string &client_id);
+                            int games, const std::string &client_id,
+                            bool record_patch = true);
   void AbortJobLocked(Job *job, const std::string &reason);
   void ReleaseReservationLocked(const std::string &client_id);
   void DispatchLocked();

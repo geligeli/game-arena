@@ -270,6 +270,80 @@ TEST_F(CandidateStoreTest, TheIdIsTheAuthenticatedParticipant) {
   EXPECT_EQ(candidate->candidate_id(), "alice");
 }
 
+// With submission.versions, each submission is a candidate of its own.
+class VersionedStoreTest : public CandidateStoreTest {
+ protected:
+  void SetUp() override {
+    CandidateStoreTest::SetUp();
+    proto::SubmissionPolicy rules = MakeRules();
+    rules.clear_allow_paths();
+    rules.add_allow_paths("solutions/{submission_id}/**");
+    rules.set_versions(true);
+    store_ = std::make_unique<CandidateStore>(dir_, CandidateLimits{}, rules);
+  }
+
+  proto::SubmitRequest Alice(const std::string &content) {
+    proto::SubmitRequest request = MakeRequest("alice's bot");
+    request.set_author("alice");
+    request.mutable_files(0)->set_content(content);
+    return request;
+  }
+};
+
+TEST_F(VersionedStoreTest, EverySubmissionIsTheNextVersion) {
+  std::string error;
+  const auto first = store_->Create(Alice("// one\n"), &error);
+  ASSERT_TRUE(first.has_value()) << error;
+  EXPECT_EQ(first->candidate_id(), "alice-v01");
+  EXPECT_EQ(first->author(), "alice");
+  store_->SetStatus("alice-v01", proto::Candidate::BUILD_FAILED, "no");
+  // A failed version keeps its number.
+  const auto second = store_->Create(Alice("// two\n"), &error);
+  ASSERT_TRUE(second.has_value()) << error;
+  EXPECT_EQ(second->candidate_id(), "alice-v02");
+  EXPECT_EQ(store_->size(), 2u);
+  EXPECT_EQ(*store_->ReadSource("alice-v02", "solutions/alice-v02/strategy.h",
+                                &error),
+            "// two\n");
+  EXPECT_TRUE(store_->ReadSource("alice-v01", "solutions/alice-v01/strategy.h",
+                                 &error));
+}
+
+TEST_F(VersionedStoreTest, APatchMovesToTheVersionsDirectory) {
+  proto::SubmitRequest request;
+  request.set_display_name("alice");
+  request.set_author("alice");
+  request.set_patch(
+      "--- /dev/null\n+++ b/solutions/alice/strategy.h\n@@ -0,0 +1,2 @@\n"
+      "+#include \"solutions/alice/util.h\"\n+// a\n");
+  std::string error;
+  const auto candidate = store_->Create(request, &error);
+  ASSERT_TRUE(candidate.has_value()) << error;
+  EXPECT_EQ(candidate->candidate_id(), "alice-v01");
+  EXPECT_EQ(candidate->patch().find("solutions/alice/"), std::string::npos);
+  EXPECT_NE(candidate->patch().find("+#include \"solutions/alice-v01/util.h\""),
+            std::string::npos);
+}
+
+TEST_F(VersionedStoreTest, LatestIsTheNewestThatBuilt) {
+  std::string error;
+  EXPECT_FALSE(store_->Latest("alice").has_value());
+  ASSERT_TRUE(store_->Create(Alice("// one\n"), &error)) << error;
+  ASSERT_TRUE(store_->Create(Alice("// two\n"), &error)) << error;
+  store_->SetStatus("alice-v01", proto::Candidate::READY, "");
+  EXPECT_EQ(store_->Latest("alice")->candidate_id(), "alice-v01");
+  store_->SetStatus("alice-v02", proto::Candidate::READY, "");
+  EXPECT_EQ(store_->Latest("alice")->candidate_id(), "alice-v02");
+}
+
+TEST_F(VersionedStoreTest, ANameThatLooksLikeAVersionIsRefused) {
+  proto::SubmitRequest request = MakeRequest("x");
+  request.set_author("bob-v03");
+  std::string error;
+  EXPECT_FALSE(store_->Create(request, &error).has_value());
+  EXPECT_NE(error.find("-vNN"), std::string::npos) << error;
+}
+
 TEST_F(CandidateStoreTest, ResubmitReplacesTheParticipantsEntry) {
   proto::SubmitRequest request = MakeRequest();
   request.add_files()->set_path("helper.h");

@@ -9,6 +9,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -40,6 +41,12 @@ class HttpLeaderboard {
                   std::string problem_name = "", Routes more = nullptr);
   ~HttpLeaderboard();
 
+  // The candidates still being matched (continuous matchmaking), before
+  // Start(): the board shows them apart from those that dropped out.
+  void set_pool(std::function<std::set<std::string>()> pool) {
+    pool_ = std::move(pool);
+  }
+
   // Starts the accept thread. Returns false when the port cannot be bound.
   bool Start();
   void Stop();
@@ -65,6 +72,7 @@ class HttpLeaderboard {
   const tournament_arena::Standings *standings_;       // not owned, may be null
   const std::string problem_name_;
   const Routes more_;
+  std::function<std::set<std::string>()> pool_;
   // Everything on the acceptor and its sockets runs on thread_.
   boost::asio::io_context ioc_{1};
   boost::asio::ip::tcp::acceptor acceptor_{ioc_};

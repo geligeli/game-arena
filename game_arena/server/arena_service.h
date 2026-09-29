@@ -3,6 +3,7 @@
 
 // Agent-facing RPCs. The token is metadata, so no stored request or log has it.
 
+#include <optional>
 #include <string>
 
 #include "game_arena/proto/arena.grpc.pb.h"
@@ -58,6 +59,9 @@ class ArenaService final : public proto::Arena::Service {
 
   // SOURCE_OWN's caller, else empty. Lenient: no token gets redacted rows.
   std::string Reader(grpc::ServerContext *context) const;
+  // A candidate by id, or with versions a participant's name for their
+  // newest version that built, presented under the name.
+  std::optional<proto::Candidate> Resolve(const std::string &id) const;
 
   bool MayReadSource(const proto::Candidate &candidate,
                      const std::string &reader) const;

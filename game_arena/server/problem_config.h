@@ -1,7 +1,8 @@
 #ifndef GAME_ARENA_GAME_ARENA_SERVER_PROBLEM_CONFIG_H
 #define GAME_ARENA_GAME_ARENA_SERVER_PROBLEM_CONFIG_H
 
-// Defaults are applied once, here, so coordinator and workers agree on limits.
+// Defaults are the proto's own (problem.proto is proto2), so everything that
+// reads a config agrees on its limits.
 
 #include <filesystem>
 #include <optional>
@@ -16,10 +17,7 @@ namespace tournament_arena {
 std::optional<proto::ProblemConfig> ParseProblemConfigText(
     std::string_view text, std::string *error);
 
-// Idempotent.
-void ApplyProblemDefaults(proto::ProblemConfig *config);
-
-// Expects defaults to have been applied. *error names the offending field.
+// *error names the offending field.
 bool ValidateProblemConfig(const proto::ProblemConfig &config,
                            std::string *error);
 

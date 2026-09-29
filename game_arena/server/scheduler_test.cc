@@ -527,6 +527,50 @@ TEST_F(SchedulerTest, AMatchWithNoRunnableRivalConcludesAtOnce) {
   EXPECT_EQ(concluded[0].state(), proto::Job::FAILED);
 }
 
+TEST_F(SchedulerTest, TheLadderSkipsTheAuthorsOtherVersions) {
+  proto::SubmissionPolicy rules;
+  rules.set_files_submit_dir("solutions");
+  rules.set_versions(true);
+  rules.mutable_harness()->set_api_dep("//problem/harness:api");
+  rules.mutable_harness()->set_main_src("//problem/harness:main.cc");
+  CandidateStore store(dir_ / "versions", CandidateLimits{}, rules);
+  EloStandings standings(elo_.get(), &store, "risk2");
+  SchedulerConfig config = config_;
+  config.clear_placement_opponents();
+  Scheduler scheduler(config, &store, &standings);
+  const auto submit = [&](const std::string &author, int wins) {
+    proto::SubmitRequest request;
+    request.set_display_name(author);
+    request.set_author(author);
+    request.set_game("risk2");
+    request.set_entry_header("strategy.h");
+    auto *file = request.add_files();
+    file->set_path("strategy.h");
+    file->set_content("// " + std::to_string(wins) + "\n");
+    std::string error;
+    const auto candidate = store.Create(request, &error);
+    EXPECT_TRUE(candidate.has_value()) << error;
+    store.SetStatus(candidate->candidate_id(), proto::Candidate::READY, "");
+    proto::OrderResult won;
+    won.set_wins(wins);
+    won.set_games_played(wins);
+    standings.Record(candidate->candidate_id(), "builtin:random", won);
+    return *store.Get(candidate->candidate_id());
+  };
+  submit("alice", 5);
+  submit("bob", 3);
+  submit("alice", 1);
+  const proto::Candidate newest = submit("alice", 0);
+  auto worker = std::make_shared<FakeWorker>("w1", 8);
+  scheduler.AddWorker(worker);
+  std::string error;
+  scheduler.EnqueuePlacement(newest,
+                             *scheduler.TryReserve("", {}, false, &error));
+
+  ASSERT_EQ(worker->orders.size(), 1u);
+  EXPECT_EQ(worker->orders[0].opponent_spec(), "player:bob-v01");
+}
+
 TEST_F(SchedulerTest, PlacementAlsoPlaysTheLadder) {
   // Nothing else ever plays two submissions against each other: the builtins
   // first, then rated rivals spread from the top of the board to the bottom.

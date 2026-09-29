@@ -57,6 +57,8 @@ Standing TrueSkillStandings::Get(const std::string &candidate_id) const {
   standing.wins = player.wins;
   standing.draws = player.draws;
   standing.losses = player.losses;
+  standing.mu = player.rating.mu;
+  standing.sigma = player.rating.sigma;
   return standing;
 }
 

@@ -52,6 +52,7 @@ class ArenaIntegrationTest : public ::testing::Test {
     rules.mutable_harness()->set_api_dep("//problem/harness:api");
     rules.mutable_harness()->set_main_src("//problem/harness:main.cc");
     rules.add_allow_paths("solutions/**");
+    AdjustRules(&rules);
     store_ = std::make_unique<CandidateStore>(dir_ / "candidates",
                                               CandidateLimits{}, rules);
     elo_ = std::make_unique<tournament_broker::EloStore>(dir_ / "ratings.pb",
@@ -96,6 +97,9 @@ class ArenaIntegrationTest : public ::testing::Test {
   // The problem as submitters see it. Default: empty, which means the arena's
   // default source policy -- everything readable.
   virtual proto::ProblemInfo MakeProblemInfo() { return {}; }
+
+  // The submission policy's last word. Default: as above.
+  virtual void AdjustRules(proto::SubmissionPolicy * /*rules*/) {}
 
   void TearDown() override {
     server_->Shutdown(std::chrono::system_clock::now() +
@@ -693,6 +697,63 @@ TEST_F(SourcePolicyTest, NoneServesNobodyTheirOwnIncluded) {
   const proto::ListCandidatesResponse listing = ListAs(kToken);
   ASSERT_EQ(listing.candidates_size(), 1);
   EXPECT_TRUE(listing.candidates(0).candidate().patch().empty());
+}
+
+// With submission.versions every submission is a candidate of its own, and a
+// participant's name still reaches their newest working version, under the
+// name: an old kit's restore, `source` and `spar` do not notice.
+class VersionedArenaTest : public ArenaIntegrationTest {
+ protected:
+  void AdjustRules(proto::SubmissionPolicy *rules) override {
+    rules->clear_allow_paths();
+    rules->add_allow_paths("solutions/{submission_id}/**");
+    rules->set_versions(true);
+  }
+  proto::ProblemInfo MakeProblemInfo() override {
+    proto::ProblemInfo info;
+    info.set_files_submit_dir("solutions");
+    return info;
+  }
+
+  std::string Source(const std::string &id, const std::string &path) {
+    grpc::ClientContext context;
+    proto::GetSourceRequest request;
+    request.set_candidate_id(id);
+    request.set_path(path);
+    proto::SourceFile file;
+    const grpc::Status status =
+        arena_stub_->GetSource(&context, request, &file);
+    return status.ok() ? file.content() : "error: " + status.error_message();
+  }
+};
+
+TEST_F(VersionedArenaTest, ANameStandsForItsNewestWorkingVersion) {
+  EXPECT_EQ(Submit("alice", "// one\n").candidate_id(), "alice-v01");
+  EXPECT_EQ(Submit("alice", "// two\n").candidate_id(), "alice-v02");
+  EXPECT_EQ(store_->size(), 2u);
+
+  grpc::ClientContext none;
+  proto::GetCandidateRequest by_name;
+  by_name.set_candidate_id("alice");
+  proto::Candidate candidate;
+  EXPECT_EQ(arena_stub_->GetCandidate(&none, by_name, &candidate).error_code(),
+            grpc::StatusCode::NOT_FOUND)
+      << "nothing has built yet";
+
+  store_->SetStatus("alice-v01", proto::Candidate::READY, "");
+  grpc::ClientContext context;
+  ASSERT_TRUE(arena_stub_->GetCandidate(&context, by_name, &candidate).ok());
+  EXPECT_EQ(candidate.candidate_id(), "alice");
+  EXPECT_EQ(candidate.author(), "alice");
+  ASSERT_GE(candidate.file_paths_size(), 1);
+  EXPECT_EQ(candidate.file_paths(0).rfind("solutions/alice/", 0), 0u)
+      << candidate.file_paths(0);
+  EXPECT_EQ(Source("alice", "solutions/alice/strategy.h"), "// one\n");
+
+  store_->SetStatus("alice-v02", proto::Candidate::READY, "");
+  EXPECT_EQ(Source("alice", "solutions/alice/strategy.h"), "// two\n");
+  // A version by its own id, where it is stored.
+  EXPECT_EQ(Source("alice-v01", "solutions/alice-v01/strategy.h"), "// one\n");
 }
 
 }  // namespace

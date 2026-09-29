@@ -124,6 +124,10 @@ they need to work on the problem.**
   ARENA_TOKEN=...` hands one over. Priming runs with
   `--nohome_rc --nosystem_rc` and a strict action env, because a cache hits
   only for the build that filled it.
+- A problem may opt out of one-entry-per-participant: with `submission.versions`
+  every submission is `<name>-vNN` (the name stands for the newest that
+  built), and `match.matchmaking` keeps a top-K pool playing (ARENA.md,
+  "Versions and continuous matchmaking").
 - **A participant is a directory**, `<files_submit_dir>/<name>/`, the same in
   the problem's tree, at the coordinator and in a kit. The candidate id is
   the participant (the token's client id): one entry, one row, one rating,

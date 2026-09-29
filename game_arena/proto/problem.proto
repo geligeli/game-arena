@@ -1,15 +1,19 @@
-syntax = "proto3";
+syntax = "proto2";
 
 package tournament_arena.proto;
 
 // What a problem is, as data: one server runs one, loaded from a .textproto by
 // server/problem_config.h. A problem is either graded or played.
+//
+// proto2 for its defaults: an unset limit reads as the value below, never as
+// zero, which is never a sane limit. Only ever textproto config; clients.proto
+// imports ClientQuota, a message, and no enum, which proto3 could not use.
 
 // Cheap checks before anything is stored; the sandbox is the security boundary.
 message SubmissionPolicy {
-  uint64 max_patch_bytes = 1;
-  uint32 max_files = 2;
-  uint32 max_hunks = 3;
+  optional uint64 max_patch_bytes = 1 [default = 2097152];
+  optional uint32 max_files = 2 [default = 64];
+  optional uint32 max_hunks = 3 [default = 512];
 
   // Globs over touched paths: a path must match an allow entry (empty allows
   // all) and no deny entry. Not containment: a BUILD file can run a genrule.
@@ -17,40 +21,46 @@ message SubmissionPolicy {
   repeated string deny_paths = 5;
 
   // Where plain-file submissions become an add-only patch; empty: patches only.
-  string files_submit_dir = 6;
+  optional string files_submit_dir = 6;
 
   // Required for files_submit_dir; a patch brings its own BUILD.
-  CandidateHarness harness = 7;
+  optional CandidateHarness harness = 7;
 
   // Label prefixes extra_deps may name; empty allows none.
   repeated string allowed_dep_prefixes = 8;
+
+  // Every submission is a candidate of its own, <participant>-vNN, rated on
+  // its own and never replaced; a participant's name stands for their newest
+  // version that built. Needs allow_paths confined to
+  // <files_submit_dir>/{submission_id}/**: two versions share one tree.
+  optional bool versions = 9 [default = false];
 }
 
 // The problem's labels for the BUILD generated around a structured submission.
 message CandidateHarness {
   // Library every submission is compiled against.
-  string api_dep = 1;
+  optional string api_dep = 1;
 
   // Provides main(); compiled per candidate so local_defines reach it.
-  string main_src = 2;
+  optional string main_src = 2;
 
   // Further deps of the generated bot binary.
   repeated string bot_deps = 3;
 
   // A local_define selecting the harness's game; empty when it serves one.
-  string game_define = 4;
+  optional string game_define = 4;
 
   // The generated cc_binary's name (empty: "bot"), for targets and argv.
-  string binary_name = 5;
+  optional string binary_name = 5;
 }
 
 // Ends up in the kit, where a participant may change it: none of it enforces.
 message KitSpec {
   // Under files_submit_dir; a participant's directory is first copied from it.
-  string starter_dir = 5;
+  optional string starter_dir = 5;
 
   // Off: a dependency the kit fetches but the sandbox cannot fails later.
-  bool allow_network_builds = 4;
+  optional bool allow_network_builds = 4;
 }
 
 // Enforced by the coordinator on GetSource and on manifests' patches: the
@@ -61,7 +71,7 @@ message SourcePolicy {
     OWN = 1;   // only your own; reads are gated on your token
     NONE = 2;  // nobody's, your own included
   }
-  Visibility visibility = 1;
+  optional Visibility visibility = 1;
 }
 
 message BuildSpec {
@@ -70,35 +80,35 @@ message BuildSpec {
   repeated string targets = 1;
   // Extra bazel flags, e.g. "--config=native".
   repeated string bazel_flags = 2;
-  uint32 timeout_s = 3;
+  optional uint32 timeout_s = 3 [default = 1800];
 }
 
 message SandboxSpec {
   // Holds the tree at /workspace and bazel matching .bazelversion; without
   // allow_build_network, also every dependency, vendored.
-  string image = 1;
+  optional string image = 1;
 
   // Caps on what runs the solution; the build has build.timeout_s instead.
-  uint32 memory_limit_mb = 2;
-  double cpus = 3;
-  uint32 pids_limit = 4;
+  optional uint32 memory_limit_mb = 2 [default = 4096];
+  optional double cpus = 3;
+  optional uint32 pids_limit = 4 [default = 512];
 
   // Off by default: a build that can fetch can exfiltrate.
-  bool allow_build_network = 7;
+  optional bool allow_build_network = 7;
 
   // e.g. "1000:1000"; empty is the image's default, often root.
-  string run_as_user = 8;
+  optional string run_as_user = 8;
 }
 
 message MetricSpec {
-  string name = 1;  // key in the report, e.g. "wall_ms"
+  optional string name = 1;  // key in the report, e.g. "wall_ms"
   enum Direction {
     MINIMIZE = 0;
     MAXIMIZE = 1;
   }
-  Direction direction = 2;
+  optional Direction direction = 2;
   // The metric the leaderboard ranks by; exactly one must set it.
-  bool primary = 3;
+  optional bool primary = 3;
 }
 
 // Run the solution and read numbers off it (see MetricReport).
@@ -107,20 +117,20 @@ message GradeSpec {
   repeated string argv = 1;
 
   // Runs; their aggregate is the score.
-  uint32 repeats = 2;
+  optional uint32 repeats = 2 [default = 3];
   enum Aggregate {
     MIN = 0;  // best of N -- the usual choice for a timing
     MEDIAN = 1;
     MEAN = 2;
   }
-  Aggregate aggregate = 3;
+  optional Aggregate aggregate = 3;
 
   repeated MetricSpec metrics = 4;
 
   // Only workers of this machine class; empty accepts any.
-  string require_machine_class = 5;
+  optional string require_machine_class = 5;
 
-  uint32 timeout_s = 6;
+  optional uint32 timeout_s = 6 [default = 1800];
 }
 
 // {"metrics": {"wall_ms": 1234.5}} at $ARENA_REPORT, or a "RESULT k=v" stdout
@@ -132,24 +142,42 @@ message MetricReport {
 // Play against others; the referee owns the rules, never the coordinator.
 message MatchSpec {
   // Key into the referee's game registry.
-  string game = 1;
+  optional string game = 1;
   // Bazel label of the referee binary, built from the same patched tree.
-  string referee_target = 2;
+  optional string referee_target = 2;
 
-  uint32 games_per_order = 3;
+  optional uint32 games_per_order = 3 [default = 10];
   // e.g. "builtin:random"; a ladder of rated rivals follows them.
   repeated string placement_opponents = 4;
 
-  uint32 turn_timeout_ms = 5;
+  optional uint32 turn_timeout_ms = 5 [default = 10000];
   // Per seat per game; 0 leaves turn_timeout_ms, which alone bounds nothing.
-  uint32 game_time_budget_ms = 6;
-  uint32 max_moves_per_game = 7;
-  uint32 timeout_s = 8;
+  optional uint32 game_time_budget_ms = 6;
+  optional uint32 max_moves_per_game = 7 [default = 50000];
+  optional uint32 timeout_s = 8 [default = 1800];
   reserved 11;
   reserved "max_view_bytes";
 
   // Opaque, for the referee's registry, which ignores keys it does not know.
   map<string, string> registry_options = 10;
+
+  // Keeps the fleet busy between submissions (needs submission.versions and
+  // TRUESKILL): see Matchmaking.
+  optional Matchmaking matchmaking = 12;
+}
+
+// Continuous matches among a pool: the top |pool| by TrueSkill mu - 3 sigma,
+// plus every version with fewer than |newcomer_games| pool games. The rest
+// have dropped out and are no longer scheduled. Within the pool, the least
+// certain rating plays its best-matched rival, so sigma shrinks where the
+// order is least sure.
+message Matchmaking {
+  optional uint32 pool = 1 [default = 10];
+  // Per match; even, so each side has each seat as often.
+  optional uint32 games = 2 [default = 4];
+  optional uint32 newcomer_games = 3 [default = 40];
+  // How often every rating is recorded, for the convergence chart.
+  optional uint32 snapshot_s = 4 [default = 600];
 }
 
 message RankingSpec {
@@ -158,46 +186,46 @@ message RankingSpec {
     METRIC = 1;     // requires GradeSpec
     TRUESKILL = 2;  // requires MatchSpec; rated game by game
   }
-  Kind kind = 1;
+  optional Kind kind = 1;
   // For METRIC; empty uses the GradeSpec metric marked primary.
-  string metric_name = 2;
+  optional string metric_name = 2;
   // For TRUESKILL: how often two equal players draw; 0 for a game that
   // cannot draw.
-  double draw_probability = 3;
+  optional double draw_probability = 3;
 }
 
 // Defaults; server/client_registry.h overrides them per client.
 message ClientQuota {
   // One is the point: a client waits for a result before its next guess.
-  uint32 max_active_evaluations = 1;
+  optional uint32 max_active_evaluations = 1 [default = 1];
   // Outstanding jobs, rematches included.
-  uint32 max_queued_jobs = 2;
+  optional uint32 max_queued_jobs = 2 [default = 8];
 }
 
 message ClientPolicy {
-  ClientQuota default_quota = 1;
+  optional ClientQuota default_quota = 1;
 }
 
 message ProblemConfig {
   // Stable identifier, also the standings key. One server, one problem_id.
-  string problem_id = 1;
-  string display_name = 2;
+  optional string problem_id = 1;
+  optional string display_name = 2;
   // Markdown, served to agents and shown atop the leaderboard.
-  string description = 3;
+  optional string description = 3;
 
-  SubmissionPolicy submission = 5;
-  BuildSpec build = 6;
-  SandboxSpec sandbox = 7;
+  optional SubmissionPolicy submission = 5;
+  optional BuildSpec build = 6;
+  optional SandboxSpec sandbox = 7;
 
   oneof evaluation {
     GradeSpec grade = 8;
     MatchSpec match = 9;
   }
 
-  RankingSpec ranking = 10;
-  ClientPolicy clients = 11;
+  optional RankingSpec ranking = 10;
+  optional ClientPolicy clients = 11;
   // Absent means ALL.
-  SourcePolicy source = 12;
+  optional SourcePolicy source = 12;
   // Absent is a workable default.
-  KitSpec kit = 13;
+  optional KitSpec kit = 13;
 }

@@ -71,33 +71,6 @@ std::optional<proto::ProblemConfig> ParseProblemConfigText(
   return config;
 }
 
-void ApplyProblemDefaults(proto::ProblemConfig* config) {
-  // proto3: unset is zero, never a sane limit, so the config merges onto these.
-  proto::ProblemConfig defaults;
-  google::protobuf::TextFormat::ParseFromString(
-      R"pb(
-        submission { max_patch_bytes: 2097152 max_files: 64 max_hunks: 512 }
-        build { timeout_s: 1800 }
-        sandbox { memory_limit_mb: 4096 pids_limit: 512 }
-        # No "unlimited": a quota that can be switched off goes unnoticed off.
-        clients {
-          default_quota { max_active_evaluations: 1 max_queued_jobs: 8 }
-        }
-      )pb",
-      &defaults);
-  if (config->has_grade()) {
-    google::protobuf::TextFormat::MergeFromString(
-        "grade { repeats: 3 timeout_s: 1800 }", &defaults);
-  } else if (config->has_match()) {
-    google::protobuf::TextFormat::MergeFromString(
-        "match { games_per_order: 10 turn_timeout_ms: 10000 "
-        "max_moves_per_game: 50000 timeout_s: 1800 }",
-        &defaults);
-  }
-  defaults.MergeFrom(*config);
-  *config = std::move(defaults);
-}
-
 bool ValidateProblemConfig(const proto::ProblemConfig& config,
                            std::string* error) {
   if (!IsValidProblemId(config.problem_id())) {
@@ -197,6 +170,30 @@ bool ValidateProblemConfig(const proto::ProblemConfig& config,
       return false;
     }
   }
+  const proto::SubmissionPolicy& submission = config.submission();
+  if (submission.versions()) {
+    // Two versions of one participant can share an order, so a version's
+    // patch must stay in its own directory.
+    const std::string own =
+        submission.files_submit_dir() + "/{submission_id}/**";
+    if (submission.files_submit_dir().empty() ||
+        submission.allow_paths_size() != 1 ||
+        submission.allow_paths(0) != own) {
+      *error = absl::StrCat(
+          "submission.versions needs files_submit_dir and allow_paths exactly "
+          "\"",
+          own, "\": two versions of one participant share a tree");
+      return false;
+    }
+  }
+  if (config.match().has_matchmaking() &&
+      (!submission.versions() ||
+       config.ranking().kind() != proto::RankingSpec::TRUESKILL)) {
+    *error =
+        "match.matchmaking needs submission.versions and ranking.kind "
+        "TRUESKILL";
+    return false;
+  }
   return true;
 }
 
@@ -230,7 +227,6 @@ std::optional<proto::ProblemConfig> LoadProblemConfig(
     *error = absl::StrCat(path.string(), ": ", *error);
     return std::nullopt;
   }
-  ApplyProblemDefaults(&*config);
   if (!ValidateProblemConfig(*config, error)) {
     *error = absl::StrCat(path.string(), ": ", *error);
     return std::nullopt;
