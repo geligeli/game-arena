@@ -61,6 +61,14 @@ TEST(McpTest, PositionalsFollowFlags) {
   EXPECT_EQ(ran, (Argv{"spar", "--games=4", "bob"}));
 }
 
+TEST(McpTest, AnEmptyOptionalArgumentIsAbsent) {
+  Argv ran;
+  Call(R"({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{
+           "name":"arena_source","arguments":{"name":"bob","path":""}}})",
+       &ran);
+  EXPECT_EQ(ran, (Argv{"source", "bob"}));
+}
+
 TEST(McpTest, FailureIsAnError) {
   const auto reply =
       Call(R"({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{

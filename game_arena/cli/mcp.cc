@@ -131,7 +131,9 @@ std::vector<std::string> Argv(const Tool &tool,
   std::vector<std::string> positional;
   for (const Arg &arg : tool.args) {
     const boost::json::value *value = arguments.if_contains(arg.name);
-    if (value == nullptr || value->is_null()) {
+    // Models fill an optional argument they do not need with "".
+    if (value == nullptr || value->is_null() ||
+        (value->is_string() && value->as_string().empty())) {
       continue;
     }
     if (arg.positional) {
