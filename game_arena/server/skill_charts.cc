@@ -245,24 +245,7 @@ std::string SkillCharts(
              << top + height + 24 << "\">" << svg.str() << "</svg>";
       };
 
-  // 2. Did later versions get stronger?
-  {
-    int versions = 2;
-    for (const ChartEntry &e : entries) {
-      versions = std::max(versions, e.version);
-    }
-    std::vector<std::pair<double, std::string>> ticks;
-    for (int v = 1; v <= versions; ++v) {
-      ticks.emplace_back(v, absl::StrCat("v", v));
-    }
-    by_participant(
-        "Skill by version",
-        "Each participant's versions in submission order, mu &plusmn;1&sigma;; "
-        "dashed lines are the builtins. A curve that flattens or falls is "
-        "iteration that stopped paying.",
-        [](const ChartEntry &e) { return e.version; }, ticks);
-  }
-  // 3. The same on one clock: who moved when, and whether they converged.
+  // 2. Every version on one clock: who moved when, and whether they converged.
   {
     int64_t first = INT64_MAX, last = 0;
     for (const ChartEntry &e : entries) {
@@ -293,7 +276,7 @@ std::string SkillCharts(
         ticks);
   }
 
-  // 4. Convergence: mu at each snapshot. An entry that did not exist yet
+  // 3. Convergence: mu at each snapshot. An entry that did not exist yet
   // starts where it first appears.
   if (!history_ticks.empty()) {
     const double left = 40, width = 680, top = 10, height = 260;

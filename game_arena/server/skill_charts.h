@@ -5,9 +5,8 @@
 // (/swiss) and continuous matchmaking's (/pool) draw the same four charts.
 //
 // 1. Where each skill converges: every entry by mu, a 2-sigma bar.
-// 2. Skill by version: each participant's versions in submission order.
-// 3. Skill by submission time: every version on one clock.
-// 4. Convergence: mu over |history|.
+// 2. Skill by submission time: every version on one clock.
+// 3. Convergence: mu over |history|.
 
 #include <cstdint>
 #include <map>
