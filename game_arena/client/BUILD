@@ -11,6 +11,7 @@ cc_library(
     deps = [
         "//game_arena/proto:tournament_broker_cc_grpc",
         "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/strings",
         "@grpc//:grpc++",
     ],
 )

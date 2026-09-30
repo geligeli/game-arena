@@ -170,11 +170,10 @@ auto Connect4Session::ApplySerializedAction(std::string_view bytes,
 auto Connect4Session::Outcome() const
     -> std::optional<tournament_broker::GameOutcome> {
   if (winner_ >= 0) {
-    return tournament_broker::GameOutcome{.is_draw = false,
-                                          .winning_player = winner_};
+    return tournament_broker::GameOutcome::Win(2, winner_);
   }
   if (drawn_) {
-    return tournament_broker::GameOutcome{.is_draw = true};
+    return tournament_broker::GameOutcome::Draw(2);
   }
   return std::nullopt;
 }

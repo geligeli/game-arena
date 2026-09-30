@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/strings/str_join.h"
 
 namespace tournament_broker {
 
@@ -96,7 +97,7 @@ bool PlayReactor::HandleHello() {
   }
   LOG(INFO) << "Player '" << hello.player_name() << "' joined game '"
             << hello.game() << "' (opponent: '"
-            << hello.opponent() << "')";
+            << absl::StrJoin(hello.opponent(), ",") << "')";
 
   // Best effort: OnHelloDeadline() does nothing once a connection exists.
   hello_alarm_.Cancel();

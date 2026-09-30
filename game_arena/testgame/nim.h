@@ -1,7 +1,8 @@
 #ifndef GAME_ARENA_GAME_ARENA_TESTGAME_NIM_H
 #define GAME_ARENA_GAME_ARENA_TESTGAME_NIM_H
 
-// Single-heap Nim, so the arena is tested end to end without a game framework.
+// Single-heap Nim, so the arena is tested end to end without a game framework:
+// "nim" for two seats and "nim3" for three, which take turns in seat order.
 // State "<remaining>:<player to move>" ("21:0"), action "<stones taken>" ("3").
 
 #include <string>
@@ -13,13 +14,15 @@ namespace arena_testgame {
 
 inline constexpr int kStartingStones = 21;
 inline constexpr int kMaxTake = 3;
+inline constexpr int kMaxPlayers = 3;
 
-// Normal play: whoever takes the last stone wins.
+// Normal play: whoever takes the last stone wins, and the rest place in the
+// order they last moved, the latest best.
 class NimSession final : public tournament_broker::GameSession {
  public:
   NimSession() = default;
-  explicit NimSession(int remaining, int player)
-      : remaining_(remaining), player_(player) {}
+  explicit NimSession(int remaining, int player, int players = 2)
+      : remaining_(remaining), player_(player), players_(players) {}
 
   std::string SerializeState() const override;
   int CurrentPlayer() const override { return player_; }
@@ -33,6 +36,7 @@ class NimSession final : public tournament_broker::GameSession {
  private:
   int remaining_ = kStartingStones;
   int player_ = 0;
+  int players_ = 2;
   int winner_ = -1;
 };
 
@@ -43,7 +47,8 @@ bool ParseState(std::string_view bytes, int* remaining, int* player);
 std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec,
                                                         std::string* error);
 
-tournament_broker::GameDescriptor Descriptor();
+// "nim" for two seats, "nim3" for three.
+tournament_broker::GameDescriptor Descriptor(int players = 2);
 
 }  // namespace arena_testgame
 

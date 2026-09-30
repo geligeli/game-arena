@@ -1,4 +1,4 @@
-// The arena's own registry: one game, no framework.
+// The arena's own registry: Nim for two and for three, no framework.
 
 #include "game_arena/referee/game_registry.h"
 
@@ -17,8 +17,10 @@ void SetRegistryOptions(
 const std::map<std::string, GameDescriptor> &GameRegistry() {
   static const auto *registry = [] {
     auto *out = new std::map<std::string, GameDescriptor>();
-    out->emplace(arena_testgame::Descriptor().name,
-                 arena_testgame::Descriptor());
+    for (const int players : {2, 3}) {
+      out->emplace(arena_testgame::Descriptor(players).name,
+                   arena_testgame::Descriptor(players));
+    }
     return out;
   }();
   return *registry;

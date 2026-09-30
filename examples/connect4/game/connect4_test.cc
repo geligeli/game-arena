@@ -2,6 +2,7 @@
 
 #include <random>
 #include <string>
+#include <vector>
 
 #include "game_arena/referee/game_registry.h"
 #include "gtest/gtest.h"
@@ -81,8 +82,7 @@ TEST(Connect4Session, FourInARowWins) {
   ASSERT_TRUE(Drop(&session, 3));
   const auto outcome = session.Outcome();
   ASSERT_TRUE(outcome.has_value());
-  EXPECT_FALSE(outcome->is_draw);
-  EXPECT_EQ(outcome->winning_player, 0);
+  EXPECT_EQ(outcome->places, (std::vector{0, 1}));
 }
 
 TEST(Connect4Session, VerticalFourWins) {
@@ -94,7 +94,7 @@ TEST(Connect4Session, VerticalFourWins) {
   ASSERT_TRUE(Drop(&session, 0));  // X's fourth in column 0
   const auto outcome = session.Outcome();
   ASSERT_TRUE(outcome.has_value());
-  EXPECT_EQ(outcome->winning_player, 0);
+  EXPECT_EQ(outcome->places, (std::vector{0, 1}));
 }
 
 TEST(ParseBoard, RoundTripsAndRejectsJunk) {
@@ -151,7 +151,7 @@ TEST(Builtins, GreedyBeatsRandomMoreOftenThanNot) {
           << error;
     }
     const auto outcome = *session.Outcome();
-    if (!outcome.is_draw && outcome.winning_player == 0) {
+    if (outcome.places == std::vector{0, 1}) {
       ++greedy_wins;
     }
   }

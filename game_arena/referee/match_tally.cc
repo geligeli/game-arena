@@ -1,6 +1,10 @@
 #include "game_arena/referee/match_tally.h"
 
+#include <algorithm>
 #include <string>
+#include <vector>
+
+#include "game_arena/standings/game_history.h"
 
 namespace tournament_broker {
 
@@ -16,14 +20,16 @@ bool AddGame(const proto::GameRecord &record, const std::string &player,
   if (seat < 0) {
     return false;
   }
+  const std::vector<int> places = PlacesOf(record);
+  const auto place = static_cast<std::size_t>(places[seat]);
   ++tally->games;
-  if (record.result() == proto::GameRecord::DRAW) {
-    ++tally->draws;
-  } else if (record.winning_player() == seat) {
-    ++tally->wins;
-  } else {
-    ++tally->losses;
+  if (tally->finishes.size() <= place) {
+    tally->finishes.resize(place + 1);
   }
+  ++tally->finishes[place];
+  ++(place != 0                          ? tally->losses
+     : std::ranges::count(places, 0) > 1 ? tally->draws
+                                         : tally->wins);
   return true;
 }
 

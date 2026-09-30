@@ -6,6 +6,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -208,12 +209,12 @@ class NimGameRunTest : public ::testing::Test {
                 .builtin = std::move(*builtin)};
   }
 
-  void RunToCompletion(std::array<Seat, 2> seats, GameRunConfig config) {
+  void RunToCompletion(std::vector<Seat> seats, GameRunConfig config) {
     std::promise<void> finished;
     auto done = finished.get_future();
     auto run = std::make_shared<GameRun>(
-        GameRegistry().at("nim"), config, std::move(seats), ++counter_,
-        history_.get(), pool_.get(), timer_.get(),
+        GameRegistry().at(seats.size() == 2 ? "nim" : "nim3"), config,
+        std::move(seats), ++counter_, history_.get(), pool_.get(), timer_.get(),
         [&finished] { finished.set_value(); });
     run->Start();
     ASSERT_EQ(done.wait_for(std::chrono::seconds(10)),
@@ -306,6 +307,75 @@ TEST_F(NimGameRunTest, DrawGoesToTheFasterSeat) {
   EXPECT_EQ(slow->game_over()->result(), proto::GameOver::LOSS);
 }
 
+// With three seats a forfeiter drops to last and a builtin plays on for it, so
+// the other two are still ranked by the game; it hears so when the game ends.
+TEST_F(NimGameRunTest, ThreeSeatForfeitPlaysOn) {
+  std::optional<proto::GameRecord> record;
+  GameRunConfig config;
+  config.turn_timeout = milliseconds(50);
+  config.on_record = [&record](const proto::GameRecord& r) { record = r; };
+  auto quiet = std::make_shared<FakeClient>("quiet", FakeClient::Mode::kSilent);
+  auto alice =
+      std::make_shared<FakeClient>("alice", FakeClient::Mode::kPlayValid);
+  auto bob = std::make_shared<FakeClient>("bob", FakeClient::Mode::kPlayValid);
+  RunToCompletion({MakeSeat(quiet), MakeSeat(alice), MakeSeat(bob)}, config);
+
+  ASSERT_TRUE(record.has_value());
+  EXPECT_EQ(record->termination_reason(), "normal");
+  ASSERT_EQ(record->forfeits_size(), 1);
+  EXPECT_EQ(record->forfeits(0).seat(), 0);
+  EXPECT_EQ(record->forfeits(0).reason(), "timeout");
+  EXPECT_EQ(record->forfeits(0).move(), 0);
+  EXPECT_EQ(record->places(0), 2);
+  EXPECT_EQ(record->places(1) + record->places(2), 1);
+  ASSERT_TRUE(quiet->game_over().has_value());
+  EXPECT_EQ(quiet->game_over()->reason(), "timeout");
+  EXPECT_EQ(quiet->game_over()->place(), 2);
+  EXPECT_EQ(quiet->game_over()->result(), proto::GameOver::LOSS);
+  ASSERT_TRUE(alice->game_over().has_value());
+  EXPECT_EQ(alice->game_over()->reason(), "normal");
+}
+
+TEST_F(NimGameRunTest, ThreeSeatsLevelAtTheMoveCapGoByThinkingTime) {
+  auto fast =
+      std::make_shared<FakeClient>("fast", FakeClient::Mode::kPlayValid);
+  auto mid = std::make_shared<FakeClient>("mid", FakeClient::Mode::kPlayValid,
+                                          milliseconds(10));
+  auto slow = std::make_shared<FakeClient>("slow", FakeClient::Mode::kPlayValid,
+                                           milliseconds(30));
+  GameRunConfig config;
+  config.max_moves_per_game = 6;
+  RunToCompletion({MakeSeat(slow), MakeSeat(fast), MakeSeat(mid)}, config);
+
+  ASSERT_TRUE(fast->game_over().has_value() && mid->game_over().has_value() &&
+              slow->game_over().has_value());
+  EXPECT_EQ(fast->game_over()->place(), 0);
+  EXPECT_EQ(fast->game_over()->result(), proto::GameOver::WIN);
+  EXPECT_EQ(fast->game_over()->reason(), "time_tiebreak");
+  EXPECT_EQ(mid->game_over()->place(), 1);
+  EXPECT_EQ(slow->game_over()->place(), 2);
+}
+
+// Two forfeits of three: the one left wins at once, the first to go is last.
+TEST_F(NimGameRunTest, LastSeatStandingWins) {
+  auto quiet = std::make_shared<FakeClient>("quiet", FakeClient::Mode::kSilent);
+  auto cheat =
+      std::make_shared<FakeClient>("cheat", FakeClient::Mode::kIllegal);
+  auto honest =
+      std::make_shared<FakeClient>("honest", FakeClient::Mode::kPlayValid);
+  GameRunConfig config;
+  config.turn_timeout = milliseconds(50);
+  RunToCompletion({MakeSeat(cheat), MakeSeat(quiet), MakeSeat(honest)}, config);
+
+  ASSERT_TRUE(honest->game_over().has_value());
+  EXPECT_EQ(honest->game_over()->place(), 0);
+  EXPECT_EQ(honest->game_over()->result(), proto::GameOver::WIN);
+  EXPECT_EQ(quiet->game_over()->place(), 1);
+  EXPECT_EQ(quiet->game_over()->reason(), "timeout");
+  EXPECT_EQ(cheat->game_over()->place(), 2);
+  EXPECT_EQ(cheat->game_over()->reason(), "illegal_action");
+}
+
 // A builtin seat takes the same path as a remote one, so the registry's
 // make_builtin has to work through GameRun as well as in isolation.
 TEST_F(NimGameRunTest, BuiltinSeatPlaysAGameThrough) {
@@ -325,13 +395,15 @@ class NimMatchmakerTest : public NimGameRunTest {
  protected:
   // One game per stream: a new connection for each.
   int PlayOne(Matchmaker& matchmaker, const std::string& name,
-              const std::string& opponent) {
+              const std::vector<std::string>& opponents) {
     auto client =
         std::make_shared<FakeClient>(name, FakeClient::Mode::kPlayValid);
     proto::Hello hello;
     hello.set_player_name(name);
-    hello.set_game("nim");
-    hello.set_opponent(opponent);
+    hello.set_game(opponents.size() == 1 ? "nim" : "nim3");
+    for (const std::string& opponent : opponents) {
+      hello.add_opponent(opponent);
+    }
     std::string error;
     EXPECT_TRUE(matchmaker.Join(client, hello, &error)) << error;
     matchmaker.Drain();
@@ -344,11 +416,11 @@ TEST_F(NimMatchmakerTest, SeatsAlternateAgainstABuiltin) {
   Matchmaker matchmaker(MatchmakerConfig{}, history_.get());
   std::vector<int> seats;
   for (int game = 0; game < 4; ++game) {
-    seats.push_back(PlayOne(matchmaker, "alice", "builtin:random"));
+    seats.push_back(PlayOne(matchmaker, "alice", {"builtin:random"}));
   }
   EXPECT_EQ(seats, (std::vector<int>{0, 1, 0, 1}));
   // Its own series: another builtin starts over.
-  EXPECT_EQ(PlayOne(matchmaker, "alice", "builtin:optimal"), 0);
+  EXPECT_EQ(PlayOne(matchmaker, "alice", {"builtin:optimal"}), 0);
 }
 
 TEST_F(NimMatchmakerTest, SeatsAlternateBetweenPlayersWhoeverArrivesFirst) {
@@ -370,7 +442,7 @@ TEST_F(NimMatchmakerTest, SeatsAlternateBetweenPlayersWhoeverArrivesFirst) {
       proto::Hello hello;
       hello.set_player_name(client->name());
       hello.set_game("nim");
-      hello.set_opponent(partner);
+      hello.add_opponent(partner);
       ASSERT_TRUE(matchmaker.Join(client, hello, &error)) << error;
     }
     matchmaker.Drain();
@@ -390,15 +462,69 @@ TEST_F(NimMatchmakerTest, TwoBuiltinsPlayWithNoClientAndAlternateSeats) {
   Matchmaker matchmaker(config, history_.get());
   std::string error;
   for (int game = 0; game < 2; ++game) {
-    ASSERT_TRUE(matchmaker.StartBuiltins("nim", "builtin:random",
-                                         "builtin:optimal", &error))
+    ASSERT_TRUE(matchmaker.StartBuiltins(
+        "nim", {"builtin:random", "builtin:optimal"}, &error))
         << error;
     matchmaker.Drain();
   }
   ASSERT_EQ(records.size(), 2u);
   EXPECT_EQ(records[0].player_names(0), records[1].player_names(1));
-  EXPECT_FALSE(matchmaker.StartBuiltins("nim", "builtin:random",
-                                        "builtin:nonsense", &error));
+  EXPECT_FALSE(matchmaker.StartBuiltins(
+      "nim", {"builtin:random", "builtin:nonsense"}, &error));
+}
+
+// Every three games each member has each seat once, and the next three take
+// the other order of the rest.
+TEST_F(NimMatchmakerTest, ThreeSeatsRotateThroughEveryOrder) {
+  Matchmaker matchmaker(MatchmakerConfig{}, history_.get());
+  std::vector<int> seats;
+  for (int game = 0; game < 6; ++game) {
+    seats.push_back(
+        PlayOne(matchmaker, "alice", {"builtin:random", "builtin:optimal"}));
+  }
+  EXPECT_EQ(seats, (std::vector<int>{0, 2, 1, 0, 2, 1}));
+}
+
+TEST_F(NimMatchmakerTest, ThreePlayersMeetWhoeverArrivesFirst) {
+  Matchmaker matchmaker(MatchmakerConfig{}, history_.get());
+  const std::vector<std::string> names = {"carol", "alice", "bob"};
+  std::vector<std::shared_ptr<FakeClient>> clients;
+  std::string error;
+  for (const std::string& name : names) {
+    clients.push_back(
+        std::make_shared<FakeClient>(name, FakeClient::Mode::kPlayValid));
+    proto::Hello hello;
+    hello.set_player_name(name);
+    hello.set_game("nim3");
+    for (const std::string& other : names) {
+      if (other != name) {
+        hello.add_opponent("player:" + other);
+      }
+    }
+    ASSERT_TRUE(matchmaker.Join(clients.back(), hello, &error)) << error;
+  }
+  matchmaker.Drain();
+  std::vector<int> seats;
+  for (const auto& client : clients) {
+    ASSERT_TRUE(client->game_over().has_value());
+    seats.push_back(client->seat().value_or(-1));
+  }
+  std::ranges::sort(seats);
+  EXPECT_EQ(seats, (std::vector<int>{0, 1, 2}));
+}
+
+TEST_F(NimMatchmakerTest, RefusesTheWrongNumberOfOpponents) {
+  Matchmaker matchmaker(MatchmakerConfig{}, history_.get());
+  auto client =
+      std::make_shared<FakeClient>("alice", FakeClient::Mode::kPlayValid);
+  proto::Hello hello;
+  hello.set_player_name("alice");
+  hello.set_game("nim3");
+  hello.add_opponent("builtin:random");
+  std::string error;
+  EXPECT_FALSE(matchmaker.Join(client, hello, &error));
+  hello.add_opponent("player:alice");
+  EXPECT_FALSE(matchmaker.Join(client, hello, &error));
 }
 
 }  // namespace

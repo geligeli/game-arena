@@ -1,8 +1,10 @@
 // One match, then exit: a MatchReport at --report, and a last stdout line
-// "RESULT games=10 wins=6 draws=1 losses=3" counted from --player_a's side.
+// "RESULT games=10 wins=6 draws=1 losses=3 finishes=6,4" counted from
+// --player_a's side.
 
 #include <grpcpp/grpcpp.h>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -12,12 +14,15 @@
 #include <mutex>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
 #include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/proto/tournament_broker.pb.h"
 #include "game_arena/referee/game_registry.h"
@@ -32,9 +37,9 @@ ABSL_FLAG(int, games, 1, "Games to play before reporting and exiting");
 ABSL_FLAG(std::string, player_a, "",
           "Player the tally is counted from (required)");
 ABSL_FLAG(std::string, player_b, "",
-          "The opponent. A builtin plays because the bot named it and a rival "
-          "because both bots rendezvous; with --player_a a builtin too, the "
-          "referee plays both itself");
+          "The other seats, comma-separated. A builtin plays because the bots "
+          "named it and a rival because they all rendezvous; with --player_a "
+          "and all of these builtins, the referee plays every seat itself");
 ABSL_FLAG(std::string, report, "",
           "Write the MatchReport here before exiting. Empty: none");
 ABSL_FLAG(std::string, scratch_dir, "",
@@ -130,6 +135,15 @@ int main(int argc, char** argv) {
   }
   tournament_broker::SetRegistryOptions(
       kv_options::Parse(absl::GetFlag(FLAGS_registry_options)));
+  const tournament_broker::GameDescriptor& descriptor =
+      tournament_broker::GameRegistry().at(game);
+  std::string error;
+  // A forfeit mid-game must not be where a bad spec shows.
+  if (descriptor.num_players > 2 &&
+      !descriptor.make_builtin(descriptor.forfeit_builtin, &error)) {
+    LOG(ERROR) << game << "'s forfeit_builtin: " << error;
+    return 2;
+  }
 
   std::filesystem::path scratch = absl::GetFlag(FLAGS_scratch_dir);
   if (scratch.empty()) {
@@ -177,7 +191,6 @@ int main(int argc, char** argv) {
 
   // Written once the listener is up: a worker that sees the file can connect.
   const std::string port_file = absl::GetFlag(FLAGS_port_file);
-  std::string error;
   if (!port_file.empty() &&
       !tournament_broker::WriteAtomically(
           port_file, std::to_string(bound_port) + "\n", &error)) {
@@ -196,13 +209,19 @@ int main(int argc, char** argv) {
       deadline_s > 0
           ? std::chrono::steady_clock::now() + std::chrono::seconds(deadline_s)
           : std::chrono::steady_clock::time_point::max();
-  // Two builtins have no bot to start their games: the referee does, one at a
-  // time, as a bot plays its series.
-  const std::string player_b = absl::GetFlag(FLAGS_player_b);
+  // Builtins alone have no bot to start their games: the referee does, one at
+  // a time, as a bot plays its series.
+  std::vector<std::string> seats = {player_a};
+  for (const absl::string_view other :
+       absl::StrSplit(absl::GetFlag(FLAGS_player_b), ',', absl::SkipEmpty())) {
+    seats.emplace_back(other);
+  }
   bool complete = true;
-  if (player_a.starts_with("builtin:") && player_b.starts_with("builtin:")) {
+  if (std::ranges::all_of(seats, [](const std::string& seat) {
+        return seat.starts_with("builtin:");
+      })) {
     for (int played = 0; complete && played < target_games; ++played) {
-      if (!matchmaker.StartBuiltins(game, player_a, player_b, &error)) {
+      if (!matchmaker.StartBuiltins(game, seats, &error)) {
         LOG(ERROR) << error;
         return 2;
       }
@@ -231,8 +250,9 @@ int main(int argc, char** argv) {
       return 1;
     }
   }
-  std::printf("RESULT games=%d wins=%d draws=%d losses=%d\n", counts.games,
-              counts.wins, counts.draws, counts.losses);
+  std::printf("RESULT games=%d wins=%d draws=%d losses=%d finishes=%s\n",
+              counts.games, counts.wins, counts.draws, counts.losses,
+              absl::StrJoin(counts.finishes, ",").c_str());
   std::fflush(stdout);
   return complete ? 0 : 3;
 }

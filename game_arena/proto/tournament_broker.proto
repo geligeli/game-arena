@@ -13,10 +13,10 @@ service TournamentBroker {
 message Hello {
   string player_name = 1;  // identity, used for ELO and the leaderboard
   string game = 2;         // game registry key
-  // "builtin:<spec>", or "player:<name>" to pair with the player naming this
-  // one (a no-show times out). Either way seats alternate across the games
-  // the two sides play each other.
-  string opponent = 3;
+  // Every other seat's: "builtin:<spec>", or "player:<name>" to meet the
+  // players naming this one (a no-show times out). Either way each member of
+  // a group has each seat once in every |opponent| + 1 games it plays.
+  repeated string opponent = 3;
 }
 
 message ActionMsg {
@@ -32,9 +32,10 @@ message ClientMessage {
 
 message GameStart {
   string game_id = 1;
-  int32 seat = 2;  // this connection's player index (0 or 1)
-  string opponent_name = 3;
+  int32 seat = 2;  // this connection's player index
+  string opponent_name = 3;  // the other seats' names, comma-separated
   bytes initial_state = 4;  // serialized state
+  repeated string player_names = 5;  // indexed by seat
 }
 
 message YourTurn {
@@ -49,10 +50,11 @@ message GameOver {
     LOSS = 1;
     DRAW = 2;
   }
-  Result result = 1;
+  Result result = 1;  // WIN: a sole first place; DRAW: a shared one
   // "normal" | "timeout" | "time_budget" | "opponent_disconnect" |
   // "illegal_action" | "max_moves" | "time_tiebreak"
   string reason = 2;
+  int32 place = 3;  // 0 is first; tied seats share the better place
 }
 
 message ServerMessage {
@@ -89,11 +91,22 @@ message GameRecord {
     DRAW = 1;
     WIN = 2;
   }
-  Result result = 6;
+  Result result = 6;  // WIN iff one seat placed first
   int32 winning_player = 7;  // meaningful iff result == WIN
   string termination_reason = 8;  // same vocabulary as GameOver.reason
   int64 started_unix_ms = 9;
   int64 finished_unix_ms = 10;
+  // By seat, as GameOver.place; absent from records older than it.
+  repeated int32 places = 13;
+
+  // A seat that timed out, left or broke the rules places below everyone
+  // still playing; with more seats, a builtin plays on for it.
+  message Forfeit {
+    int32 seat = 1;
+    string reason = 2;  // GameOver.reason's vocabulary
+    int32 move = 3;     // steps played before it
+  }
+  repeated Forfeit forfeits = 14;
 }
 
 // What a referee leaves at --report; the tally is counted from it.

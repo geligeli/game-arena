@@ -2,6 +2,7 @@
 
 #include <random>
 #include <string>
+#include <vector>
 
 #include "game_arena/referee/game_registry.h"
 #include "gtest/gtest.h"
@@ -49,8 +50,18 @@ TEST(NimSession, TakingTheLastStoneWins) {
   ASSERT_TRUE(session.ApplySerializedAction("2", &error)) << error;
   const auto outcome = session.Outcome();
   ASSERT_TRUE(outcome.has_value());
-  EXPECT_FALSE(outcome->is_draw);
-  EXPECT_EQ(outcome->winning_player, 1);
+  EXPECT_EQ(outcome->places, (std::vector{1, 0}));
+}
+
+TEST(NimSession, ThreeSeatsPlaceByTheirLastMove) {
+  NimSession session(3, 0, 3);
+  std::string error;
+  for (int seat = 0; seat < 3; ++seat) {
+    EXPECT_EQ(session.CurrentPlayer(), seat);
+    ASSERT_TRUE(session.ApplySerializedAction("1", &error)) << error;
+  }
+  ASSERT_TRUE(session.Outcome().has_value());
+  EXPECT_EQ(session.Outcome()->places, (std::vector{2, 1, 0}));
 }
 
 TEST(ParseState, RejectsMalformedBytes) {
@@ -59,6 +70,7 @@ TEST(ParseState, RejectsMalformedBytes) {
   EXPECT_FALSE(ParseState("", &remaining, &player));
   EXPECT_FALSE(ParseState("21", &remaining, &player));
   EXPECT_FALSE(ParseState("21:7", &remaining, &player));
+  EXPECT_FALSE(ParseState("21:-1", &remaining, &player));
   EXPECT_FALSE(ParseState("x:0", &remaining, &player));
   ASSERT_TRUE(ParseState("21:1", &remaining, &player));
   EXPECT_EQ(remaining, 21);
@@ -101,7 +113,7 @@ TEST(Builtins, OptimalBeatsRandomFromAWinningPosition) {
       const std::string action = policy(session.SerializeState(), gen);
       ASSERT_TRUE(session.ApplySerializedAction(action, &error)) << error;
     }
-    EXPECT_EQ(session.Outcome()->winning_player, 0) << "game " << game;
+    EXPECT_EQ(session.Outcome()->places[0], 0) << "game " << game;
   }
 }
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <boost/json/object.hpp>
 #include <boost/json/serialize.hpp>
+#include <boost/json/value_from.hpp>
 #include <fstream>
 #include <string>
 #include <utility>
@@ -58,6 +59,19 @@ GameHistory::GameHistory(std::filesystem::path dir) : dir_(std::move(dir)) {
   }
 }
 
+std::vector<int> PlacesOf(const proto::GameRecord &record) {
+  if (record.places_size() > 0) {
+    return {record.places().begin(), record.places().end()};
+  }
+  const int seats = record.player_names_size();
+  if (record.result() != proto::GameRecord::WIN) {
+    return std::vector<int>(seats, 0);
+  }
+  std::vector<int> places(seats, 1);
+  places[record.winning_player()] = 0;
+  return places;
+}
+
 std::filesystem::path GameHistory::Store(const proto::GameRecord &record) {
   const std::filesystem::path path = dir_ / (record.game_id() + ".pb");
   {
@@ -79,6 +93,7 @@ std::filesystem::path GameHistory::Store(const proto::GameRecord &record) {
   }
   entry["result"] = static_cast<int>(record.result());
   entry["winning_player"] = record.winning_player();
+  entry["places"] = json::value_from(PlacesOf(record));
   entry["reason"] = record.termination_reason();
   entry["moves"] = record.steps_size();
   entry["finished_unix_ms"] = record.finished_unix_ms();

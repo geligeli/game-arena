@@ -170,6 +170,12 @@ message MatchSpec {
   // Keeps the fleet busy between submissions (needs submission.versions and
   // TRUESKILL): see Matchmaking.
   optional Matchmaking matchmaking = 12;
+
+  // Seats per game, as the game's registry entry has them. More than two
+  // needs TRUESKILL; games_per_order and Matchmaking.games are then multiples
+  // of it, so each side has each seat as often, and placement plays every
+  // players - 1 of placement_opponents together.
+  optional uint32 players = 13 [default = 2];
 }
 
 // Continuous matches among a pool: every version plausibly in the top |pool|,
@@ -179,7 +185,8 @@ message MatchSpec {
 // sigma shrinks where membership is least sure.
 message Matchmaking {
   optional uint32 pool = 1 [default = 10];
-  // Per match; even, so each side has each seat as often.
+  // Per match; a multiple of MatchSpec.players, so each side has each seat as
+  // often.
   optional uint32 games = 2 [default = 4];
   reserved 3;
   reserved "newcomer_games";

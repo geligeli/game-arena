@@ -71,7 +71,8 @@ TEST_F(GameHistoryTest, IndexLineHasTheDocumentedShape) {
       IndexLines(),
       ElementsAre(
           R"({"game_id":"g1","game":"nim","player0":"alice","player1":"bob",)"
-          R"("result":2,"winning_player":1,"reason":"normal","moves":3,)"
+          R"("result":2,"winning_player":1,"places":[1,0],"reason":"normal",)"
+          R"("moves":3,)"
           R"("finished_unix_ms":1700000000123})"));
 }
 

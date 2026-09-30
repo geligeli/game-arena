@@ -29,7 +29,7 @@ bool ParseState(std::string_view bytes, int* remaining, int* player) {
       !ParseInt(bytes.substr(colon + 1), player)) {
     return false;
   }
-  return *remaining >= 0 && (*player == 0 || *player == 1);
+  return *remaining >= 0 && *player >= 0 && *player < kMaxPlayers;
 }
 
 std::string NimSession::SerializeState() const {
@@ -61,7 +61,7 @@ bool NimSession::ApplySerializedAction(std::string_view bytes,
   if (remaining_ == 0) {
     winner_ = player_;  // normal play: taking the last stone wins
   } else {
-    player_ = 1 - player_;
+    player_ = (player_ + 1) % players_;
   }
   return true;
 }
@@ -78,8 +78,11 @@ std::optional<tournament_broker::GameOutcome> NimSession::Outcome() const {
   if (winner_ < 0) {
     return std::nullopt;
   }
-  return tournament_broker::GameOutcome{.is_draw = false,
-                                        .winning_player = winner_};
+  tournament_broker::GameOutcome outcome;
+  for (int seat = 0; seat < players_; ++seat) {
+    outcome.places.push_back((winner_ - seat + players_) % players_);
+  }
+  return outcome;
 }
 
 std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec,
@@ -106,11 +109,16 @@ std::optional<tournament_broker::BuiltinFn> MakeBuiltin(std::string_view spec,
   };
 }
 
-tournament_broker::GameDescriptor Descriptor() {
+tournament_broker::GameDescriptor Descriptor(int players) {
   return tournament_broker::GameDescriptor{
-      .name = "nim",
-      .new_session = [] { return std::make_unique<NimSession>(); },
+      .name = players == 2 ? "nim" : "nim" + std::to_string(players),
+      .new_session =
+          [players] {
+            return std::make_unique<NimSession>(kStartingStones, 0, players);
+          },
       .make_builtin = &MakeBuiltin,
+      .num_players = players,
+      .forfeit_builtin = "random",
   };
 }
 

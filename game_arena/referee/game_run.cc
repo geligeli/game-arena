@@ -1,15 +1,19 @@
 #include "game_arena/referee/game_run.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <tuple>
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/strings/str_join.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 
 namespace tournament_broker {
 
 GameRun::GameRun(const GameDescriptor& descriptor, GameRunConfig config,
-                 std::array<Seat, 2> seats, uint64_t game_counter,
+                 std::vector<Seat> seats, uint64_t game_counter,
                  GameHistory* history, WorkerPool* pool, Timer* timer,
                  Task on_finished)
     : descriptor_(descriptor),
@@ -22,7 +26,12 @@ GameRun::GameRun(const GameDescriptor& descriptor, GameRunConfig config,
                std::to_string(game_counter)),
       seats_(std::move(seats)),
       session_(descriptor.new_session()),
-      gen_(std::random_device{}() ^ static_cast<uint32_t>(game_counter)) {}
+      gen_(std::random_device{}() ^ static_cast<uint32_t>(game_counter)),
+      time_used_(seats_.size()) {
+  for (const Seat& seat : seats_) {
+    clients_.push_back(seat.client);
+  }
+}
 
 void GameRun::Start() {
   self_ = shared_from_this();
@@ -39,7 +48,8 @@ void GameRun::Abort(std::string reason) {
         if (self->concluded_) {
           return;
         }
-        self->Conclude(GameOutcome{.is_draw = true}, std::move(reason));
+        self->Conclude(std::vector<int>(self->seats_.size()), std::move(reason),
+                       /*tiebreak=*/false);
       });
 }
 
@@ -54,9 +64,15 @@ void GameRun::Begin() {
   record_.set_started_unix_ms(absl::ToUnixMillis(absl::Now()));
 
   // Weak: seats_ owns the handles, so a strong reference would be a cycle.
-  for (int seat = 0; seat < 2; ++seat) {
+  for (std::size_t seat = 0; seat < seats_.size(); ++seat) {
     if (!seats_[seat].client) {
       continue;
+    }
+    std::vector<std::string> others;
+    for (std::size_t other = 0; other < seats_.size(); ++other) {
+      if (other != seat) {
+        others.push_back(seats_[other].display_name);
+      }
     }
     seats_[seat].client->SetObserver([weak = weak_from_this()] {
       if (auto self = weak.lock()) {
@@ -66,9 +82,10 @@ void GameRun::Begin() {
     proto::ServerMessage msg;
     auto* start = msg.mutable_game_start();
     start->set_game_id(game_id_);
-    start->set_seat(seat);
-    start->set_opponent_name(seats_[1 - seat].display_name);
+    start->set_seat(static_cast<int>(seat));
+    start->set_opponent_name(absl::StrJoin(others, ","));
     start->set_initial_state(record_.initial_state());
+    *start->mutable_player_names() = record_.player_names();
     if (!seats_[seat].client->Send(msg)) {
       seats_[seat].client->MarkDisconnected();
     }
@@ -103,8 +120,10 @@ void GameRun::ArmTurnTimer(std::chrono::milliseconds delay) {
       if (seat < 0) {
         return;
       }
-      self->Conclude(GameOutcome{.winning_player = 1 - seat},
-                     self->turn_budget_bound_ ? "time_budget" : "timeout");
+      if (self->Forfeit(seat,
+                        self->turn_budget_bound_ ? "time_budget" : "timeout")) {
+        self->Step();
+      }
     });
   });
 }
@@ -122,16 +141,12 @@ void GameRun::Step() {
 
   for (;;) {
     CaptureViews();
-    if (const auto terminal = session_->Outcome()) {
-      if (terminal->is_draw) {
-        ConcludeDraw("normal");
-      } else {
-        Conclude(*terminal, "normal");
-      }
+    if (auto terminal = session_->Outcome()) {
+      Conclude(std::move(terminal->places), "normal", /*tiebreak=*/true);
       return;
     }
     if (session_->MoveCount() >= config_.max_moves_per_game) {
-      ConcludeDraw("max_moves");
+      Conclude(session_->Standing().places, "max_moves", /*tiebreak=*/true);
       return;
     }
     if (session_->IsChanceNode()) {
@@ -145,8 +160,9 @@ void GameRun::Step() {
     if (seats_[seat].client != nullptr) {
       ClientHandle& client = *seats_[seat].client;
       if (client.disconnected()) {
-        Conclude(GameOutcome{.winning_player = 1 - seat},
-                 "opponent_disconnect");
+        if (Forfeit(seat, "opponent_disconnect")) {
+          continue;
+        }
         return;
       }
       // Once per turn, before consuming: a pipelined action gets its YourTurn.
@@ -157,7 +173,9 @@ void GameRun::Step() {
         if (config_.game_time_budget.count() > 0) {
           const auto remaining = config_.game_time_budget - time_used_[seat];
           if (remaining <= std::chrono::milliseconds::zero()) {
-            Conclude(GameOutcome{.winning_player = 1 - seat}, "time_budget");
+            if (Forfeit(seat, "time_budget")) {
+              continue;
+            }
             return;
           }
           if (remaining < allowed) {
@@ -167,8 +185,9 @@ void GameRun::Step() {
         }
         if (!SendYourTurn(seat, allowed)) {
           client.MarkDisconnected();
-          Conclude(GameOutcome{.winning_player = 1 - seat},
-                   "opponent_disconnect");
+          if (Forfeit(seat, "opponent_disconnect")) {
+            continue;
+          }
           return;
         }
         waiting_seat_ = seat;
@@ -193,7 +212,15 @@ void GameRun::Step() {
     if (!session_->ApplySerializedAction(action_bytes, &error)) {
       LOG(INFO) << "Game " << game_id_ << ": illegal action by seat " << seat
                 << " (" << seats_[seat].display_name << "): " << error;
-      Conclude(GameOutcome{.winning_player = 1 - seat}, "illegal_action");
+      // A builtin playing on for a forfeiter gets no builtin of its own.
+      if (std::ranges::contains(forfeited_, seat)) {
+        Conclude(session_->Standing().places, "illegal_action",
+                 /*tiebreak=*/true);
+        return;
+      }
+      if (Forfeit(seat, "illegal_action")) {
+        continue;
+      }
       return;
     }
   }
@@ -206,17 +233,31 @@ void GameRun::CaptureViews() {
   }
 }
 
-// A draw goes to whoever thought less; exactly equal time stays a draw.
-void GameRun::ConcludeDraw(std::string reason) {
-  if (time_used_[0] == time_used_[1]) {
-    Conclude(GameOutcome{.is_draw = true}, std::move(reason));
-    return;
+bool GameRun::Forfeit(int seat, std::string reason) {
+  auto* forfeit = record_.add_forfeits();
+  forfeit->set_seat(seat);
+  forfeit->set_reason(reason);
+  forfeit->set_move(session_->MoveCount());
+  forfeited_.push_back(seat);
+  if (forfeited_.size() + 1 == seats_.size()) {
+    Conclude(std::vector<int>(seats_.size()), std::move(reason),
+             /*tiebreak=*/false);
+    return false;
   }
-  Conclude(GameOutcome{.winning_player = time_used_[0] < time_used_[1] ? 0 : 1},
-           "time_tiebreak");
+  LOG(INFO) << "Game " << game_id_ << ": seat " << seat << " ("
+            << seats_[seat].display_name << ") forfeits (" << reason
+            << "); builtin:" << descriptor_.forfeit_builtin << " plays on";
+  CancelTurnTimer();
+  waiting_seat_ = -1;
+  std::string error;
+  seats_[seat].client = nullptr;
+  seats_[seat].builtin =
+      descriptor_.make_builtin(descriptor_.forfeit_builtin, &error).value();
+  return true;
 }
 
-void GameRun::Conclude(GameOutcome outcome, std::string reason) {
+void GameRun::Conclude(std::vector<int> places, std::string reason,
+                       bool tiebreak) {
   if (concluded_) {
     return;
   }
@@ -224,9 +265,37 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
   CancelTurnTimer();
 
   // Drop the observers so nothing reaches back into a finished game.
-  for (Seat& seat : seats_) {
-    if (seat.client) {
-      seat.client->SetObserver(nullptr);
+  for (const auto& client : clients_) {
+    if (client) {
+      client->SetObserver(nullptr);
+    }
+  }
+
+  // No places from the game: all level.
+  places.resize(seats_.size());
+  const auto rank = [&](int seat) {
+    const auto forfeit = std::ranges::find(forfeited_, seat);
+    const auto late = forfeit == forfeited_.end()
+                          ? 0
+                          : static_cast<int>(forfeited_.end() - forfeit);
+    return std::tuple(
+        late, places[seat],
+        tiebreak ? time_used_[seat] : std::chrono::steady_clock::duration{});
+  };
+  std::vector<int> order(seats_.size());
+  for (std::size_t seat = 0; seat < order.size(); ++seat) {
+    order[seat] = static_cast<int>(seat);
+  }
+  std::ranges::stable_sort(order, {}, rank);
+  std::vector<int> placed(seats_.size());
+  for (std::size_t i = 0; i < order.size(); ++i) {
+    const bool level = i > 0 && rank(order[i]) == rank(order[i - 1]);
+    placed[order[i]] = level ? placed[order[i - 1]] : static_cast<int>(i);
+    // Level with the game's own places, but not after the clock: the time
+    // tiebreak decided.
+    if (i > 0 && !level && std::get<0>(rank(order[i])) == 0 &&
+        std::get<1>(rank(order[i])) == std::get<1>(rank(order[i - 1]))) {
+      reason = "time_tiebreak";
     }
   }
 
@@ -242,11 +311,14 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
   }
   record_.set_termination_reason(reason);
   record_.set_finished_unix_ms(absl::ToUnixMillis(absl::Now()));
-  const double score0 =
-      outcome.is_draw ? 0.5 : (outcome.winning_player == 0 ? 1.0 : 0.0);
-  record_.set_result(outcome.is_draw ? proto::GameRecord::DRAW
-                                     : proto::GameRecord::WIN);
-  record_.set_winning_player(outcome.winning_player);
+  const bool shared_first = std::ranges::count(placed, 0) > 1;
+  record_.set_result(shared_first ? proto::GameRecord::DRAW
+                                  : proto::GameRecord::WIN);
+  record_.set_winning_player(
+      shared_first
+          ? -1
+          : static_cast<int>(std::ranges::find(placed, 0) - placed.begin()));
+  *record_.mutable_places() = {placed.begin(), placed.end()};
 
   history_->Store(record_);
   if (config_.on_record) {
@@ -254,25 +326,30 @@ void GameRun::Conclude(GameOutcome outcome, std::string reason) {
   }
 
   LOG(INFO) << "Game " << game_id_ << " (" << descriptor_.name
-            << ") finished: " << seats_[0].display_name << " vs "
-            << seats_[1].display_name << " score0=" << score0
-            << " reason=" << reason << " moves=" << session_->MoveCount();
+            << ") finished: " << absl::StrJoin(record_.player_names(), " vs ")
+            << " places=" << absl::StrJoin(placed, ",") << " reason=" << reason
+            << " moves=" << session_->MoveCount();
 
-  for (int seat = 0; seat < 2; ++seat) {
-    if (!seats_[seat].client) {
+  for (std::size_t seat = 0; seat < clients_.size(); ++seat) {
+    if (!clients_[seat]) {
       continue;
     }
-    ClientHandle& client = *seats_[seat].client;
+    ClientHandle& client = *clients_[seat];
     proto::ServerMessage msg;
     auto* over = msg.mutable_game_over();
-    if (outcome.is_draw) {
-      over->set_result(proto::GameOver::DRAW);
-    } else if (outcome.winning_player == seat) {
-      over->set_result(proto::GameOver::WIN);
-    } else {
+    if (placed[seat] != 0) {
       over->set_result(proto::GameOver::LOSS);
+    } else {
+      over->set_result(shared_first ? proto::GameOver::DRAW
+                                    : proto::GameOver::WIN);
     }
-    over->set_reason(reason);
+    // A forfeiter hears why it lost, not how the rest ended.
+    const auto forfeit =
+        std::ranges::find(record_.forfeits(), static_cast<int>(seat),
+                          &proto::GameRecord::Forfeit::seat);
+    over->set_reason(forfeit != record_.forfeits().end() ? forfeit->reason()
+                                                         : reason);
+    over->set_place(placed[seat]);
     client.Send(msg);
     client.CloseAfterFlush();
   }

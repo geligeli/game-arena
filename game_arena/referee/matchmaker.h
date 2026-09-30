@@ -1,8 +1,8 @@
 #ifndef GAME_ARENA_GAME_ARENA_REFEREE_MATCHMAKER_H
 #define GAME_ARENA_GAME_ARENA_REFEREE_MATCHMAKER_H
 
-// Pairs a Hello with its opponent ("builtin:<spec>" or "player:<name>") and
-// runs their games as GameRuns on a shared pool.
+// Groups a Hello with its opponents (each "builtin:<spec>" or
+// "player:<name>") and runs their games as GameRuns on a shared pool.
 
 #include <atomic>
 #include <chrono>
@@ -14,6 +14,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "game_arena/proto/tournament_broker.pb.h"
 #include "game_arena/referee/client_handle.h"
@@ -43,14 +44,14 @@ class Matchmaker {
   Matchmaker(const Matchmaker&) = delete;
   Matchmaker& operator=(const Matchmaker&) = delete;
 
-  // Never blocks. False, with *error set, when the game, builtin spec or
-  // partner name is unusable.
+  // Never blocks. False, with *error set, when the game, a builtin spec or a
+  // partner name is unusable, or the opponents do not fill the game's seats.
   bool Join(std::shared_ptr<ClientHandle> client, const proto::Hello& hello,
             std::string* error);
 
-  // Plays one game between two builtins, with no client on either side.
-  bool StartBuiltins(const std::string& game, const std::string& spec_a,
-                     const std::string& spec_b, std::string* error);
+  // Plays one game among builtins ("builtin:<spec>" each), with no client.
+  bool StartBuiltins(const std::string& game,
+                     const std::vector<std::string>& specs, std::string* error);
 
   // Unparks the client, and marks it disconnected so its game is forfeited.
   void Disconnect(const std::shared_ptr<ClientHandle>& client);
@@ -68,26 +69,30 @@ class Matchmaker {
     std::chrono::steady_clock::time_point deadline;
   };
 
-  // Every game starts here, whatever its seats are: seat 0 alternates between
-  // the two sides across the games they play each other.
-  void StartPairedGame(const GameDescriptor& descriptor, Seat a, Seat b);
-  // Seat 0 moves first. Only StartPairedGame() decides who that is.
-  void StartGame(const GameDescriptor& descriptor, Seat seat0, Seat seat1);
-  // Precondition: |wanted| is non-empty and not the client's own name.
+  // Every game starts here, whatever its seats are: across the games a group
+  // plays, each member has each seat once in every |seats| games, and every
+  // order of the others comes round.
+  void StartGroupGame(const GameDescriptor& descriptor,
+                      std::vector<Seat> seats);
+  // Seat 0 moves first. Only StartGroupGame() decides who that is.
+  void StartGame(const GameDescriptor& descriptor, std::vector<Seat> seats);
+  // |builtins| join the players once all of |members| (the group's players,
+  // the client's own name included) have arrived.
   bool JoinRendezvous(std::shared_ptr<ClientHandle> client,
-                      const std::string& game, const std::string& wanted,
-                      std::string* error);
+                      const GameDescriptor& descriptor,
+                      std::vector<std::string> members,
+                      std::vector<Seat> builtins, std::string* error);
   void ReaperLoop();
 
   const MatchmakerConfig config_;
   GameHistory* history_;  // not owned
 
-  // guards rendezvous_, pairing_games_, running_, stopping_
+  // guards rendezvous_, group_games_, running_, stopping_
   mutable std::mutex mutex_;
-  // By PairingKey(), so a collision means each side named the other.
-  std::map<std::string, Parked> rendezvous_;
-  // Games started per PairingKey(), a builtin being one side like any other.
-  std::map<std::string, uint64_t> pairing_games_;
+  // By GroupKey(), so the players of a group, each naming the others, meet.
+  std::map<std::string, std::vector<Parked>> rendezvous_;
+  // Games started per GroupKey(), a builtin being a member like any other.
+  std::map<std::string, uint64_t> group_games_;
   // Weak: only for Shutdown() to reach games, never to keep one alive.
   std::map<uint64_t, std::weak_ptr<GameRun>> running_;
   bool stopping_ = false;

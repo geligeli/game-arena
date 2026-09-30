@@ -21,7 +21,10 @@ cc_library(
 cc_library(
     name = "client_handle",
     hdrs = ["client_handle.h"],
-    deps = ["//game_arena/proto:tournament_broker_cc_proto"],
+    deps = [
+        "//game_arena/proto:tournament_broker_cc_proto",
+        "//game_arena/standings:game_history",
+    ],
 )
 
 # No gRPC below play_reactor: the game layer stays transport agnostic.
@@ -44,6 +47,7 @@ cc_library(
         "//game_arena/standings:game_history",
         "@abseil-cpp//absl/log",
         "@abseil-cpp//absl/time",
+        "@abseil-cpp//absl/strings",
     ],
 )
 
@@ -60,6 +64,7 @@ cc_library(
         "//game_arena/proto:tournament_broker_cc_proto",
         "//game_arena/standings:game_history",
         "@abseil-cpp//absl/log",
+        "@abseil-cpp//absl/strings",
     ],
 )
 
@@ -85,6 +90,7 @@ cc_library(
         "//game_arena/proto:tournament_broker_cc_grpc",
         "@abseil-cpp//absl/log",
         "@grpc//:grpc++",
+        "@abseil-cpp//absl/strings",
     ],
 )
 
@@ -92,7 +98,10 @@ cc_library(
     name = "match_tally",
     srcs = ["match_tally.cc"],
     hdrs = ["match_tally.h"],
-    deps = ["//game_arena/proto:tournament_broker_cc_proto"],
+    deps = [
+        "//game_arena/proto:tournament_broker_cc_proto",
+        "//game_arena/standings:game_history",
+    ],
 )
 
 cc_test(
@@ -123,6 +132,7 @@ cc_library(
         "@abseil-cpp//absl/log:globals",
         "@abseil-cpp//absl/log:initialize",
         "@grpc//:grpc++",
+        "@abseil-cpp//absl/strings",
     ],
 )
 

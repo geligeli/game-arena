@@ -6,6 +6,8 @@
 #include <string>
 
 #include "absl/log/log.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
 
 namespace tournament_client {
 
@@ -21,7 +23,9 @@ bool PlayOneGame(
   auto *hello = hello_msg.mutable_hello();
   hello->set_player_name(name);
   hello->set_game(game);
-  hello->set_opponent(opponent);
+  for (const absl::string_view each : absl::StrSplit(opponent, ',')) {
+    hello->add_opponent(std::string(each));
+  }
   if (!stream->Write(hello_msg)) {
     LOG(ERROR) << "Could not send hello";
     return false;
@@ -32,7 +36,8 @@ bool PlayOneGame(
     if (server_msg.has_game_start()) {
       const auto &start = server_msg.game_start();
       LOG(INFO) << "Game " << start.game_id() << " started as seat "
-                << start.seat() << " vs " << start.opponent_name();
+                << start.seat() << " of "
+                << absl::StrJoin(start.player_names(), ", ");
     } else if (server_msg.has_your_turn()) {
       tournament_broker::proto::ClientMessage reply;
       reply.mutable_action()->set_action(

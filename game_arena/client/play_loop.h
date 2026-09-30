@@ -16,7 +16,8 @@ namespace tournament_client {
 using ChooseActionFn =
     std::function<std::string(std::string_view state_bytes, std::mt19937 &gen)>;
 
-// One game on its own stream. False if the stream failed, not if it was lost.
+// One game on its own stream. |opponent| names every other seat, comma-
+// separated. False if the stream failed, not if it was lost.
 bool PlayOneGame(
     tournament_broker::proto::TournamentBroker::StubInterface *stub,
     const std::string &name, const std::string &game,

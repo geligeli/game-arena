@@ -178,10 +178,11 @@ message CandidateStanding {
   // LeaderboardResponse.score_label says which.
   double score = 2;
 
-  // Match problems.
+  // Match problems. A win is a sole first place, a draw a shared one.
   int32 wins = 3;
   int32 draws = 4;
   int32 losses = 5;
+  repeated int32 finishes = 10;  // games per place, first first
 
   // Graded problems: every metric, and the host that measured them.
   map<string, double> metrics = 6;
@@ -221,6 +222,7 @@ message Job {
   int32 draws = 8;
   int32 losses = 9;
   double elo = 10;
+  repeated int32 finishes = 14;  // games per place, first first
 
   int64 created_unix_ms = 11;
   int64 finished_unix_ms = 12;
@@ -376,6 +378,7 @@ message OrderResult {
   int32 wins = 5;
   int32 draws = 6;
   int32 losses = 7;
+  repeated int32 finishes = 16;  // games per place, first first
   // Set when the order could not complete at all (a crash, a timeout).
   string error = 9;
 

@@ -20,4 +20,5 @@ message KitConfig {
   string bot_binary = 11;
   string game = 12;
   repeated string referee_flags = 13;
+  int32 players = 14;  // seats per game; 0 is 2
 }

@@ -1,13 +1,14 @@
 #include "game_arena/referee/matchmaker.h"
 
 #include <algorithm>
-#include <array>
+#include <cstddef>
 #include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/log/log.h"
+#include "absl/strings/str_join.h"
 #include "game_arena/referee/game_registry.h"
 
 namespace tournament_broker {
@@ -17,12 +18,11 @@ namespace {
 constexpr std::string_view kBuiltinPrefix = "builtin:";
 constexpr std::string_view kPlayerPrefix = "player:";
 
-// Order-independent, so both sides of a pairing compute the same key.
-std::string PairingKey(const std::string& game, const std::string& a,
-                       const std::string& b) {
-  const std::string& lo = a < b ? a : b;
-  const std::string& hi = a < b ? b : a;
-  return game + "\t" + lo + "\t" + hi;
+// Order-independent, so every member of a group computes the same key.
+std::string GroupKey(const std::string& game,
+                     std::vector<std::string> members) {
+  std::ranges::sort(members);
+  return game + "\t" + absl::StrJoin(members, "\t");
 }
 
 // |opponent| is "builtin:<spec>"; nullopt, with *error set, for a bad spec.
@@ -76,116 +76,153 @@ bool Matchmaker::Join(std::shared_ptr<ClientHandle> client,
     return false;
   }
   const GameDescriptor& descriptor = it->second;
-
-  if (hello.opponent().substr(0, kBuiltinPrefix.size()) == kBuiltinPrefix) {
-    std::optional<Seat> bot = BuiltinSeat(descriptor, hello.opponent(), error);
-    if (!bot.has_value()) {
-      return false;
-    }
-    Seat remote{.display_name = client->name(),
-                .client = std::move(client),
-                .builtin = nullptr};
-    StartPairedGame(descriptor, std::move(remote), std::move(*bot));
-    return true;
+  if (hello.opponent_size() + 1 != descriptor.num_players) {
+    *error = "'" + hello.game() + "' seats " +
+             std::to_string(descriptor.num_players) + ", so it takes " +
+             std::to_string(descriptor.num_players - 1) + " opponent(s), not " +
+             std::to_string(hello.opponent_size());
+    return false;
   }
 
-  if (hello.opponent().substr(0, kPlayerPrefix.size()) == kPlayerPrefix) {
-    const std::string wanted = hello.opponent().substr(kPlayerPrefix.size());
+  std::vector<Seat> builtins;
+  std::vector<std::string> members = {client->name()};
+  for (const std::string& opponent : hello.opponent()) {
+    if (opponent.starts_with(kBuiltinPrefix)) {
+      std::optional<Seat> bot = BuiltinSeat(descriptor, opponent, error);
+      if (!bot.has_value()) {
+        return false;
+      }
+      builtins.push_back(std::move(*bot));
+      continue;
+    }
+    if (!opponent.starts_with(kPlayerPrefix)) {
+      *error = "unknown opponent '" + opponent +
+               "' (expected: builtin:<spec> | player:<name>)";
+      return false;
+    }
+    const std::string wanted = opponent.substr(kPlayerPrefix.size());
     if (wanted.empty()) {
       *error = "empty partner name in opponent 'player:'";
       return false;
     }
-    if (wanted == client->name()) {
-      *error = "'" + wanted + "' cannot play itself";
+    if (std::ranges::contains(members, wanted)) {
+      *error = "'" + wanted + "' cannot take two seats";
       return false;
     }
-    return JoinRendezvous(std::move(client), hello.game(), wanted, error);
+    members.push_back(wanted);
   }
 
-  *error = "unknown opponent '" + hello.opponent() +
-           "' (expected: builtin:<spec> | player:<name>)";
-  return false;
+  if (members.size() == 1) {
+    builtins.push_back(Seat{.display_name = client->name(),
+                            .client = std::move(client),
+                            .builtin = nullptr});
+    StartGroupGame(descriptor, std::move(builtins));
+    return true;
+  }
+  return JoinRendezvous(std::move(client), descriptor, std::move(members),
+                        std::move(builtins), error);
 }
 
 bool Matchmaker::StartBuiltins(const std::string& game,
-                               const std::string& spec_a,
-                               const std::string& spec_b, std::string* error) {
+                               const std::vector<std::string>& specs,
+                               std::string* error) {
   const GameDescriptor& descriptor = GameRegistry().at(game);
-  std::optional<Seat> a = BuiltinSeat(descriptor, spec_a, error);
-  std::optional<Seat> b =
-      a.has_value() ? BuiltinSeat(descriptor, spec_b, error) : std::nullopt;
-  if (!b.has_value()) {
-    return false;
+  std::vector<Seat> seats;
+  for (const std::string& spec : specs) {
+    std::optional<Seat> seat = BuiltinSeat(descriptor, spec, error);
+    if (!seat.has_value()) {
+      return false;
+    }
+    seats.push_back(std::move(*seat));
   }
-  StartPairedGame(descriptor, std::move(*a), std::move(*b));
+  StartGroupGame(descriptor, std::move(seats));
   return true;
 }
 
 bool Matchmaker::JoinRendezvous(std::shared_ptr<ClientHandle> client,
-                                const std::string& game,
-                                const std::string& wanted, std::string* error) {
-  const std::string key = PairingKey(game, client->name(), wanted);
-  std::shared_ptr<ClientHandle> partner;
+                                const GameDescriptor& descriptor,
+                                std::vector<std::string> members,
+                                std::vector<Seat> builtins,
+                                std::string* error) {
+  std::vector<std::string> everyone = members;
+  for (const Seat& builtin : builtins) {
+    everyone.push_back(builtin.display_name);
+  }
+  const std::string key = GroupKey(descriptor.name, std::move(everyone));
+  std::vector<Parked> arrived;
   {
     std::lock_guard lock(mutex_);
     if (stopping_) {
       *error = "server is shutting down";
       return false;
     }
-    auto it = rendezvous_.find(key);
-    if (it != rendezvous_.end() && it->second.client->disconnected()) {
-      rendezvous_.erase(it);
-      it = rendezvous_.end();
+    std::vector<Parked>& waiting = rendezvous_[key];
+    std::erase_if(waiting,
+                  [](const Parked& p) { return p.client->disconnected(); });
+    // Same key and same name: a duplicate connection, not a member.
+    if (std::ranges::any_of(waiting, [&](const Parked& p) {
+          return p.client->name() == client->name();
+        })) {
+      *error = "another connection is already waiting as '" + client->name() +
+               "' for '" + absl::StrJoin(members, "', '") + "'";
+      return false;
     }
-    if (it == rendezvous_.end()) {
-      rendezvous_.emplace(key,
-                          Parked{.client = std::move(client),
-                                 .game = game,
-                                 .deadline = std::chrono::steady_clock::now() +
-                                             config_.rendezvous_timeout});
+    waiting.push_back(Parked{.client = std::move(client),
+                             .game = descriptor.name,
+                             .deadline = std::chrono::steady_clock::now() +
+                                         config_.rendezvous_timeout});
+    if (waiting.size() < members.size()) {
       reaper_cv_.notify_all();
       return true;
     }
-    // Same key and same name: a duplicate connection, not a pairing.
-    if (it->second.client->name() == client->name()) {
-      *error = "another connection is already waiting as '" + client->name() +
-               "' for '" + wanted + "'";
-      return false;
-    }
-    partner = it->second.client;
-    rendezvous_.erase(it);
+    arrived = std::move(waiting);
+    rendezvous_.erase(key);
   }
 
-  Seat waiting{.display_name = partner->name(),
-               .client = std::move(partner),
-               .builtin = nullptr};
-  Seat arriving{.display_name = client->name(),
-                .client = std::move(client),
-                .builtin = nullptr};
-  StartPairedGame(GameRegistry().at(game), std::move(waiting),
-                  std::move(arriving));
+  for (Parked& parked : arrived) {
+    builtins.push_back(Seat{.display_name = parked.client->name(),
+                            .client = std::move(parked.client),
+                            .builtin = nullptr});
+  }
+  StartGroupGame(descriptor, std::move(builtins));
   return true;
 }
 
-void Matchmaker::StartPairedGame(const GameDescriptor& descriptor, Seat a,
-                                 Seat b) {
-  const std::string key =
-      PairingKey(descriptor.name, a.display_name, b.display_name);
+void Matchmaker::StartGroupGame(const GameDescriptor& descriptor,
+                                std::vector<Seat> seats) {
+  const auto by_name = [](const Seat& a, const Seat& b) {
+    return a.display_name < b.display_name;
+  };
+  std::ranges::sort(seats, by_name);
+  std::vector<std::string> names;
+  for (const Seat& seat : seats) {
+    names.push_back(seat.display_name);
+  }
+  const std::string key = GroupKey(descriptor.name, names);
   uint64_t played = 0;
   {
     std::lock_guard lock(mutex_);
-    played = pairing_games_[key]++;
+    played = group_games_[key]++;
   }
-  // By name, then by the pairing's game count: neither who arrived first nor
-  // which side is a builtin decides who moves first.
-  if ((a.display_name > b.display_name) != (played % 2 == 1)) {
-    std::swap(a, b);
+  // By name, then by the group's game count: neither who arrived first nor
+  // which members are builtins decides who moves first. Every n games are
+  // the n rotations of one order of the rest behind the first; the next n
+  // take the next order.
+  const std::size_t n = seats.size();
+  std::size_t orders = 1;
+  for (std::size_t i = 2; i <= n; ++i) {
+    orders *= i;
   }
-  StartGame(descriptor, std::move(a), std::move(b));
+  const std::size_t p = played % orders;
+  for (std::size_t i = 0; i < p / n; ++i) {
+    std::next_permutation(seats.begin() + 1, seats.end(), by_name);
+  }
+  std::ranges::rotate(seats, seats.begin() + static_cast<long>(p % n));
+  StartGame(descriptor, std::move(seats));
 }
 
-void Matchmaker::StartGame(const GameDescriptor& descriptor, Seat seat0,
-                           Seat seat1) {
+void Matchmaker::StartGame(const GameDescriptor& descriptor,
+                           std::vector<Seat> seats) {
   GameRunConfig run_config;
   run_config.turn_timeout = config_.turn_timeout;
   run_config.on_record = config_.on_record;
@@ -194,19 +231,18 @@ void Matchmaker::StartGame(const GameDescriptor& descriptor, Seat seat0,
 
   const uint64_t id = ++game_counter_;
   ++running_games_;
-  auto run = std::make_shared<GameRun>(
-      descriptor, run_config,
-      std::array<Seat, 2>{std::move(seat0), std::move(seat1)}, id, history_,
-      &pool_, &timer_, [this, id] {
-        {
-          std::lock_guard lock(mutex_);
-          running_.erase(id);
-        }
-        if (--running_games_ == 0) {
-          std::lock_guard lock(drain_mutex_);
-          drain_cv_.notify_all();
-        }
-      });
+  auto run =
+      std::make_shared<GameRun>(descriptor, run_config, std::move(seats), id,
+                                history_, &pool_, &timer_, [this, id] {
+                                  {
+                                    std::lock_guard lock(mutex_);
+                                    running_.erase(id);
+                                  }
+                                  if (--running_games_ == 0) {
+                                    std::lock_guard lock(drain_mutex_);
+                                    drain_cv_.notify_all();
+                                  }
+                                });
   {
     std::lock_guard lock(mutex_);
     running_.emplace(id, run);
@@ -223,8 +259,10 @@ void Matchmaker::Shutdown() {
       return;
     }
     stopping_ = true;
-    for (auto& [key, parked] : rendezvous_) {
-      waiting.push_back(parked.client);
+    for (auto& [key, group] : rendezvous_) {
+      for (Parked& parked : group) {
+        waiting.push_back(parked.client);
+      }
     }
     rendezvous_.clear();
     for (auto& [id, weak] : running_) {
@@ -251,12 +289,12 @@ void Matchmaker::ReaperLoop() {
       reaper_cv_.wait(lock);
       continue;
     }
-    const auto earliest =
-        std::min_element(rendezvous_.begin(), rendezvous_.end(),
-                         [](const auto& a, const auto& b) {
-                           return a.second.deadline < b.second.deadline;
-                         })
-            ->second.deadline;
+    auto earliest = std::chrono::steady_clock::time_point::max();
+    for (const auto& [key, group] : rendezvous_) {
+      for (const Parked& parked : group) {
+        earliest = std::min(earliest, parked.deadline);
+      }
+    }
     reaper_cv_.wait_until(lock, earliest);
     if (stopping_) {
       break;
@@ -265,14 +303,18 @@ void Matchmaker::ReaperLoop() {
     // Re-scan: wait_until also returns spuriously and on a fresh park.
     const auto now = std::chrono::steady_clock::now();
     std::vector<std::shared_ptr<ClientHandle>> expired;
-    for (auto it = rendezvous_.begin(); it != rendezvous_.end();) {
-      if (it->second.deadline <= now || it->second.client->disconnected()) {
-        expired.push_back(it->second.client);
-        it = rendezvous_.erase(it);
-      } else {
-        ++it;
-      }
+    for (auto& [key, group] : rendezvous_) {
+      std::erase_if(group, [&](const Parked& parked) {
+        const bool gone =
+            parked.deadline <= now || parked.client->disconnected();
+        if (gone) {
+          expired.push_back(parked.client);
+        }
+        return gone;
+      });
     }
+    std::erase_if(rendezvous_,
+                  [](const auto& entry) { return entry.second.empty(); });
     if (expired.empty()) {
       continue;
     }
@@ -291,9 +333,12 @@ void Matchmaker::ReaperLoop() {
 void Matchmaker::Disconnect(const std::shared_ptr<ClientHandle>& client) {
   client->MarkDisconnected();
   std::lock_guard lock(mutex_);
-  std::erase_if(rendezvous_, [&](const auto& entry) {
-    return entry.second.client == client;
-  });
+  for (auto& [key, group] : rendezvous_) {
+    std::erase_if(
+        group, [&](const Parked& parked) { return parked.client == client; });
+  }
+  std::erase_if(rendezvous_,
+                [](const auto& entry) { return entry.second.empty(); });
 }
 
 void Matchmaker::Drain() {

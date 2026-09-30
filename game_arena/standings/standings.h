@@ -22,10 +22,11 @@ struct Standing {
   std::string candidate_id;
   double score = 0.0;  // what Rank() orders by, in the metric's direction
 
-  // Match problems.
+  // Match problems. A win is a sole first place, a draw a shared one.
   int wins = 0;
   int draws = 0;
   int losses = 0;
+  std::vector<int> finishes;  // games per place, first first
 
   // Graded problems.
   std::map<std::string, double> metrics;
@@ -72,8 +73,8 @@ class Standings {
 // by id so equal rows do not swap places between requests. |limit| <= 0
 // returns everyone.
 inline std::vector<Standing> RankReady(
-    const std::vector<proto::Candidate> &candidates,
-    const Standings &standings, int limit) {
+    const std::vector<proto::Candidate> &candidates, const Standings &standings,
+    int limit) {
   std::vector<Standing> rows;
   for (const proto::Candidate &candidate : candidates) {
     if (candidate.status() == proto::Candidate::READY) {

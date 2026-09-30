@@ -25,6 +25,10 @@ bool IsSafeId(std::string_view id);
 bool WriteAtomically(const std::filesystem::path &path, std::string_view bytes,
                      std::string *error);
 
+// Each seat's place in |record|, 0 first and tied seats sharing the better
+// one; a record older than places has them from its result.
+std::vector<int> PlacesOf(const proto::GameRecord &record);
+
 class GameHistory {
  public:
   // Index lines kept in memory for RecentGames().

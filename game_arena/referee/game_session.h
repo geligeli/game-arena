@@ -16,8 +16,17 @@ namespace tournament_broker {
 
 // Outcome of a finished game; std::nullopt from Outcome() means ongoing.
 struct GameOutcome {
-  bool is_draw = false;
-  int winning_player = -1;  // meaningful iff !is_draw
+  // By seat: 0 is first, and tied seats share the better place.
+  std::vector<int> places;
+
+  static GameOutcome Win(int players, int seat) {
+    GameOutcome outcome{std::vector<int>(players, 1)};
+    outcome.places[seat] = 0;
+    return outcome;
+  }
+  static GameOutcome Draw(int players) {
+    return GameOutcome{std::vector<int>(players, 0)};
+  }
 };
 
 // |player| is -1 for a chance resolution.
@@ -56,6 +65,9 @@ class GameSession {
   virtual bool ApplySerializedAction(std::string_view bytes,
                                      std::string* error) = 0;
   virtual std::optional<GameOutcome> Outcome() const = 0;
+  // How the seats stand when the referee cuts the game short (the move cap).
+  // No places: all level.
+  virtual GameOutcome Standing() const { return {}; }
 
   const std::vector<RecordedStep>& Steps() const { return steps_; }
   int MoveCount() const { return static_cast<int>(steps_.size()); }
@@ -71,6 +83,10 @@ struct GameDescriptor {
   std::string name;  // registry key
   std::function<std::unique_ptr<GameSession>()> new_session;
   BuiltinFactory make_builtin;
+  int num_players = 2;
+  // With more than two seats, the builtin spec that plays on for a seat that
+  // forfeited; with two, the other seat just wins.
+  std::string forfeit_builtin = {};
 };
 
 }  // namespace tournament_broker

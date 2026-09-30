@@ -4,7 +4,6 @@
 // One game as a state machine: every transition runs on its own Strand, so its
 // state needs no locks.
 
-#include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -41,9 +40,8 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
  public:
   // Construct through std::make_shared: Start() needs shared_from_this().
   GameRun(const GameDescriptor& descriptor, GameRunConfig config,
-          std::array<Seat, 2> seats, uint64_t game_counter,
-          GameHistory* history, WorkerPool* pool, Timer* timer,
-          Task on_finished);
+          std::vector<Seat> seats, uint64_t game_counter, GameHistory* history,
+          WorkerPool* pool, Timer* timer, Task on_finished);
 
   // Posts the opening work. Call exactly once.
   void Start();
@@ -55,8 +53,12 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   // --- strand only ---
   void Begin();
   void Step();
-  void Conclude(GameOutcome outcome, std::string reason);
-  void ConcludeDraw(std::string reason);
+  // The seat places below everyone still playing and a builtin plays on for
+  // it. False, the game over, once one seat is left: that one wins.
+  bool Forfeit(int seat, std::string reason);
+  // |places| as the game ranks the seats; forfeiters go below them, the
+  // latest first, and with |tiebreak| level seats go by thinking time.
+  void Conclude(std::vector<int> places, std::string reason, bool tiebreak);
   void CaptureViews();
   bool SendYourTurn(int seat, std::chrono::milliseconds allowed);
   void ArmTurnTimer(std::chrono::milliseconds delay);
@@ -74,7 +76,9 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   std::shared_ptr<Strand> strand_;
   std::string game_id_;
 
-  std::array<Seat, 2> seats_;
+  std::vector<Seat> seats_;
+  // By seat, a forfeiter's too: its GameOver waits for the game to end.
+  std::vector<std::shared_ptr<ClientHandle>> clients_;
   std::unique_ptr<GameSession> session_;
   proto::GameRecord record_;
   std::mt19937 gen_;
@@ -92,7 +96,8 @@ class GameRun : public std::enable_shared_from_this<GameRun> {
   Timer::Id turn_timer_ = 0;
   int waiting_seat_ = -1;
   bool concluded_ = false;
-  std::array<std::chrono::steady_clock::duration, 2> time_used_{};
+  std::vector<std::chrono::steady_clock::duration> time_used_;
+  std::vector<int> forfeited_;  // seats, in the order they forfeited
   std::chrono::steady_clock::time_point turn_started_;
   // The pending deadline is the game budget's rather than turn_timeout's.
   bool turn_budget_bound_ = false;

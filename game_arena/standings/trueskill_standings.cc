@@ -26,12 +26,24 @@ TrueSkillStandings::TrueSkillStandings(
       continue;
     }
     // The index keeps exactly what RecordGame reads of a record.
+    const json::object &fields = entry.as_object();
     GameRecord record;
-    record.add_player_names(std::string(entry.at("player0").as_string()));
-    record.add_player_names(std::string(entry.at("player1").as_string()));
+    for (int seat = 0;; ++seat) {
+      const json::value *name =
+          fields.if_contains("player" + std::to_string(seat));
+      if (name == nullptr) {
+        break;
+      }
+      record.add_player_names(std::string(name->as_string()));
+    }
     record.set_result(
         static_cast<GameRecord::Result>(entry.at("result").to_number<int>()));
     record.set_winning_player(entry.at("winning_player").to_number<int>());
+    if (const json::value *places = fields.if_contains("places")) {
+      for (const json::value &place : places->as_array()) {
+        record.add_places(place.to_number<int>());
+      }
+    }
     RecordGame(record);
     ++games;
   }
@@ -39,11 +51,9 @@ TrueSkillStandings::TrueSkillStandings(
 }
 
 void TrueSkillStandings::RecordGame(const GameRecord &record) {
-  const int winner =
-      record.result() == GameRecord::WIN ? record.winning_player() : -1;
   const std::vector<std::string> players(record.player_names().begin(),
                                          record.player_names().end());
-  const std::vector<int> places = {winner == 1, winner == 0};
+  const std::vector<int> places = tournament_broker::PlacesOf(record);
   std::lock_guard lock(mutex_);
   ranker_.AddGame(players, places);
 }
@@ -60,6 +70,7 @@ Standing TrueSkillStandings::Get(const std::string &candidate_id) const {
   standing.wins = player.wins;
   standing.draws = player.draws;
   standing.losses = player.losses;
+  standing.finishes = player.finishes;
   standing.mu = player.rating.mu;
   standing.sigma = player.rating.sigma;
   return standing;
