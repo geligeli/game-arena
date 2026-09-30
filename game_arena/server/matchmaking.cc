@@ -69,8 +69,9 @@ std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size) {
 std::optional<std::vector<std::string>> ChooseGroup(
     const std::vector<PoolMember> &pool,
     const std::map<std::string, std::deque<std::string>> &recent,
-    const tournament_broker::trueskill::Params &params, std::size_t seats) {
-  if (pool.size() < seats) {
+    const tournament_broker::trueskill::Params &params, std::size_t seats,
+    const std::vector<PoolMember> &fillers) {
+  if (pool.size() < 2 || pool.size() + fillers.size() < seats) {
     return std::nullopt;
   }
   // The least certain first, less so the more it is already playing; while
@@ -87,14 +88,21 @@ std::optional<std::vector<std::string>> ChooseGroup(
     return met != recent.end() &&
            std::ranges::find(met->second, b.id) != met->second.end();
   };
-  std::vector<const PoolMember *> rivals;
+  // Too few members for a game: every one plays, and fillers take the rest.
+  const bool whole = pool.size() < seats;
+  std::vector<const PoolMember *> fixed, rivals;
   for (const PoolMember &m : pool) {
     if (m.id != a.id) {
-      rivals.push_back(&m);
+      (whole ? fixed : rivals).push_back(&m);
     }
   }
-  // Every seats - 1 of the rivals, by index.
-  const std::size_t k = seats - 1;
+  if (whole) {
+    for (const PoolMember &f : fillers) {
+      rivals.push_back(&f);
+    }
+  }
+  // Every seats - 1 - |fixed| of the rivals, by index.
+  const std::size_t k = seats - 1 - fixed.size();
   std::vector<std::size_t> pick(k);
   std::iota(pick.begin(), pick.end(), std::size_t{0});
   std::optional<std::tuple<bool, bool, double>> best_key;
@@ -105,8 +113,12 @@ std::optional<std::vector<std::string>> ChooseGroup(
     bool fresh = true;
     double variance = a.rating.sigma * a.rating.sigma;
     int running = 0;
+    std::vector<const PoolMember *> group = fixed;
     for (const std::size_t i : pick) {
-      const PoolMember &b = *rivals[i];
+      group.push_back(rivals[i]);
+    }
+    for (const PoolMember *member : group) {
+      const PoolMember &b = *member;
       ratings.push_back(b.rating);
       authors.insert(b.author);
       fresh = fresh && !is_recent(b);
@@ -121,8 +133,8 @@ std::optional<std::vector<std::string>> ChooseGroup(
     if (!best_key.has_value() || key > *best_key) {
       best_key = key;
       best = {a.id};
-      for (const std::size_t i : pick) {
-        best.push_back(rivals[i]->id);
+      for (const PoolMember *member : group) {
+        best.push_back(member->id);
       }
     }
     std::size_t i = k;
@@ -272,8 +284,15 @@ void Matchmaker::TopUp() {
     }
   }
   std::vector<PoolMember> pool = PoolOf(Rated(running), config_.pool());
+  std::vector<PoolMember> fillers;
+  for (const std::string &builtin : builtins_) {
+    fillers.push_back({.id = builtin,
+                       .author = builtin,
+                       .rating = ratings_->RatingOf(builtin),
+                       .running = running[builtin]});
+  }
   for (; free > 0; --free) {
-    const auto group = ChooseGroup(pool, recent, params_, seats_);
+    const auto group = ChooseGroup(pool, recent, params_, seats_, fillers);
     if (!group.has_value()) {
       return;
     }
@@ -283,12 +302,14 @@ void Matchmaker::TopUp() {
     }
     std::vector<std::string> opponents;
     for (auto it = group->begin() + 1; it != group->end(); ++it) {
-      opponents.push_back("player:" + *it);
+      opponents.push_back(it->starts_with("builtin:") ? *it : "player:" + *it);
     }
     const std::string job = scheduler_->EnqueueMatch(
         *candidate, opponents, static_cast<int>(config_.games()));
-    for (PoolMember &m : pool) {
-      m.running += std::ranges::contains(*group, m.id);
+    for (std::vector<PoolMember> *members : {&pool, &fillers}) {
+      for (PoolMember &m : *members) {
+        m.running += std::ranges::contains(*group, m.id);
+      }
     }
     for (const std::string &x : *group) {
       for (const std::string &y : *group) {

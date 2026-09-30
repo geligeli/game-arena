@@ -107,6 +107,23 @@ TEST(ChooseGroupTest, ThreeSeatsPreferDistinctAuthors) {
             (std::vector<std::string>{"unsure", "near", "next"}));
 }
 
+// Two versions cannot fill three seats alone: both play, and the builtin
+// that makes the closest game takes the third.
+TEST(ChooseGroupTest, BuiltinsFillAPoolTooSmallForTheSeats) {
+  const std::vector<PoolMember> pool = {Member("a", 25, 3), Member("b", 24, 3)};
+  const std::vector<PoolMember> fillers = {Member("builtin:far", 5, 1),
+                                           Member("builtin:near", 24, 1)};
+  EXPECT_EQ(*ChooseGroup(pool, {}, Params{}, 3, fillers),
+            (std::vector<std::string>{"a", "b", "builtin:near"}));
+  // One version, or a pool big enough, plays no builtin.
+  EXPECT_FALSE(ChooseGroup({pool[0]}, {}, Params{}, 3, fillers).has_value());
+  const std::vector<PoolMember> three = {pool[0], pool[1], Member("c", 23, 3)};
+  EXPECT_EQ(ChooseGroup(three, {}, Params{}, 3, fillers)->size(), 3u);
+  EXPECT_FALSE(
+      std::ranges::contains(*ChooseGroup(three, {}, Params{}, 3, fillers),
+                            std::string("builtin:near")));
+}
+
 TEST(ChooseGroupTest, NobodyToPlay) {
   EXPECT_FALSE(
       ChooseGroup({Member("alone", 30, 3)}, {}, Params{}, 2).has_value());

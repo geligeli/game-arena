@@ -55,19 +55,23 @@ struct PoolMember {
 // The pool out of every READY version, as above. Best first, by mu - 2 sigma.
 std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size);
 
-// The next match, the member it is for first, or nullopt with fewer members
-// than |seats|. |recent| maps a member to its last opponents, which it does
-// not meet again while another group is left. With more than two seats a
-// group whose authors differ goes before one that has recent opponents: a
-// third seat is what two versions of one author could gang up on.
+// The next match, the member it is for first, or nullopt with fewer than two
+// members. |recent| maps a member to its last opponents, which it does not
+// meet again while another group is left. With more than two seats a group
+// whose authors differ goes before one that has recent opponents: a third
+// seat is what two versions of one author could gang up on. A pool smaller
+// than |seats| plays whole, and the best of |fillers| (the builtins) take
+// the seats left.
 std::optional<std::vector<std::string>> ChooseGroup(
     const std::vector<PoolMember> &pool,
     const std::map<std::string, std::deque<std::string>> &recent,
-    const tournament_broker::trueskill::Params &params, std::size_t seats);
+    const tournament_broker::trueskill::Params &params, std::size_t seats,
+    const std::vector<PoolMember> &fillers = {});
 
 class Matchmaker {
  public:
-  // |builtins| are drawn as levels on the charts, never matched.
+  // |builtins| are drawn as levels on the charts, and matched only to fill a
+  // game the pool is too small for.
   Matchmaker(proto::Matchmaking config, std::string game, int seats,
              std::vector<std::string> builtins, Scheduler *scheduler,
              const CandidateStore *candidates,
