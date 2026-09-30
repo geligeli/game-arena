@@ -470,6 +470,45 @@ TEST_F(ContainerEngineTest, AMatchPhaseJoinsItsStepsOnAPrivateBridge) {
   EXPECT_EQ(result.phases(0).steps(1).name(), "referee");
 }
 
+// The daemon (or the ssh to it) refuses the foreground's start: nothing
+// would ever connect to the referee, so it is not waited on.
+TEST_F(ContainerEngineTest, AForegroundThatNeverStartsEndsThePhaseAtOnce) {
+  std::ofstream docker(root_ / "docker");
+  docker << "#!/usr/bin/env bash\n"
+         << "echo \"docker $*\" >> \"" << (root_ / "docker.log").string()
+         << "\"\n"
+         << "if [ \"$1\" = run ] && [[ \" $* \" != *\" -d \"* ]]; then\n"
+         << "  echo 'docker: error during connect' 1>&2; exit 125\n"
+         << "fi\n"
+         << "exit 0\n";
+  docker.close();
+
+  proto::Job job;
+  job.set_id("saw-0-nostart-1");
+  job.set_log_dir((root_ / "logs").string());
+  *job.mutable_workspace() = SlotWorkspace();
+  *job.mutable_isolation() = HardenedIsolation();
+  proto::Phase *phase = job.add_phases();
+  phase->set_name("match");
+  proto::Step *referee = phase->add_background();
+  referee->set_name("referee");
+  referee->set_keep_after_exit(true);
+  *referee->add_argv() = Word("./bazel-bin/referee", false);
+  proto::Step *bot = phase->mutable_foreground();
+  bot->set_name("bot");
+  *bot->add_argv() = Word("./bazel-bin/bot", false);
+
+  const proto::JobResult result = engine_->Run(job, nullptr);
+  EXPECT_EQ(result.status().code(), proto::Status::START_FAILED);
+  EXPECT_NE(result.status().message().find("cannot start bot: docker: error "
+                                           "during connect"),
+            std::string::npos)
+      << result.status().message();
+  EXPECT_EQ(Log().find("docker wait saw-0-nostart-1-referee"),
+            std::string::npos)
+      << Log();
+}
+
 TEST_F(ContainerEngineTest, EveryContainerIsHardened) {
   proto::Job job;
   job.set_id("saw-0-hard-1");

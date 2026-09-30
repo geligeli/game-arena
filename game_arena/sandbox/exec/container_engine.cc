@@ -439,6 +439,15 @@ bool ContainerEngine::RunPhase(const proto::Job &job, const proto::Phase &phase,
     return Fail(status, proto::Status::TOOL_MISSING,
                 "cannot run docker ('" + config_.docker + "' not found)");
   }
+  // docker run's own failure, not the step's: the container never ran, so
+  // nothing would ever end the background steps but their deadlines.
+  if (!ran.run.timed_out && ran.run.exit_code == 125) {
+    teardown();
+    return Fail(
+        status, proto::Status::START_FAILED,
+        "cannot start " + foreground.name() + ": " +
+            TailOf(ReadFile(log_dir / (foreground.name() + ".err")), 1000));
+  }
   if (ran.run.timed_out) {
     // The timeout killed the docker client, not the daemon's container.
     Quiet(config_.docker, {"kill", SandboxName(job.id(), foreground.name())});
