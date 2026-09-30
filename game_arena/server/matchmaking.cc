@@ -4,8 +4,11 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <numeric>
 #include <regex>
+#include <set>
 #include <sstream>
+#include <tuple>
 
 #include "absl/log/log.h"
 #include "absl/strings/numbers.h"
@@ -31,15 +34,6 @@ int64_t NowMs() { return absl::ToUnixMillis(absl::Now()); }
 std::string When(int64_t unix_ms) {
   return absl::FormatTime("%b %d %H:%M", absl::FromUnixMillis(unix_ms),
                           absl::LocalTimeZone());
-}
-
-// TrueSkill's match quality for two players: the chance of a draw, relative
-// to the most even pairing possible.
-double Quality(const Rating &a, const Rating &b, double beta) {
-  const double spread = 2 * beta * beta + a.sigma * a.sigma + b.sigma * b.sigma;
-  const double gap = a.mu - b.mu;
-  return std::sqrt(2 * beta * beta / spread) *
-         std::exp(-gap * gap / (2 * spread));
 }
 
 }  // namespace
@@ -72,11 +66,11 @@ std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size) {
   return pool;
 }
 
-std::optional<std::pair<std::string, std::string>> ChoosePair(
+std::optional<std::vector<std::string>> ChooseGroup(
     const std::vector<PoolMember> &pool,
     const std::map<std::string, std::deque<std::string>> &recent,
-    const tournament_broker::trueskill::Params &params) {
-  if (pool.size() < 2) {
+    const tournament_broker::trueskill::Params &params, std::size_t seats) {
+  if (pool.size() < seats) {
     return std::nullopt;
   }
   // The least certain first, less so the more it is already playing; while
@@ -93,28 +87,59 @@ std::optional<std::pair<std::string, std::string>> ChoosePair(
     return met != recent.end() &&
            std::ranges::find(met->second, b.id) != met->second.end();
   };
-  const bool everyone_recent = std::ranges::all_of(
-      pool, [&](const PoolMember &b) { return b.id == a.id || is_recent(b); });
-  const PoolMember *best = nullptr;
-  double best_score = -1;
-  for (const PoolMember &b : pool) {
-    if (b.id == a.id || (!everyone_recent && is_recent(b))) {
-      continue;
-    }
-    // Close and uncertain: where a game moves the ratings most.
-    const double score =
-        Quality(a.rating, b.rating, params.beta) *
-        (a.rating.sigma * a.rating.sigma + b.rating.sigma * b.rating.sigma) /
-        (1 + b.running);
-    if (score > best_score) {
-      best_score = score;
-      best = &b;
+  std::vector<const PoolMember *> rivals;
+  for (const PoolMember &m : pool) {
+    if (m.id != a.id) {
+      rivals.push_back(&m);
     }
   }
-  return std::pair{a.id, best->id};
+  // Every seats - 1 of the rivals, by index.
+  const std::size_t k = seats - 1;
+  std::vector<std::size_t> pick(k);
+  std::iota(pick.begin(), pick.end(), std::size_t{0});
+  std::optional<std::tuple<bool, bool, double>> best_key;
+  std::vector<std::string> best;
+  for (;;) {
+    std::vector<Rating> ratings = {a.rating};
+    std::set<std::string> authors = {a.author};
+    bool fresh = true;
+    double variance = a.rating.sigma * a.rating.sigma;
+    int running = 0;
+    for (const std::size_t i : pick) {
+      const PoolMember &b = *rivals[i];
+      ratings.push_back(b.rating);
+      authors.insert(b.author);
+      fresh = fresh && !is_recent(b);
+      variance += b.rating.sigma * b.rating.sigma;
+      running += b.running;
+    }
+    // Close and uncertain: where a game moves the ratings most.
+    const auto key =
+        std::tuple(seats == 2 || authors.size() == seats, fresh,
+                   tournament_broker::trueskill::Quality(ratings, params.beta) *
+                       variance / (1 + running));
+    if (!best_key.has_value() || key > *best_key) {
+      best_key = key;
+      best = {a.id};
+      for (const std::size_t i : pick) {
+        best.push_back(rivals[i]->id);
+      }
+    }
+    std::size_t i = k;
+    while (i > 0 && pick[i - 1] == rivals.size() - k + i - 1) {
+      --i;
+    }
+    if (i == 0) {
+      return best;
+    }
+    ++pick[i - 1];
+    for (std::size_t j = i; j < k; ++j) {
+      pick[j] = pick[j - 1] + 1;
+    }
+  }
 }
 
-Matchmaker::Matchmaker(proto::Matchmaking config, std::string game,
+Matchmaker::Matchmaker(proto::Matchmaking config, std::string game, int seats,
                        std::vector<std::string> builtins, Scheduler *scheduler,
                        const CandidateStore *candidates,
                        const TrueSkillStandings *ratings,
@@ -122,6 +147,7 @@ Matchmaker::Matchmaker(proto::Matchmaking config, std::string game,
                        std::filesystem::path state)
     : config_(std::move(config)),
       game_(std::move(game)),
+      seats_(seats),
       builtins_(std::move(builtins)),
       scheduler_(scheduler),
       candidates_(candidates),
@@ -149,16 +175,28 @@ void Matchmaker::Load() {
   for (std::string line; std::getline(in, line);) {
     const std::vector<std::string> f = absl::StrSplit(line, '\t');
     int64_t ms = 0;
-    if (f.size() < 2 || !absl::SimpleAtoi(f[1], &ms)) {
+    if (f.size() < 2 || !absl::SimpleAtoi(f[1], &ms) || f[0] != "G") {
       continue;
     }
-    if (f[0] == "G" && f.size() == 8) {
-      Match m{.a = f[3], .b = f[4], .unix_ms = ms, .job_id = f[2]};
-      if (!absl::SimpleAtoi(f[5], &m.games) ||
-          !absl::SimpleAtoi(f[6], &m.a_wins) ||
-          !absl::SimpleAtoi(f[7], &m.b_wins)) {
-        continue;
-      }
+    Match m{.unix_ms = ms, .job_id = f[2]};
+    // Before groups: "G ms job a b games a_wins b_wins".
+    const bool pair = f.size() == 8;
+    if (pair) {
+      m.members = {f[3], f[4]};
+    } else if (f.size() == 6) {
+      m.members = absl::StrSplit(f[4], ',');
+    } else {
+      continue;
+    }
+    const std::vector<std::string> finishes =
+        pair ? std::vector{f[6], f[7]}
+             : std::vector<std::string>(
+                   absl::StrSplit(f[5], ',', absl::SkipEmpty()));
+    bool ok = absl::SimpleAtoi(f[pair ? 5 : 3], &m.games);
+    for (const std::string &count : finishes) {
+      ok = ok && absl::SimpleAtoi(count, &m.finishes.emplace_back());
+    }
+    if (ok) {
       finished_.push_front(m);
       if (finished_.size() > kFinished) {
         finished_.pop_back();
@@ -185,6 +223,7 @@ std::vector<PoolMember> Matchmaker::Rated(
     const auto playing = running.find(c.candidate_id());
     rated.push_back(
         {.id = c.candidate_id(),
+         .author = c.author().empty() ? c.candidate_id() : c.author(),
          .rating = ratings_->RatingOf(c.candidate_id()),
          .running = playing == running.end() ? 0 : playing->second});
   }
@@ -227,41 +266,47 @@ void Matchmaker::TopUp() {
     std::lock_guard lock(mutex_);
     recent = recent_;
     for (const auto &[job, m] : running_) {
-      ++running[m.a];
-      ++running[m.b];
+      for (const std::string &member : m.members) {
+        ++running[member];
+      }
     }
   }
   std::vector<PoolMember> pool = PoolOf(Rated(running), config_.pool());
   for (; free > 0; --free) {
-    const auto pair = ChoosePair(pool, recent, params_);
-    if (!pair.has_value()) {
+    const auto group = ChooseGroup(pool, recent, params_, seats_);
+    if (!group.has_value()) {
       return;
     }
-    const auto candidate = candidates_->Get(pair->first);
+    const auto candidate = candidates_->Get(group->front());
     if (!candidate.has_value()) {
       return;
     }
-    const std::string job =
-        scheduler_->EnqueueMatch(*candidate, {"player:" + pair->second},
-                                 static_cast<int>(config_.games()));
-    for (PoolMember &m : pool) {
-      m.running += m.id == pair->first || m.id == pair->second;
+    std::vector<std::string> opponents;
+    for (auto it = group->begin() + 1; it != group->end(); ++it) {
+      opponents.push_back("player:" + *it);
     }
-    for (const auto &[x, y] : {*pair, std::pair{pair->second, pair->first}}) {
-      std::deque<std::string> &last = recent[x];
-      last.push_front(y);
-      if (last.size() > kRecent) {
-        last.pop_back();
+    const std::string job = scheduler_->EnqueueMatch(
+        *candidate, opponents, static_cast<int>(config_.games()));
+    for (PoolMember &m : pool) {
+      m.running += std::ranges::contains(*group, m.id);
+    }
+    for (const std::string &x : *group) {
+      for (const std::string &y : *group) {
+        if (x == y) {
+          continue;
+        }
+        std::deque<std::string> &last = recent[x];
+        last.push_front(y);
+        if (last.size() > kRecent * (seats_ - 1)) {
+          last.pop_back();
+        }
       }
     }
     std::lock_guard lock(mutex_);
     recent_ = recent;
     // A match that could not even start concluded inside EnqueueMatch.
     if (!early_.erase(job)) {
-      running_[job] = {.a = pair->first,
-                       .b = pair->second,
-                       .unix_ms = NowMs(),
-                       .job_id = job};
+      running_[job] = {.members = *group, .unix_ms = NowMs(), .job_id = job};
     }
   }
 }
@@ -277,16 +322,15 @@ void Matchmaker::OnConcluded(const proto::Job &job) {
   running_.erase(it);
   m.unix_ms = NowMs();
   m.games = job.games_played();
-  m.a_wins = job.wins();
-  m.b_wins = job.losses();
+  m.finishes.assign(job.finishes().begin(), job.finishes().end());
   finished_.push_front(m);
   if (finished_.size() > kFinished) {
     finished_.pop_back();
   }
   ++matches_done_;
   Append(absl::StrJoin({std::string("G"), std::to_string(m.unix_ms), m.job_id,
-                        m.a, m.b, std::to_string(m.games),
-                        std::to_string(m.a_wins), std::to_string(m.b_wins)},
+                        std::to_string(m.games), absl::StrJoin(m.members, ","),
+                        absl::StrJoin(m.finishes, ",")},
                        "\t"));
   wake_.notify_all();
 }
@@ -381,20 +425,21 @@ std::optional<std::pair<std::string, std::string>> Matchmaker::Route(
   const auto link = [](const std::string &job) {
     return absl::StrCat("<a href=\"/jobs/", job, "\">", job, "</a>");
   };
-  html << "<h2>Running</h2><table><tr><th>a</th><th>b</th><th>since</th>"
+  html << "<h2>Running</h2><table><tr><th>match</th><th>since</th>"
           "<th>job</th></tr>";
   for (const Match &m : running) {
-    html << "<tr><td class=l>" << HtmlEscape(m.a) << "</td><td class=l>"
-         << HtmlEscape(m.b) << "</td><td>" << When(m.unix_ms)
-         << "</td><td class=l>" << link(m.job_id) << "</td></tr>";
-  }
-  html << "</table><h2>Finished</h2><table><tr><th>a</th><th>b</th>"
-          "<th>a's W-L</th><th>when</th><th>job</th></tr>";
-  for (const Match &m : finished) {
-    html << "<tr><td class=l>" << HtmlEscape(m.a) << "</td><td class=l>"
-         << HtmlEscape(m.b) << "</td><td>" << m.a_wins << "-" << m.b_wins
+    html << "<tr><td class=l>" << HtmlEscape(absl::StrJoin(m.members, " vs "))
          << "</td><td>" << When(m.unix_ms) << "</td><td class=l>"
          << link(m.job_id) << "</td></tr>";
+  }
+  html << "</table><h2>Finished</h2><table><tr><th>match</th>"
+          "<th>first's places, 1st-2nd-&hellip;</th><th>when</th>"
+          "<th>job</th></tr>";
+  for (const Match &m : finished) {
+    html << "<tr><td class=l>" << HtmlEscape(absl::StrJoin(m.members, " vs "))
+         << "</td><td>" << absl::StrJoin(m.finishes, "-") << "</td><td>"
+         << When(m.unix_ms) << "</td><td class=l>" << link(m.job_id)
+         << "</td></tr>";
   }
   html << "</table></div></body></html>";
   return std::pair{std::string("text/html; charset=utf-8"), html.str()};

@@ -10,29 +10,39 @@
 namespace tournament_arena {
 namespace {
 
-using Pairs = std::vector<std::pair<std::string, std::string>>;
+using Groups = std::vector<std::vector<std::string>>;
+using Names = std::vector<std::string>;
 
-TEST(SwissPairsTest, NeighboursMeetAndTheLowestTakesTheBye) {
-  const SwissRound round = SwissPairs({"a", "b", "c", "d", "e"}, {}, {});
-  EXPECT_EQ(round.pairs, (Pairs{{"a", "b"}, {"c", "d"}}));
-  EXPECT_EQ(round.bye, "e");
+TEST(SwissGroupsTest, NeighboursMeetAndTheLowestTakesTheBye) {
+  const SwissRound round = SwissGroups({"a", "b", "c", "d", "e"}, {}, {}, 2);
+  EXPECT_EQ(round.groups, (Groups{{"a", "b"}, {"c", "d"}}));
+  EXPECT_EQ(round.byes, Names{"e"});
 }
 
-TEST(SwissPairsTest, NoRematchWhileAFreshOpponentIsLeft) {
+TEST(SwissGroupsTest, NoRematchWhileAFreshOpponentIsLeft) {
   const SwissRound round =
-      SwissPairs({"a", "b", "c", "d"}, {{"a", "b"}, {"c", "d"}}, {});
-  EXPECT_EQ(round.pairs, (Pairs{{"a", "c"}, {"b", "d"}}));
+      SwissGroups({"a", "b", "c", "d"}, {{"a", "b"}, {"c", "d"}}, {}, 2);
+  EXPECT_EQ(round.groups, (Groups{{"a", "c"}, {"b", "d"}}));
 }
 
-TEST(SwissPairsTest, ARematchRatherThanNoGame) {
-  const SwissRound round = SwissPairs({"a", "b"}, {{"a", "b"}}, {});
-  EXPECT_EQ(round.pairs, (Pairs{{"a", "b"}}));
+TEST(SwissGroupsTest, ARematchRatherThanNoGame) {
+  const SwissRound round = SwissGroups({"a", "b"}, {{"a", "b"}}, {}, 2);
+  EXPECT_EQ(round.groups, (Groups{{"a", "b"}}));
 }
 
-TEST(SwissPairsTest, NoSecondByeWhileSomeoneHasHadNone) {
-  const SwissRound round = SwissPairs({"a", "b", "c"}, {}, {"c"});
-  EXPECT_EQ(round.bye, "b");
-  EXPECT_EQ(round.pairs, (Pairs{{"a", "c"}}));
+TEST(SwissGroupsTest, NoSecondByeWhileSomeoneHasHadNone) {
+  const SwissRound round = SwissGroups({"a", "b", "c"}, {}, {"c"}, 2);
+  EXPECT_EQ(round.byes, Names{"b"});
+  EXPECT_EQ(round.groups, (Groups{{"a", "c"}}));
+}
+
+// Three seats: neighbours by threes, none beside someone it has met while
+// another is left, and what no group takes sits out.
+TEST(SwissGroupsTest, ThreeSeatsGroupNeighbours) {
+  const SwissRound round = SwissGroups({"a", "b", "c", "d", "e", "f", "g", "h"},
+                                       {{"a", "b"}}, {"h"}, 3);
+  EXPECT_EQ(round.byes, (Names{"g", "f"}));
+  EXPECT_EQ(round.groups, (Groups{{"a", "c", "d"}, {"b", "e", "h"}}));
 }
 
 class SeedVersionsTest : public ::testing::Test {

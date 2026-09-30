@@ -2,7 +2,8 @@
 #define GAME_ARENA_GAME_ARENA_SERVER_SWISS_H
 
 // A Swiss re-rank: every version a job log holds, and the builtins, played in
-// rounds of neighbours by TrueSkill, on the fleet like any other match.
+// rounds of neighbours by TrueSkill, a group to each game's seats, on the
+// fleet like any other match.
 
 #include <condition_variable>
 #include <cstdint>
@@ -27,17 +28,18 @@
 namespace tournament_arena {
 
 struct SwissRound {
-  std::vector<std::pair<std::string, std::string>> pairs;
-  std::string bye;  // empty with an even count
+  std::vector<std::vector<std::string>> groups;
+  std::vector<std::string> byes;  // what a whole number of groups leaves over
 };
 
-// |ranked| is strongest first. Each entry meets the nearest one below it that
-// it has not met, a rematch only when none is left; with an odd count the
-// lowest entry without a bye sits out. |played| holds (lo, hi) pairs.
-SwissRound SwissPairs(
+// |ranked| is strongest first; a group has |seats| entries. Each takes the
+// nearest entries below its first that have met none of its members, a
+// rematch only when none is left; the entries a whole number of groups leaves
+// over sit out, the lowest without a bye first. |played| holds (lo, hi) pairs.
+SwissRound SwissGroups(
     const std::vector<std::string> &ranked,
     const std::set<std::pair<std::string, std::string>> &played,
-    const std::set<std::string> &had_bye);
+    const std::set<std::string> &had_bye, std::size_t seats);
 
 struct SwissEntry {
   std::string id;           // "<participant>-vNN", or "builtin:<spec>"
@@ -62,7 +64,7 @@ class SwissRun {
   // |rounds| <= 0: ceil(log2(entries)) + 3, counting the rounds a run on the
   // same data dir played before: |state| is where it keeps them, and |jobs|
   // how their matches ended.
-  SwissRun(std::vector<SwissEntry> entries, int rounds, int games,
+  SwissRun(std::vector<SwissEntry> entries, int rounds, int games, int seats,
            std::string game, Scheduler *scheduler,
            const CandidateView *candidates, const TrueSkillStandings *ratings,
            const JobLog *jobs, std::filesystem::path state);
@@ -77,7 +79,8 @@ class SwissRun {
 
  private:
   struct Match {
-    std::string a, b, job_id;
+    std::vector<std::string> members;
+    std::string job_id;
   };
 
   void Run();
@@ -89,6 +92,7 @@ class SwissRun {
   const std::vector<SwissEntry> entries_;
   const int rounds_;
   const int games_;
+  const int seats_;
   const std::string game_;
   Scheduler *scheduler_;               // not owned
   const CandidateView *candidates_;    // not owned
@@ -100,7 +104,7 @@ class SwissRun {
   std::condition_variable cv_;
   bool stopping_ = false;
   std::vector<std::vector<Match>> played_;
-  std::vector<std::string> byes_;
+  std::vector<std::vector<std::string>> byes_;
   std::map<std::string, proto::Job> concluded_;  // by job id
   std::thread thread_;
 };

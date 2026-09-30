@@ -11,6 +11,7 @@
 
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/time/time.h"
 #include "game_arena/server/skill_charts.h"
@@ -32,22 +33,33 @@ std::pair<std::string, std::string> Key(const std::string &a,
 
 bool IsBuiltin(const std::string &id) { return id.starts_with(kBuiltinPrefix); }
 
+void AddPairs(const std::vector<std::string> &group,
+              std::set<std::pair<std::string, std::string>> *played) {
+  for (const std::string &a : group) {
+    for (const std::string &b : group) {
+      if (a < b) {
+        played->insert(Key(a, b));
+      }
+    }
+  }
+}
+
 }  // namespace
 
-SwissRound SwissPairs(
+SwissRound SwissGroups(
     const std::vector<std::string> &ranked,
     const std::set<std::pair<std::string, std::string>> &played,
-    const std::set<std::string> &had_bye) {
+    const std::set<std::string> &had_bye, std::size_t seats) {
   SwissRound round;
   std::vector<std::string> pool = ranked;
-  if (pool.size() % 2 == 1) {
+  while (pool.size() % seats != 0) {
     auto sits = std::find_if(pool.rbegin(), pool.rend(), [&](const auto &id) {
       return !had_bye.contains(id);
     });
     if (sits == pool.rend()) {
       sits = pool.rbegin();
     }
-    round.bye = *sits;
+    round.byes.push_back(*sits);
     pool.erase(std::next(sits).base());
   }
   std::vector<bool> used(pool.size(), false);
@@ -56,21 +68,27 @@ SwissRound SwissPairs(
       continue;
     }
     used[i] = true;
-    std::size_t pick = pool.size();
-    for (std::size_t j = i + 1; j < pool.size(); ++j) {
-      if (used[j]) {
-        continue;
+    std::vector<std::string> &group = round.groups.emplace_back();
+    group.push_back(pool[i]);
+    while (group.size() < seats) {
+      std::size_t pick = pool.size();
+      for (std::size_t j = i + 1; j < pool.size(); ++j) {
+        if (used[j]) {
+          continue;
+        }
+        if (pick == pool.size()) {
+          pick = j;  // the rematch to fall back on
+        }
+        if (std::ranges::none_of(group, [&](const std::string &member) {
+              return played.contains(Key(member, pool[j]));
+            })) {
+          pick = j;
+          break;
+        }
       }
-      if (pick == pool.size()) {
-        pick = j;  // the rematch to fall back on
-      }
-      if (!played.contains(Key(pool[i], pool[j]))) {
-        pick = j;
-        break;
-      }
+      used[pick] = true;
+      group.push_back(pool[pick]);
     }
-    used[pick] = true;
-    round.pairs.emplace_back(pool[i], pool[pick]);
   }
   return round;
 }
@@ -161,7 +179,7 @@ std::vector<SwissEntry> SeedVersions(const JobLog &jobs,
 }
 
 SwissRun::SwissRun(std::vector<SwissEntry> entries, int rounds, int games,
-                   std::string game, Scheduler *scheduler,
+                   int seats, std::string game, Scheduler *scheduler,
                    const CandidateView *candidates,
                    const TrueSkillStandings *ratings, const JobLog *jobs,
                    std::filesystem::path state)
@@ -171,6 +189,7 @@ SwissRun::SwissRun(std::vector<SwissEntry> entries, int rounds, int games,
                                std::max<std::size_t>(2, entries_.size())))) +
                                3),
       games_(games),
+      seats_(seats),
       game_(std::move(game)),
       scheduler_(scheduler),
       candidates_(candidates),
@@ -207,8 +226,8 @@ std::map<std::string, Rating> SwissRun::Snapshot() const {
   return ratings;
 }
 
-// State lines, tab-separated: "M <round> <a> <b> <job id>" as a match is
-// queued and "B <round> <id>" for a bye.
+// State lines, tab-separated: "M <round> <member>... <job id>" as a match is
+// queued and "B <round> <id>" for each bye.
 void SwissRun::Resume(std::set<std::pair<std::string, std::string>> *played,
                       std::set<std::string> *had_bye) {
   std::ifstream in(state_);
@@ -216,21 +235,22 @@ void SwissRun::Resume(std::set<std::pair<std::string, std::string>> *played,
     const std::vector<std::string> f = absl::StrSplit(line, '\t');
     const std::size_t round = std::stoul(f[1]);
     if (f[0] == "M") {
+      const std::string &job_id = f.back();
       played_.resize(std::max(played_.size(), round));
-      played_[round - 1].push_back({f[2], f[3], f[4]});
-      played->insert(Key(f[2], f[3]));
-      const auto record = jobs_->Get(f[4]);
+      played_[round - 1].push_back({{f.begin() + 2, f.end() - 1}, job_id});
+      AddPairs(played_[round - 1].back().members, played);
+      const auto record = jobs_->Get(job_id);
       proto::Job job = record.has_value() ? record->job() : proto::Job();
       if (job.state() != proto::Job::DONE &&
           job.state() != proto::Job::FAILED) {
-        job.set_job_id(f[4]);
+        job.set_job_id(job_id);
         job.set_state(proto::Job::CANCELLED);
         job.set_error("dropped: the run stopped before it finished");
       }
-      concluded_[f[4]] = job;
+      concluded_[job_id] = job;
     } else if (f[0] == "B") {
       byes_.resize(std::max(byes_.size(), round));
-      byes_[round - 1] = f[2];
+      byes_[round - 1].push_back(f[2]);
       had_bye->insert(f[2]);
     }
   }
@@ -284,39 +304,41 @@ void SwissRun::Run() {
                          return ratings.at(a).mu > ratings.at(b).mu;
                        });
     }
-    const SwissRound pairing = SwissPairs(ids, played, had_bye);
+    const SwissRound drawn = SwissGroups(ids, played, had_bye, seats_);
     std::vector<Match> matches;
-    for (auto [a, b] : pairing.pairs) {
-      played.insert(Key(a, b));
-      // The candidate's side is the one with code, when only one has.
-      if (IsBuiltin(a) && !IsBuiltin(b)) {
-        std::swap(a, b);
-      }
+    for (std::vector<std::string> group : drawn.groups) {
+      AddPairs(group, &played);
+      // The candidate's side is one with code, when any has.
+      std::ranges::stable_partition(
+          group, [](const std::string &id) { return !IsBuiltin(id); });
       proto::Candidate candidate;
-      if (IsBuiltin(a)) {
-        candidate.set_candidate_id(a);
+      if (IsBuiltin(group[0])) {
+        candidate.set_candidate_id(group[0]);
         candidate.set_game(game_);
       } else {
-        candidate = *candidates_->Get(a);
+        candidate = *candidates_->Get(group[0]);
       }
-      const std::string opponent = IsBuiltin(b) ? b : "player:" + b;
+      std::vector<std::string> opponents;
+      for (auto it = group.begin() + 1; it != group.end(); ++it) {
+        opponents.push_back(IsBuiltin(*it) ? *it : "player:" + *it);
+      }
       matches.push_back(
-          {a, b, scheduler_->EnqueueMatch(candidate, {opponent}, games_)});
+          {group, scheduler_->EnqueueMatch(candidate, opponents, games_)});
       std::ofstream(state_, std::ios::app)
-          << "M\t" << round + 1 << "\t" << a << "\t" << b << "\t"
+          << "M\t" << round + 1 << "\t" << absl::StrJoin(group, "\t") << "\t"
           << matches.back().job_id << "\n";
     }
-    if (!pairing.bye.empty()) {
-      had_bye.insert(pairing.bye);
+    for (const std::string &bye : drawn.byes) {
+      had_bye.insert(bye);
       std::ofstream(state_, std::ios::app)
-          << "B\t" << round + 1 << "\t" << pairing.bye << "\n";
+          << "B\t" << round + 1 << "\t" << bye << "\n";
     }
     LOG(INFO) << "Swiss: round " << round + 1 << " of " << rounds_ << ", "
               << matches.size() << " match(es)";
 
     std::unique_lock lock(mutex_);
     played_.push_back(matches);
-    byes_.push_back(pairing.bye);
+    byes_.push_back(drawn.byes);
     cv_.wait(lock, [&] {
       return stopping_ ||
              std::all_of(matches.begin(), matches.end(), [&](const Match &m) {
@@ -406,12 +428,12 @@ std::optional<std::pair<std::string, std::string>> SwissRun::Route(
   html << "<h2>Rounds</h2>";
   for (std::size_t round = played_.size(); round-- > 0;) {
     html << "<h3>Round " << round + 1
-         << "</h3><table><tr><th>a</th><th>b</th>"
-            "<th>a's W-L</th><th>job</th></tr>";
+         << "</h3><table><tr><th>match</th>"
+            "<th>first's W-L</th><th>job</th></tr>";
     for (const Match &m : played_[round]) {
       const auto job = concluded_.find(m.job_id);
-      html << "<tr><td class=l>" << HtmlEscape(m.a) << "</td><td class=l>"
-           << HtmlEscape(m.b) << "</td><td>"
+      html << "<tr><td class=l>" << HtmlEscape(absl::StrJoin(m.members, " vs "))
+           << "</td><td>"
            << (job == concluded_.end() ? std::string("&hellip;")
                : job->second.error().empty()
                    ? absl::StrCat(job->second.wins(), "-", job->second.losses())
@@ -422,7 +444,8 @@ std::optional<std::pair<std::string, std::string>> SwissRun::Route(
     }
     html << "</table>";
     if (!byes_[round].empty()) {
-      html << "<p class=note>Bye: " << HtmlEscape(byes_[round]) << "</p>";
+      html << "<p class=note>Bye: "
+           << HtmlEscape(absl::StrJoin(byes_[round], ", ")) << "</p>";
     }
   }
   html << "</div></body></html>";

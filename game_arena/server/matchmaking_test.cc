@@ -11,8 +11,11 @@ namespace {
 using tournament_broker::trueskill::Params;
 
 PoolMember Member(const std::string &id, double mu, double sigma,
-                  int running = 0) {
-  return {.id = id, .rating = {.mu = mu, .sigma = sigma}, .running = running};
+                  int running = 0, const std::string &author = "") {
+  return {.id = id,
+          .author = author.empty() ? id : author,
+          .rating = {.mu = mu, .sigma = sigma},
+          .running = running};
 }
 
 std::vector<std::string> Ids(const std::vector<PoolMember> &pool) {
@@ -49,43 +52,68 @@ TEST(PoolOfTest, OnlyAPlaceNoOutsiderCouldTakeIsSettled) {
   EXPECT_FALSE(safe[1].settled);
 }
 
-TEST(ChoosePairTest, TheLeastCertainMeetsItsClosestUncertainRival) {
+TEST(ChooseGroupTest, TheLeastCertainMeetsItsClosestUncertainRival) {
   const std::vector<PoolMember> pool = {
       Member("sure", 30, 1), Member("unsure", 30, 5), Member("near", 29, 3),
       Member("far", 10, 3)};
-  const auto pair = ChoosePair(pool, {}, Params{});
-  ASSERT_TRUE(pair.has_value());
-  EXPECT_EQ(pair->first, "unsure");
-  EXPECT_EQ(pair->second, "near");
+  const auto group = ChooseGroup(pool, {}, Params{}, 2);
+  ASSERT_TRUE(group.has_value());
+  EXPECT_EQ(*group, (std::vector<std::string>{"unsure", "near"}));
 }
 
-TEST(ChoosePairTest, RecentOpponentsWaitWhileAnotherIsLeft) {
+TEST(ChooseGroupTest, RecentOpponentsWaitWhileAnotherIsLeft) {
   const std::vector<PoolMember> pool = {
       Member("unsure", 30, 5), Member("near", 29, 3), Member("next", 27, 3)};
   std::map<std::string, std::deque<std::string>> recent = {
       {"unsure", {"near"}}};
-  EXPECT_EQ(ChoosePair(pool, recent, Params{})->second, "next");
+  EXPECT_EQ(ChooseGroup(pool, recent, Params{}, 2)->at(1), "next");
   recent["unsure"] = {"near", "next"};
   // Everyone was met lately: the best of them after all.
-  EXPECT_EQ(ChoosePair(pool, recent, Params{})->second, "near");
+  EXPECT_EQ(ChooseGroup(pool, recent, Params{}, 2)->at(1), "near");
 }
 
-TEST(ChoosePairTest, AnOpenPlaceComesBeforeAMoreUncertainSettledOne) {
+TEST(ChooseGroupTest, AnOpenPlaceComesBeforeAMoreUncertainSettledOne) {
   std::vector<PoolMember> pool = {Member("settled", 30, 5),
                                   Member("open", 30, 1), Member("near", 29, 1)};
   pool[0].settled = true;
-  EXPECT_EQ(ChoosePair(pool, {}, Params{})->first, "open");
+  EXPECT_EQ(ChooseGroup(pool, {}, Params{}, 2)->front(), "open");
 }
 
-TEST(ChoosePairTest, BusyMembersYieldToIdleOnes) {
+TEST(ChooseGroupTest, BusyMembersYieldToIdleOnes) {
   const std::vector<PoolMember> pool = {Member("a", 30, 4, /*running=*/3),
                                         Member("b", 30, 3), Member("c", 29, 3)};
-  EXPECT_EQ(ChoosePair(pool, {}, Params{})->first, "b");
+  EXPECT_EQ(ChooseGroup(pool, {}, Params{}, 2)->front(), "b");
 }
 
-TEST(ChoosePairTest, NobodyToPlay) {
-  EXPECT_FALSE(ChoosePair({Member("alone", 30, 3)}, {}, Params{}).has_value());
-  EXPECT_FALSE(ChoosePair({}, {}, Params{}).has_value());
+TEST(ChooseGroupTest, ThreeSeatsTakeTheBestPairOfRivals) {
+  const std::vector<PoolMember> pool = {
+      Member("unsure", 30, 5), Member("near", 29, 3), Member("next", 27, 3),
+      Member("far", 10, 3)};
+  EXPECT_EQ(*ChooseGroup(pool, {}, Params{}, 3),
+            (std::vector<std::string>{"unsure", "near", "next"}));
+}
+
+// Two versions of one author could gang up on a third seat, so a group of
+// three authors wins over a closer one; two seats have no one to gang up on.
+TEST(ChooseGroupTest, ThreeSeatsPreferDistinctAuthors) {
+  const std::vector<PoolMember> pool = {
+      Member("unsure", 30, 5, 0, "x"), Member("near", 29, 3, 0, "x"),
+      Member("next", 27, 3, 0, "y"), Member("third", 25, 3, 0, "z")};
+  EXPECT_EQ(*ChooseGroup(pool, {}, Params{}, 3),
+            (std::vector<std::string>{"unsure", "next", "third"}));
+  EXPECT_EQ(ChooseGroup(pool, {}, Params{}, 2)->at(1), "near");
+  // Only one other author left: the best group after all.
+  EXPECT_EQ(*ChooseGroup({pool[0], pool[1], pool[2]}, {}, Params{}, 3),
+            (std::vector<std::string>{"unsure", "near", "next"}));
+}
+
+TEST(ChooseGroupTest, NobodyToPlay) {
+  EXPECT_FALSE(
+      ChooseGroup({Member("alone", 30, 3)}, {}, Params{}, 2).has_value());
+  EXPECT_FALSE(ChooseGroup({}, {}, Params{}, 2).has_value());
+  EXPECT_FALSE(
+      ChooseGroup({Member("a", 30, 3), Member("b", 30, 3)}, {}, Params{}, 3)
+          .has_value());
 }
 
 }  // namespace

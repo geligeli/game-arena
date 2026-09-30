@@ -70,8 +70,9 @@ ABSL_FLAG(std::string, swiss_from, "",
 ABSL_FLAG(int, swiss_rounds, 0,
           "Swiss rounds in all: a restart on the same --data_dir resumes "
           "after the ones already played. 0: ceil(log2(entries)) + 3");
-ABSL_FLAG(int, swiss_games, 2,
-          "Games per Swiss match: two gives each side each seat once");
+ABSL_FLAG(int, swiss_games, 0,
+          "Games per Swiss match. 0: one for each order of the seats, so "
+          "each side has each seat as often (2 for two seats, 6 for three)");
 ABSL_FLAG(std::string, import_versions_from, "",
           "With submission.versions: before serving, make every submission in "
           "this data dir's job log that played a game a READY version here. "
@@ -243,6 +244,7 @@ int main(int argc, char** argv) {
   if (problem->match().has_matchmaking() && swiss_from.empty()) {
     matchmaker = std::make_unique<tournament_arena::Matchmaker>(
         problem->match().matchmaking(), problem->match().game(),
+        static_cast<int>(problem->match().players()),
         std::vector<std::string>(problem->match().placement_opponents().begin(),
                                  problem->match().placement_opponents().end()),
         &scheduler, &candidates, ratings, trueskill_params,
@@ -381,10 +383,18 @@ int main(int argc, char** argv) {
                  "submission";
   }
   if (!swiss_from.empty()) {
+    const int seats = static_cast<int>(problem->match().players());
+    int games = absl::GetFlag(FLAGS_swiss_games);
+    if (games <= 0) {
+      games = 1;
+      for (int i = 2; i <= seats; ++i) {
+        games *= i;
+      }
+    }
     swiss = std::make_unique<tournament_arena::SwissRun>(
-        std::move(swiss_entries), absl::GetFlag(FLAGS_swiss_rounds),
-        absl::GetFlag(FLAGS_swiss_games), problem->match().game(), &scheduler,
-        &candidates, ratings, &job_log, data_dir / "swiss.tsv");
+        std::move(swiss_entries), absl::GetFlag(FLAGS_swiss_rounds), games,
+        seats, problem->match().game(), &scheduler, &candidates, ratings,
+        &job_log, data_dir / "swiss.tsv");
     swiss->Start();
     LOG(INFO) << "Swiss re-rank of " << swiss_from
               << ": http://localhost:" << absl::GetFlag(FLAGS_http_port)
