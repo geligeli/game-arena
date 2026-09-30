@@ -61,13 +61,17 @@ std::string PlayerLinks(const std::vector<std::string>& players) {
   });
 }
 
-std::string OpponentLink(std::string_view spec) {
-  if (spec.empty()) {
+std::string OpponentLink(
+    const google::protobuf::RepeatedPtrField<std::string>& specs) {
+  if (specs.empty()) {
     return "graded run";
   }
-  return absl::ConsumePrefix(&spec, "player:")
-             ? absl::StrCat("vs ", PlayerLink(spec))
-             : absl::StrCat("vs ", HtmlEscape(spec));
+  return "vs " + absl::StrJoin(
+                     specs, ", ", [](std::string* out, std::string_view spec) {
+                       out->append(absl::ConsumePrefix(&spec, "player:")
+                                       ? PlayerLink(spec)
+                                       : HtmlEscape(spec));
+                     });
 }
 
 // Drops ESC [ ... letter: every example's .bazelrc asks for compiler colour.

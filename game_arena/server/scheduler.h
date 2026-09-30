@@ -69,10 +69,12 @@ class Scheduler {
   std::string EnqueuePlacement(const proto::Candidate &candidate,
                                Reservation reservation);
 
-  // One match of |games| against |opponent|, metered against no one. Either
-  // side may be a builtin, as "builtin:<spec>" for |candidate|'s id.
+  // One match of |games| against |opponents|, one per other seat, metered
+  // against no one. Any side may be a builtin, as "builtin:<spec>" for
+  // |candidate|'s id.
   std::string EnqueueMatch(const proto::Candidate &candidate,
-                           const std::string &opponent, int games);
+                           const std::vector<std::string> &opponents,
+                           int games);
 
   std::optional<proto::Job> GetJob(const std::string &job_id) const;
 
@@ -101,7 +103,7 @@ class Scheduler {
     std::map<std::string, proto::WorkOrder> running;  // keyed by order id
     bool aborted = false;
     // A build-first job: whom it plays once its build order has succeeded.
-    std::vector<std::string> after_build;
+    std::vector<std::vector<std::string>> after_build;
     int after_build_games = 0;
     int build_attempts = 0;
     // Cleared once the job has finished and is on disk.
@@ -113,12 +115,14 @@ class Scheduler {
     std::vector<std::string> in_flight;  // order ids
   };
 
-  // Rated rivals for |candidate|: never its author's other versions.
-  std::vector<std::string> LadderLocked(
+  // Rated rivals for |candidate|, grouped for its orders: never its author's
+  // other versions.
+  std::vector<std::vector<std::string>> LadderLocked(
       const proto::Candidate &candidate) const;
-  // Nullopt when the rival cannot play. Not const: it consumes an order id.
+  // Nullopt when a rival cannot play. Not const: it consumes an order id.
   std::optional<proto::WorkOrder> MakeOrderLocked(
-      const proto::Candidate &candidate, const std::string &opponent, int games,
+      const proto::Candidate &candidate,
+      const std::vector<std::string> &opponents, int games,
       const std::string &job_id);
   std::string NextOrderIdLocked();
   proto::WorkOrder MakeBuildOrderLocked(const proto::Candidate &candidate,
@@ -130,11 +134,13 @@ class Scheduler {
                       proto::Side *side) const;
   // |record_patch|: keep the submission's patch in the job log, which only
   // a submission needs; a match's candidate is already in the store.
-  // |build_first|: one build order now, |opponents| once it has built.
-  std::string EnqueueLocked(const proto::Candidate &candidate,
-                            const std::vector<std::string> &opponents,
-                            int games, const std::string &client_id,
-                            bool record_patch = true, bool build_first = false);
+  // An order per group of |opponents|. |build_first|: one build order now,
+  // the rest once it has built.
+  std::string EnqueueLocked(
+      const proto::Candidate &candidate,
+      const std::vector<std::vector<std::string>> &opponents, int games,
+      const std::string &client_id, bool record_patch = true,
+      bool build_first = false);
   void AbortJobLocked(Job *job, const std::string &reason);
   void ReleaseReservationLocked(const std::string &client_id);
   void DispatchLocked();

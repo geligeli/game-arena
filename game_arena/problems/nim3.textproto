@@ -1,0 +1,40 @@
+# Nim for three seats: the arena's own game with more than two players, so
+# free-for-alls are tested end to end; no label here leaves this repo.
+
+problem_id: "nim3"
+display_name: "Nim for three (21 stones)"
+description:
+  "Take 1 to 3 stones a turn, three players in turn; whoever takes the last "
+  "stone wins, and the rest place in the order they last moved.\n"
+
+submission {
+  max_patch_bytes: 262144
+  max_files: 32
+  # No harness: submissions are patch-only.
+  allow_paths: "game_arena/candidates/**"
+}
+
+build {
+  targets: "//game_arena/testgame:match_referee"
+  timeout_s: 600
+}
+
+sandbox {
+  image: "nim-sandbox:1"
+  memory_limit_mb: 2048
+}
+
+match {
+  game: "nim3"
+  referee_target: "//game_arena/testgame:match_referee"
+  players: 3
+  games_per_order: 6
+  placement_opponents: "builtin:random"
+  placement_opponents: "builtin:optimal"
+  turn_timeout_ms: 5000
+  game_time_budget_ms: 60000
+  max_moves_per_game: 100
+  timeout_s: 600
+}
+
+ranking { kind: TRUESKILL }

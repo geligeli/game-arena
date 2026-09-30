@@ -165,7 +165,7 @@ TEST(OutcomeForTest, ABuildFailureIsACompletedOrderWithDiagnostics) {
 
 TEST(OutcomeForTest, AnOpponentsBuildFailureIsNotTheSubmittersFault) {
   proto::WorkOrder order = MatchOrder();
-  order.mutable_opponent()->set_candidate_id("c-rival");
+  order.add_opponent()->set_candidate_id("c-rival");
 
   sx::JobResult result;
   WithBuild(&result, 1,

@@ -242,7 +242,7 @@ void Matchmaker::TopUp() {
       return;
     }
     const std::string job =
-        scheduler_->EnqueueMatch(*candidate, "player:" + pair->second,
+        scheduler_->EnqueueMatch(*candidate, {"player:" + pair->second},
                                  static_cast<int>(config_.games()));
     for (PoolMember &m : pool) {
       m.running += m.id == pair->first || m.id == pair->second;

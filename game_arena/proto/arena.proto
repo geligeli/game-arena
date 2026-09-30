@@ -277,12 +277,12 @@ message WorkOrder {
 
   Side candidate = 3;
 
-  // "builtin:<spec>" or "player:<candidate_id>".
-  string opponent_spec = 10;
+  // The other seats, each "builtin:<spec>" or "player:<candidate_id>".
+  repeated string opponent_spec = 10;
 
-  // A "player:" opponent's side. Both patches go onto one tree, so they must
-  // touch disjoint paths.
-  Side opponent = 16;
+  // The "player:" opponents' sides, in opponent_spec's order. Every patch goes
+  // onto one tree, so they must touch disjoint paths.
+  repeated Side opponent = 16;
 
   int32 num_games = 11;
   int32 build_timeout_s = 13;

@@ -4,6 +4,7 @@
 #include <google/protobuf/text_format.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <fstream>
 #include <ios>
 #include <iterator>
@@ -141,6 +142,31 @@ bool ValidateProblemConfig(const proto::ProblemConfig& config,
           return false;
         }
       }
+      if (match.players() > 2) {
+        if (config.ranking().kind() != proto::RankingSpec::TRUESKILL) {
+          *error =
+              "match.players above 2 needs ranking.kind TRUESKILL: ELO rates "
+              "pairs";
+          return false;
+        }
+        // Each side has each seat as often only over whole rotations.
+        if (match.games_per_order() % match.players() != 0 ||
+            (match.has_matchmaking() &&
+             match.matchmaking().games() % match.players() != 0)) {
+          *error = absl::StrCat(
+              "match.games_per_order and match.matchmaking.games must be "
+              "multiples of match.players (",
+              match.players(), ")");
+          return false;
+        }
+        if (static_cast<uint32_t>(match.placement_opponents_size()) + 1 <
+            match.players()) {
+          *error = absl::StrCat(
+              "match.placement_opponents needs at least players - 1 (",
+              match.players() - 1, ") builtins to fill a placement game");
+          return false;
+        }
+      }
       break;
     }
     case proto::ProblemConfig::EVALUATION_NOT_SET:
@@ -255,6 +281,7 @@ SchedulerConfig SchedulerConfigFor(const proto::ProblemConfig& problem) {
   if (problem.has_match()) {
     const auto& match = problem.match();
     *config.mutable_placement_opponents() = match.placement_opponents();
+    config.set_players(static_cast<int>(match.players()));
     config.set_placement_games(static_cast<int>(match.games_per_order()));
     order->set_run_timeout_s(static_cast<int>(match.timeout_s()));
     order->set_referee_target(match.referee_target());

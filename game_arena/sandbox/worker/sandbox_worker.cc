@@ -19,6 +19,7 @@
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
+#include "absl/strings/str_join.h"
 #include "game_arena/common/process/process.h"
 #include "game_arena/proto/arena.grpc.pb.h"
 #include "game_arena/sandbox/exec/container_engine.h"
@@ -122,8 +123,8 @@ class WorkerSession {
 
       LOG(INFO) << "slot " << slot << ": order " << order.order_id()
                 << " candidate " << order.candidate().candidate_id() << " vs "
-                << order.opponent_spec() << " (" << order.num_games()
-                << " games)";
+                << absl::StrJoin(order.opponent_spec(), ",") << " ("
+                << order.num_games() << " games)";
       const OrderOutcome outcome =
           runner_->RunOrder(slot, order,
                             [this](const std::string &order_id,

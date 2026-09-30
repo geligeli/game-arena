@@ -183,7 +183,7 @@ class OrderRunnerContainerTest : public ::testing::Test {
     order.set_order_id(id);
     order.set_game("nim");
     order.set_referee_target("//game_arena/testgame:match_referee");
-    order.set_opponent_spec("builtin:random");
+    order.add_opponent_spec("builtin:random");
     order.set_num_games(2);
 
     // The sandbox travels with the order: a worker has no image and no tree

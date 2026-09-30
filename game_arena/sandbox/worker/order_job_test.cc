@@ -35,7 +35,7 @@ proto::WorkOrder MatchOrder() {
   order.set_order_id("ok-1");
   order.set_game("nim");
   order.set_referee_target("//testgame:match_referee");
-  order.set_opponent_spec("builtin:random");
+  order.add_opponent_spec("builtin:random");
   order.set_num_games(2);
   proto::SandboxOrder *sandbox = order.mutable_sandbox();
   sandbox->set_image("img:1");
@@ -157,7 +157,7 @@ TEST(JobForOrderTest, OnlyTheBuildSeesThePatchesAndTheCache) {
 
 TEST(JobForOrderTest, OnlyTheBuildWritesTheOutputBase) {
   proto::WorkOrder order = MatchOrder();
-  proto::Side *opponent = order.mutable_opponent();
+  proto::Side *opponent = order.add_opponent();
   opponent->set_candidate_id("c-rival");
   opponent->set_patch("another patch");
   opponent->set_bot_target("//solutions/c-rival:bot");
@@ -197,7 +197,7 @@ TEST(JobForOrderTest, TheRefereeReportsFromAScratchOfItsOwn) {
 
 TEST(JobForOrderTest, OneBuildBuildsEverySideAndTheReferee) {
   proto::WorkOrder order = MatchOrder();
-  proto::Side *opponent = order.mutable_opponent();
+  proto::Side *opponent = order.add_opponent();
   opponent->set_candidate_id("c-rival");
   opponent->set_patch("another patch");
   opponent->add_build_targets("//solutions/c-rival:bot");
@@ -217,6 +217,43 @@ TEST(JobForOrderTest, OneBuildBuildsEverySideAndTheReferee) {
   EXPECT_EQ(job.workspace().staged_files_size(), 2);
   EXPECT_EQ(job.phases(1).background_size(), 2);
   EXPECT_EQ(job.phases(1).background(1).name(), "opponent");
+}
+
+// Three seats: each player opponent plays from the background under a name of
+// its own, naming every other seat as the candidate names them.
+TEST(JobForOrderTest, EveryPlayerOpponentNamesTheOthers) {
+  proto::WorkOrder order = MatchOrder();
+  order.set_game("nim3");
+  order.clear_opponent_spec();
+  for (const std::string id : {"c-rival", "c-third"}) {
+    order.add_opponent_spec("player:" + id);
+    proto::Side *opponent = order.add_opponent();
+    opponent->set_candidate_id(id);
+    opponent->set_patch("patch of " + id);
+    opponent->set_bot_target("//solutions/" + id + ":bot");
+  }
+  sx::Job job;
+  std::string error;
+  ASSERT_TRUE(
+      JobForOrder(0, order, Config(), ContainerCapabilities(), &job, &error))
+      << error;
+  const sx::Phase &match = job.phases(1);
+  ASSERT_EQ(match.background_size(), 3);
+  EXPECT_NE(
+      ArgvOf(match.background(0))
+          .find("--player_a=c-ok --player_b=player:c-rival,player:c-third"),
+      std::string::npos);
+  EXPECT_EQ(match.background(1).name(), "opponent");
+  EXPECT_NE(
+      ArgvOf(match.background(1)).find("--opponent=player:c-ok,player:c-third"),
+      std::string::npos);
+  EXPECT_EQ(match.background(2).name(), "opponent2");
+  EXPECT_NE(
+      ArgvOf(match.background(2)).find("--opponent=player:c-ok,player:c-rival"),
+      std::string::npos);
+  EXPECT_NE(ArgvOf(match.foreground())
+                .find("--opponent=player:c-rival,player:c-third"),
+            std::string::npos);
 }
 
 TEST(JobForOrderTest, TwoBuiltinsAreTheRefereeAlone) {

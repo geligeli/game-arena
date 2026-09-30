@@ -4,11 +4,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_join.h"
 #include "game_arena/common/kv_options/kv_options.h"
 #include "game_arena/sandbox/common/docker.h"
 
@@ -164,8 +166,8 @@ std::vector<const proto::Side*> SidesOf(const proto::WorkOrder& order) {
   if (!IsBuiltin(order.candidate())) {
     sides.push_back(&order.candidate());
   }
-  if (order.has_opponent()) {
-    sides.push_back(&order.opponent());
+  for (const proto::Side& opponent : order.opponent()) {
+    sides.push_back(&opponent);
   }
   return sides;
 }
@@ -355,7 +357,8 @@ void AddMatchPhase(const proto::WorkOrder& order, const BuildPaths& paths,
   *referee->add_argv() = Quoted("--games=" + std::to_string(order.num_games()));
   *referee->add_argv() =
       Quoted("--player_a=" + order.candidate().candidate_id());
-  *referee->add_argv() = Quoted("--player_b=" + order.opponent_spec());
+  *referee->add_argv() =
+      Quoted("--player_b=" + absl::StrJoin(order.opponent_spec(), ","));
   *referee->add_argv() = Quoted("--scratch_dir={{scratch}}");
   *referee->add_argv() =
       Quoted("--report={{scratch}}/" + std::string(kMatchReport));
@@ -409,12 +412,18 @@ void AddMatchPhase(const proto::WorkOrder& order, const BuildPaths& paths,
     referee->set_timeout_s(run_timeout_s);
     return;
   }
-  if (order.has_opponent()) {
-    // Plays the whole match; the referee ends both bots' streams.
+  // Each plays the whole match, naming every other seat; the referee ends
+  // every bot's stream.
+  for (int i = 0; i < order.opponent_size(); ++i) {
+    const std::string own = "player:" + order.opponent(i).candidate_id();
+    std::vector<std::string> others = {"player:" +
+                                       order.candidate().candidate_id()};
+    std::ranges::copy_if(order.opponent_spec(), std::back_inserter(others),
+                         [&](const std::string& spec) { return spec != own; });
     sx::Step* opponent = phase->add_background();
-    opponent->set_name("opponent");
-    add_bot(opponent, order.opponent(),
-            "player:" + order.candidate().candidate_id());
+    opponent->set_name(i == 0 ? "opponent"
+                              : "opponent" + std::to_string(i + 1));
+    add_bot(opponent, order.opponent(i), absl::StrJoin(others, ","));
   }
 
   sx::Step* bot = phase->mutable_foreground();
@@ -422,7 +431,7 @@ void AddMatchPhase(const proto::WorkOrder& order, const BuildPaths& paths,
   bot->set_timeout_s(run_timeout_s);
   *bot->mutable_isolation() =
       SolutionIsolation(order.sandbox(), container, *isolation);
-  add_bot(bot, order.candidate(), order.opponent_spec());
+  add_bot(bot, order.candidate(), absl::StrJoin(order.opponent_spec(), ","));
 }
 
 void AddGradePhases(const proto::WorkOrder& order,

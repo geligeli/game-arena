@@ -3,7 +3,10 @@
 #include <google/protobuf/repeated_ptr_field.h>
 
 #include <algorithm>
+#include <bit>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
@@ -176,13 +179,13 @@ void Scheduler::FillSideLocked(const proto::Candidate &candidate,
 }
 
 std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
-    const proto::Candidate &candidate, const std::string &opponent, int games,
+    const proto::Candidate &candidate,
+    const std::vector<std::string> &opponents, int games,
     const std::string &job_id) {
   proto::WorkOrder order = config_.order();
   order.set_order_id(NextOrderIdLocked());
   order.set_job_id(job_id);
   order.set_game(candidate.game());
-  order.set_opponent_spec(opponent);
   order.set_num_games(games);
   if (artifacts_ != nullptr) {
     order.set_referee_artifact(artifacts_->Ref(referee_ref_));
@@ -197,20 +200,22 @@ std::optional<proto::WorkOrder> Scheduler::MakeOrderLocked(
     return order;
   }
 
-  if (IsBuiltin(opponent)) {
-    return order;
+  // The rivals' sides ride in the same order: one order is one whole match.
+  for (const std::string &opponent : opponents) {
+    if (IsBuiltin(opponent)) {
+      order.add_opponent_spec(opponent);
+      continue;
+    }
+    const std::string rival_id = opponent.rfind(kPlayerPrefix, 0) == 0
+                                     ? opponent.substr(kPlayerPrefix.size())
+                                     : opponent;
+    const auto rival = candidates_->Get(rival_id);
+    if (!rival.has_value() || rival->status() != proto::Candidate::READY) {
+      return std::nullopt;
+    }
+    order.add_opponent_spec(std::string(kPlayerPrefix) + rival->candidate_id());
+    FillSideLocked(*rival, order.add_opponent());
   }
-
-  // The rival's side rides in the same order: one order is one whole match.
-  const std::string rival_id = opponent.rfind(kPlayerPrefix, 0) == 0
-                                   ? opponent.substr(kPlayerPrefix.size())
-                                   : opponent;
-  const auto rival = candidates_->Get(rival_id);
-  if (!rival.has_value() || rival->status() != proto::Candidate::READY) {
-    return std::nullopt;
-  }
-  order.set_opponent_spec(std::string(kPlayerPrefix) + rival->candidate_id());
-  FillSideLocked(*rival, order.mutable_opponent());
   return order;
 }
 
@@ -235,10 +240,10 @@ proto::WorkOrder Scheduler::MakeBuildOrderLocked(
   return order;
 }
 
-std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
-                                     const std::vector<std::string> &opponents,
-                                     int games, const std::string &client_id,
-                                     bool record_patch, bool build_first) {
+std::string Scheduler::EnqueueLocked(
+    const proto::Candidate &candidate,
+    const std::vector<std::vector<std::string>> &opponents, int games,
+    const std::string &client_id, bool record_patch, bool build_first) {
   const std::string job_id = "j" +
                              std::to_string(absl::ToUnixMillis(absl::Now())) +
                              "_" + std::to_string(++job_counter_);
@@ -262,21 +267,21 @@ std::string Scheduler::EnqueueLocked(const proto::Candidate &candidate,
     proto::WorkOrder order = MakeBuildOrderLocked(candidate, job_id);
     JobRecord::Order *logged = job.record.add_orders();
     logged->set_order_id(order.order_id());
-    logged->set_opponent_spec("build");
+    logged->add_opponent_spec("build");
     job.pending.push_back(std::move(order));
   }
-  for (const std::string &opponent :
-       build_first ? std::vector<std::string>{} : opponents) {
-    auto order = MakeOrderLocked(candidate, opponent, games, job_id);
+  for (const std::vector<std::string> &group :
+       build_first ? std::vector<std::vector<std::string>>{} : opponents) {
+    auto order = MakeOrderLocked(candidate, group, games, job_id);
     if (!order.has_value()) {
-      LOG(WARNING) << "Job " << job_id << ": skipping opponent '" << opponent
-                   << "' (not runnable)";
+      LOG(WARNING) << "Job " << job_id << ": skipping opponents '"
+                   << absl::StrJoin(group, ",") << "' (not runnable)";
       continue;
     }
     requested += games;
     JobRecord::Order *logged = job.record.add_orders();
     logged->set_order_id(order->order_id());
-    logged->set_opponent_spec(order->opponent_spec());
+    *logged->mutable_opponent_spec() = order->opponent_spec();
     job.pending.push_back(std::move(*order));
   }
   job.status.set_games_requested(requested);
@@ -313,12 +318,26 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
     }
   }
   if (config_.order().has_grade()) {
-    // A graded problem's one order has no opponent: the empty entry.
-    return EnqueueLocked(candidate, {""}, config_.placement_games(), client_id);
+    // A graded problem's one order has no opponent: the empty group.
+    return EnqueueLocked(candidate, {{}}, config_.placement_games(), client_id);
   }
-  std::vector<std::string> opponents(config_.placement_opponents().begin(),
-                                     config_.placement_opponents().end());
-  const std::vector<std::string> ladder = LadderLocked(candidate);
+  // Every players - 1 of the placement opponents together: with two seats,
+  // each on its own.
+  const int others = config_.players() - 1;
+  const int builtins = config_.placement_opponents_size();
+  std::vector<std::vector<std::string>> opponents;
+  for (unsigned mask = 1; mask < (1u << builtins); ++mask) {
+    if (std::popcount(mask) != others) {
+      continue;
+    }
+    std::vector<std::string> &group = opponents.emplace_back();
+    for (int i = 0; i < builtins; ++i) {
+      if (mask >> i & 1) {
+        group.push_back(config_.placement_opponents(i));
+      }
+    }
+  }
+  const std::vector<std::vector<std::string>> ladder = LadderLocked(candidate);
   opponents.insert(opponents.end(), ladder.begin(), ladder.end());
   return EnqueueLocked(
       candidate, opponents, config_.placement_games(), client_id,
@@ -327,14 +346,16 @@ std::string Scheduler::EnqueuePlacement(const proto::Candidate &candidate,
 }
 
 std::string Scheduler::EnqueueMatch(const proto::Candidate &candidate,
-                                    const std::string &opponent, int games) {
+                                    const std::vector<std::string> &opponents,
+                                    int games) {
   std::lock_guard lock(mutex_);
-  return EnqueueLocked(candidate, {opponent}, games, "",
+  return EnqueueLocked(candidate, {opponents}, games, "",
                        /*record_patch=*/false);
 }
 
-// Rated rivals, evenly spaced from the top of the board to the bottom.
-std::vector<std::string> Scheduler::LadderLocked(
+// Rated rivals, evenly spaced from the top of the board to the bottom, and
+// neighbours in rank grouped into an order.
+std::vector<std::vector<std::string>> Scheduler::LadderLocked(
     const proto::Candidate &candidate) const {
   // Not itself, nor, when every submission is a version, its author's other
   // versions: placement measures a newcomer against other participants.
@@ -354,12 +375,40 @@ std::vector<std::string> Scheduler::LadderLocked(
       }
     }
   }
+  const auto others = static_cast<std::size_t>(config_.players() - 1);
   const std::size_t n = rated.size();
-  const std::size_t k =
-      std::min(n, static_cast<std::size_t>(std::max(0, config_.ladder_size())));
-  std::vector<std::string> ladder;
+  const std::size_t k = std::min(
+      n, static_cast<std::size_t>(std::max(0, config_.ladder_size())) * others);
+  std::vector<std::string> picks;
   for (std::size_t i = 0; i < k; ++i) {
-    ladder.push_back(rated[k == 1 ? 0 : i * (n - 1) / (k - 1)]);
+    picks.push_back(rated[k == 1 ? 0 : i * (n - 1) / (k - 1)]);
+  }
+  const auto author = [&](const std::string &id) {
+    const auto rival = candidates_->Get(id);
+    return rival.has_value() && !rival->author().empty() ? rival->author() : id;
+  };
+  std::vector<std::vector<std::string>> ladder;
+  while (!picks.empty()) {
+    std::vector<std::string> &group = ladder.emplace_back();
+    while (group.size() < others && !picks.empty()) {
+      // The next in rank from an author not yet in the group, if any is left.
+      auto next = std::ranges::find_if(picks, [&](const std::string &id) {
+        return std::ranges::none_of(group, [&](const std::string &member) {
+          return author(member) == author(id);
+        });
+      });
+      if (next == picks.end()) {
+        next = picks.begin();
+      }
+      group.push_back(*next);
+      picks.erase(next);
+    }
+    // A short last group fills its seats from the placement builtins.
+    for (const std::string &builtin : config_.placement_opponents()) {
+      if (group.size() < others && !std::ranges::contains(group, builtin)) {
+        group.push_back(builtin);
+      }
+    }
   }
   return ladder;
 }
@@ -529,6 +578,13 @@ void Scheduler::OnResult(const std::string &worker_id,
   job.status.set_wins(job.status.wins() + result.wins());
   job.status.set_draws(job.status.draws() + result.draws());
   job.status.set_losses(job.status.losses() + result.losses());
+  for (int place = 0; place < result.finishes_size(); ++place) {
+    if (job.status.finishes_size() <= place) {
+      job.status.add_finishes(0);
+    }
+    job.status.set_finishes(
+        place, job.status.finishes(place) + result.finishes(place));
+  }
 
   // A job the engine could not run carries an error and blames no one: it
   // says nothing about anyone's code.
@@ -562,9 +618,12 @@ void Scheduler::OnResult(const std::string &worker_id,
                            "");
     // Only the coordinator writes standings; a referee's die with it.
     if (standings_ != nullptr) {
-      const std::string opponent = running != job.running.end()
-                                       ? running->second.opponent_spec()
-                                       : std::string();
+      // Only ELO reads it, and ELO is for two seats.
+      const std::string opponent =
+          running != job.running.end() &&
+                  !running->second.opponent_spec().empty()
+              ? running->second.opponent_spec(0)
+              : std::string();
       standings_->Record(job.status.candidate_id(), opponent, result);
       job.status.set_elo(standings_->Get(job.status.candidate_id()).score);
     }
@@ -604,7 +663,7 @@ void Scheduler::OnBuiltLocked(Job *job, const proto::WorkOrder &order,
       again.set_order_id(NextOrderIdLocked());
       JobRecord::Order *logged = job->record.add_orders();
       logged->set_order_id(again.order_id());
-      logged->set_opponent_spec("build");
+      logged->add_opponent_spec("build");
       job->pending.push_back(std::move(again));
       queue_.push_back(job->status.job_id());
       return;
@@ -622,15 +681,15 @@ void Scheduler::OnBuiltLocked(Job *job, const proto::WorkOrder &order,
   }
   candidates_->SetStatus(id, proto::Candidate::READY, "", artifact->second);
   const auto built = candidates_->Get(id);
-  for (const std::string &opponent : job->after_build) {
-    auto match = MakeOrderLocked(*built, opponent, job->after_build_games,
+  for (const std::vector<std::string> &group : job->after_build) {
+    auto match = MakeOrderLocked(*built, group, job->after_build_games,
                                  job->status.job_id());
     if (!match.has_value()) {
       continue;
     }
     JobRecord::Order *logged = job->record.add_orders();
     logged->set_order_id(match->order_id());
-    logged->set_opponent_spec(match->opponent_spec());
+    *logged->mutable_opponent_spec() = match->opponent_spec();
     job->pending.push_back(std::move(*match));
   }
   job->after_build.clear();

@@ -202,7 +202,7 @@ TEST_F(ArenaIntegrationTest, SubmitReachesAWorkerAndComesBackRated) {
   ASSERT_TRUE(message.has_order());
   const proto::WorkOrder &order = message.order();
   EXPECT_EQ(order.candidate().candidate_id(), submitted.candidate_id());
-  EXPECT_EQ(order.opponent_spec(), "builtin:random");
+  EXPECT_EQ(order.opponent_spec(0), "builtin:random");
   EXPECT_EQ(order.num_games(), 2);
   // The worker starts this itself, beside the bot, on a private network:
   // there is no broker address to hand out any more.

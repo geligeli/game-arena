@@ -187,8 +187,8 @@ TEST_F(SchedulerTest, PlacementDispatchesOneOrderPerBuiltin) {
   ASSERT_EQ(worker->orders.size(), 1u);
   const proto::WorkOrder &order = worker->orders[0];
   EXPECT_EQ(order.candidate().candidate_id(), candidate.candidate_id());
-  EXPECT_EQ(order.opponent_spec(), "builtin:random");
-  EXPECT_FALSE(order.has_opponent()) << "a builtin needs no second build";
+  EXPECT_EQ(order.opponent_spec(0), "builtin:random");
+  EXPECT_EQ(order.opponent_size(), 0) << "a builtin needs no second build";
   EXPECT_EQ(order.num_games(), 2);
   // The patch rides along, so a worker needs nothing but the repo and the
   // order: no callback to the arena, no shared filesystem.
@@ -350,7 +350,7 @@ TEST_F(SchedulerTest, AJobIsLoggedWithItsSubmissionResultAndGames) {
   // The code as submitted: the store keeps only the latest.
   EXPECT_NE(logged->submission().patch().find("+// Alpha"), std::string::npos);
   ASSERT_EQ(logged->orders_size(), 1);
-  EXPECT_EQ(logged->orders(0).opponent_spec(), "builtin:random");
+  EXPECT_EQ(logged->orders(0).opponent_spec(0), "builtin:random");
   EXPECT_EQ(logged->orders(0).result().build_output(),
             "INFO: Build completed successfully\n");
   ASSERT_EQ(logged->orders(0).game_ids_size(), 1);
@@ -384,18 +384,18 @@ TEST_F(SchedulerTest, CandidateMatchDispatchesBothSidesNamingEachOther) {
   ASSERT_EQ(worker->orders.size(), 1u);
   const auto &order = worker->orders[0];
   EXPECT_EQ(order.candidate().candidate_id(), alpha.candidate_id());
-  EXPECT_EQ(order.opponent_spec(), "player:" + beta.candidate_id());
+  EXPECT_EQ(order.opponent_spec(0), "player:" + beta.candidate_id());
   EXPECT_EQ(order.num_games(), 6);
 
   // The opponent's own patch travels in the same order, so one worker can
   // build both sides and referee them without another worker's cooperation.
-  ASSERT_TRUE(order.has_opponent());
-  EXPECT_EQ(order.opponent().candidate_id(), beta.candidate_id());
-  EXPECT_FALSE(order.opponent().patch().empty());
-  EXPECT_EQ(order.opponent().bot_target(),
+  ASSERT_EQ(order.opponent_size(), 1);
+  EXPECT_EQ(order.opponent(0).candidate_id(), beta.candidate_id());
+  EXPECT_FALSE(order.opponent(0).patch().empty());
+  EXPECT_EQ(order.opponent(0).bot_target(),
             "//game_arena/candidates/" + beta.candidate_id() + ":bot");
   // Disjoint paths, which is what lets both patches apply to one checkout.
-  EXPECT_NE(order.candidate().patch(), order.opponent().patch());
+  EXPECT_NE(order.candidate().patch(), order.opponent(0).patch());
 
   scheduler_->OnResult("w1", Result(order.order_id(), true, 4, 2));
 
@@ -421,7 +421,7 @@ TEST_F(SchedulerTest, AMatchNeedsOnlyOneSlot) {
   scheduler_->EnqueuePlacement(alpha, Reserve());
 
   ASSERT_EQ(small->orders.size(), 1u);
-  EXPECT_TRUE(small->orders[0].has_opponent());
+  EXPECT_EQ(small->orders[0].opponent_size(), 1);
   EXPECT_EQ(scheduler_->in_flight_orders(), 1);
   EXPECT_EQ(scheduler_->queued_orders(), 0);
 }
@@ -465,7 +465,7 @@ TEST_F(SchedulerTest, APlacementBuildsOnceThenPlaysFromTheArchive) {
   ASSERT_EQ(worker->orders.size(), 2u);
   const proto::WorkOrder &match = worker->orders[1];
   EXPECT_FALSE(match.build_only());
-  EXPECT_EQ(match.opponent_spec(), "builtin:random");
+  EXPECT_EQ(match.opponent_spec(0), "builtin:random");
   EXPECT_EQ(match.candidate().artifact(), bot);
   EXPECT_EQ(match.referee_artifact(), referee);
 
@@ -621,15 +621,15 @@ TEST_F(SchedulerTest, AMatchBetweenBuiltinsBuildsNeitherAndReportsItsEnd) {
   builtin.set_candidate_id("builtin:mcts");
   builtin.set_game("risk2");
   const std::string job_id =
-      scheduler_->EnqueueMatch(builtin, "builtin:random", 2);
+      scheduler_->EnqueueMatch(builtin, {"builtin:random"}, 2);
 
   ASSERT_EQ(worker->orders.size(), 1u);
   const proto::WorkOrder &order = worker->orders[0];
   EXPECT_EQ(order.candidate().candidate_id(), "builtin:mcts");
   EXPECT_TRUE(order.candidate().patch().empty());
   EXPECT_EQ(order.candidate().build_targets_size(), 0);
-  EXPECT_EQ(order.opponent_spec(), "builtin:random");
-  EXPECT_FALSE(order.has_opponent());
+  EXPECT_EQ(order.opponent_spec(0), "builtin:random");
+  EXPECT_EQ(order.opponent_size(), 0);
   EXPECT_TRUE(concluded.empty());
 
   scheduler_->OnResult("w1", Result(order.order_id()));
@@ -644,7 +644,7 @@ TEST_F(SchedulerTest, AMatchWithNoRunnableRivalConcludesAtOnce) {
   scheduler_ = std::make_unique<Scheduler>(
       config_, store_.get(), standings_.get(), nullptr, nullptr,
       [&concluded](const proto::Job &job) { concluded.push_back(job); });
-  scheduler_->EnqueueMatch(AddCandidate("Alpha"), "player:nobody", 2);
+  scheduler_->EnqueueMatch(AddCandidate("Alpha"), {"player:nobody"}, 2);
   ASSERT_EQ(concluded.size(), 1u);
   EXPECT_EQ(concluded[0].state(), proto::Job::FAILED);
 }
@@ -690,7 +690,62 @@ TEST_F(SchedulerTest, TheLadderSkipsTheAuthorsOtherVersions) {
                              *scheduler.TryReserve("", {}, false, &error));
 
   ASSERT_EQ(worker->orders.size(), 1u);
-  EXPECT_EQ(worker->orders[0].opponent_spec(), "player:bob-v01");
+  EXPECT_EQ(worker->orders[0].opponent_spec(0), "player:bob-v01");
+}
+
+// A group takes the next in rank from an author it does not have yet, so no
+// one sits beside their own other version while another author is left.
+TEST_F(SchedulerTest, ALadderGroupPrefersDistinctAuthors) {
+  proto::SubmissionPolicy rules;
+  rules.set_files_submit_dir("solutions");
+  rules.set_versions(true);
+  rules.mutable_harness()->set_api_dep("//problem/harness:api");
+  rules.mutable_harness()->set_main_src("//problem/harness:main.cc");
+  CandidateStore store(dir_ / "versions", CandidateLimits{}, rules);
+  EloStandings standings(elo_.get(), &store, "risk2");
+  SchedulerConfig config = config_;
+  config.set_players(3);
+  config.set_ladder_size(2);
+  config.clear_placement_opponents();
+  config.add_placement_opponents("builtin:random");
+  config.add_placement_opponents("builtin:mcts");
+  Scheduler scheduler(config, &store, &standings);
+  const auto submit = [&](const std::string &author, int wins) {
+    proto::SubmitRequest request;
+    request.set_display_name(author);
+    request.set_author(author);
+    request.set_game("risk3");
+    request.set_entry_header("strategy.h");
+    auto *file = request.add_files();
+    file->set_path("strategy.h");
+    file->set_content("// " + std::to_string(wins) + "\n");
+    std::string error;
+    const auto candidate = store.Create(request, &error);
+    EXPECT_TRUE(candidate.has_value()) << error;
+    store.SetStatus(candidate->candidate_id(), proto::Candidate::READY, "");
+    proto::OrderResult won;
+    won.set_wins(wins);
+    won.set_games_played(wins);
+    standings.Record(candidate->candidate_id(), "builtin:random", won);
+    return *store.Get(candidate->candidate_id());
+  };
+  submit("alice", 5);
+  submit("alice", 4);
+  submit("bob", 3);
+  const proto::Candidate newest = submit("carol", 0);
+  auto worker = std::make_shared<FakeWorker>("w1", 8);
+  scheduler.AddWorker(worker);
+  std::string error;
+  scheduler.EnqueuePlacement(newest,
+                             *scheduler.TryReserve("", {}, false, &error));
+
+  ASSERT_EQ(worker->orders.size(), 3u);
+  const auto &first = worker->orders[1].opponent_spec();
+  const auto &second = worker->orders[2].opponent_spec();
+  EXPECT_EQ(std::vector<std::string>(first.begin(), first.end()),
+            (std::vector<std::string>{"player:alice-v01", "player:bob-v01"}));
+  EXPECT_EQ(std::vector<std::string>(second.begin(), second.end()),
+            (std::vector<std::string>{"player:alice-v02", "builtin:random"}));
 }
 
 TEST_F(SchedulerTest, PlacementAlsoPlaysTheLadder) {
@@ -714,10 +769,52 @@ TEST_F(SchedulerTest, PlacementAlsoPlaysTheLadder) {
   // E has won most and A least: the default ladder of three is top, middle,
   // bottom.
   ASSERT_EQ(worker->orders.size(), 4u);
-  EXPECT_EQ(worker->orders[0].opponent_spec(), "builtin:random");
-  EXPECT_EQ(worker->orders[1].opponent_spec(), "player:" + rivals[4]);
-  EXPECT_EQ(worker->orders[2].opponent_spec(), "player:" + rivals[2]);
-  EXPECT_EQ(worker->orders[3].opponent_spec(), "player:" + rivals[0]);
+  EXPECT_EQ(worker->orders[0].opponent_spec(0), "builtin:random");
+  EXPECT_EQ(worker->orders[1].opponent_spec(0), "player:" + rivals[4]);
+  EXPECT_EQ(worker->orders[2].opponent_spec(0), "player:" + rivals[2]);
+  EXPECT_EQ(worker->orders[3].opponent_spec(0), "player:" + rivals[0]);
+}
+
+// Three seats: every pair of the builtins, then rated rivals two to an order,
+// neighbours in rank, a short last group filled with a builtin.
+TEST_F(SchedulerTest, ThreeSeatsPlaceInGroups) {
+  SchedulerConfig config = config_;
+  config.set_players(3);
+  config.add_placement_opponents("builtin:mcts");
+  config.add_placement_opponents("builtin:smart");
+  scheduler_ =
+      std::make_unique<Scheduler>(config, store_.get(), standings_.get());
+  const auto newcomer = AddCandidate("Newcomer", proto::Candidate::PENDING);
+  std::vector<std::string> rivals;
+  for (const char *name : {"A", "B", "C"}) {
+    rivals.push_back(AddCandidate(name).candidate_id());
+    proto::OrderResult won;
+    won.set_wins(static_cast<int>(rivals.size()));
+    won.set_games_played(won.wins());
+    standings_->Record(rivals.back(), "builtin:random", won);
+  }
+  auto worker = std::make_shared<FakeWorker>("w1", 8);
+  scheduler_->AddWorker(worker);
+
+  scheduler_->EnqueuePlacement(newcomer, Reserve());
+
+  const auto specs = [&](std::size_t i) {
+    const auto &spec = worker->orders[i].opponent_spec();
+    return std::vector<std::string>(spec.begin(), spec.end());
+  };
+  ASSERT_EQ(worker->orders.size(), 5u);
+  EXPECT_EQ(specs(0),
+            (std::vector<std::string>{"builtin:random", "builtin:mcts"}));
+  EXPECT_EQ(specs(1),
+            (std::vector<std::string>{"builtin:random", "builtin:smart"}));
+  EXPECT_EQ(specs(2),
+            (std::vector<std::string>{"builtin:mcts", "builtin:smart"}));
+  EXPECT_EQ(specs(3), (std::vector<std::string>{"player:" + rivals[2],
+                                                "player:" + rivals[1]}));
+  EXPECT_EQ(worker->orders[3].opponent_size(), 2);
+  EXPECT_EQ(specs(4), (std::vector<std::string>{"player:" + rivals[0],
+                                                "builtin:random"}));
+  EXPECT_EQ(worker->orders[4].opponent_size(), 1);
 }
 
 TEST_F(SchedulerTest, UnknownJobAndOrphanResultAreHandled) {

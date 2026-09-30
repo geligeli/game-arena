@@ -301,7 +301,7 @@ void SwissRun::Run() {
       }
       const std::string opponent = IsBuiltin(b) ? b : "player:" + b;
       matches.push_back(
-          {a, b, scheduler_->EnqueueMatch(candidate, opponent, games_)});
+          {a, b, scheduler_->EnqueueMatch(candidate, {opponent}, games_)});
       std::ofstream(state_, std::ios::app)
           << "M\t" << round + 1 << "\t" << a << "\t" << b << "\t"
           << matches.back().job_id << "\n";

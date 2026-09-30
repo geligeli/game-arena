@@ -1,10 +1,12 @@
 #include "game_arena/sandbox/worker/order_runner.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "game_arena/sandbox/exec/sandbox_job.pb.h"
 
@@ -49,7 +51,7 @@ bool PlaysFromTheArchive(const proto::WorkOrder &order) {
            !side.artifact().empty();
   };
   return archived(order.candidate()) &&
-         (!order.has_opponent() || archived(order.opponent()));
+         std::ranges::all_of(order.opponent(), archived);
 }
 
 }  // namespace
@@ -176,7 +178,11 @@ std::optional<Prebuilt> OrderRunner::Fetch(const proto::WorkOrder &order,
     return std::nullopt;
   }
   prebuilt.referee = *referee;
-  for (const proto::Side *side : {&order.candidate(), &order.opponent()}) {
+  std::vector<const proto::Side *> sides = {&order.candidate()};
+  for (const proto::Side &opponent : order.opponent()) {
+    sides.push_back(&opponent);
+  }
+  for (const proto::Side *side : sides) {
     if (side->artifact().empty()) {
       continue;
     }

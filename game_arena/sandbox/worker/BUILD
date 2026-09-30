@@ -40,6 +40,7 @@ cc_library(
         "//game_arena/sandbox/common:docker",
         "//game_arena/sandbox/exec:engine",
         "//game_arena/sandbox/exec:sandbox_job_cc_proto",
+        "@abseil-cpp//absl/strings",
     ],
 )
 
@@ -123,6 +124,7 @@ cc_binary(
         "@abseil-cpp//absl/log:globals",
         "@abseil-cpp//absl/log:initialize",
         "@grpc//:grpc++",
+        "@abseil-cpp//absl/strings",
     ],
 )
 

@@ -68,6 +68,35 @@ TEST(ProblemConfigTest, ParsesATrueSkillMatchProblem) {
   EXPECT_DOUBLE_EQ(config->ranking().draw_probability(), 0.05);
 }
 
+TEST(ProblemConfigTest, MoreSeatsNeedTrueSkillAndWholeRotations) {
+  constexpr char kThree[] = R"pb(
+    problem_id: "risk3"
+    build { targets: "//bot" }
+    sandbox { image: "arena/sandbox:test" }
+    match {
+      game: "risk3"
+      referee_target: "//referee:match_referee"
+      players: 3
+      games_per_order: 6
+      placement_opponents: "builtin:random"
+      placement_opponents: "builtin:mcts"
+    }
+    ranking { kind: TRUESKILL }
+  )pb";
+  std::string error;
+  ASSERT_TRUE(Load(kThree, &error).has_value()) << error;
+  const auto broken = [&](std::string_view from, std::string_view to) {
+    std::string text = kThree;
+    text.replace(text.find(from), from.size(), to);
+    return !Load(text, &error).has_value();
+  };
+  EXPECT_TRUE(broken("kind: TRUESKILL", "kind: ELO"));
+  EXPECT_TRUE(broken("games_per_order: 6", "games_per_order: 10"));
+  EXPECT_TRUE(broken("games_per_order: 6",
+                     "games_per_order: 6 matchmaking { games: 4 }"));
+  EXPECT_TRUE(broken("placement_opponents: \"builtin:mcts\"", ""));
+}
+
 TEST(ProblemConfigTest, ParsesAGradeProblem) {
   std::string error;
   const auto config = Load(kGradeConfig, &error);

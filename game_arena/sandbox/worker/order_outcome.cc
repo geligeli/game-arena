@@ -40,16 +40,17 @@ const sx::PhaseResult *PhaseNamed(const sx::JobResult &result,
   return nullptr;
 }
 
-// The opponent's broken build must not retire this submission.
+// An opponent's broken build must not retire this submission.
 std::string BlameForBuild(const proto::WorkOrder &order,
                           const std::string &log) {
-  if (!order.has_opponent()) {
+  if (log.find(order.candidate().candidate_id()) != std::string::npos) {
     return "";
   }
-  const std::string &opponent = order.opponent().candidate_id();
-  if (!opponent.empty() && log.find(opponent) != std::string::npos &&
-      log.find(order.candidate().candidate_id()) == std::string::npos) {
-    return opponent;
+  for (const proto::Side &side : order.opponent()) {
+    const std::string &opponent = side.candidate_id();
+    if (!opponent.empty() && log.find(opponent) != std::string::npos) {
+      return opponent;
+    }
   }
   return "";
 }
@@ -88,6 +89,8 @@ void ReadMatch(const proto::WorkOrder &order, const sx::PhaseResult &match,
   outcome->result.set_wins(tally.wins);
   outcome->result.set_draws(tally.draws);
   outcome->result.set_losses(tally.losses);
+  *outcome->result.mutable_finishes() = {tally.finishes.begin(),
+                                         tally.finishes.end()};
   outcome->games.assign(report.games().begin(), report.games().end());
 }
 

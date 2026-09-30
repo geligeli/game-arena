@@ -51,7 +51,7 @@ class DashboardTest : public ::testing::Test {
     *record.mutable_submission() = *candidate;
     JobRecord::Order* order = record.add_orders();
     order->set_order_id("o1_1");
-    order->set_opponent_spec("builtin:random");
+    order->add_opponent_spec("builtin:random");
     order->mutable_result()->set_build_ok(true);
     order->mutable_result()->set_worker_id("w1");
     order->mutable_result()->set_build_output(
