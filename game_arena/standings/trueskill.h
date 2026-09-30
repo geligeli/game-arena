@@ -1,12 +1,15 @@
 #ifndef GAME_ARENA_GAME_ARENA_STANDINGS_TRUESKILL_H
 #define GAME_ARENA_GAME_ARENA_STANDINGS_TRUESKILL_H
 
-// TrueSkill (Herbrich, Minka, Graepel 2006) for two-player games: a Gaussian
-// belief (mu, sigma) per player, updated after every game.
+// TrueSkill (Herbrich, Minka, Graepel 2006) for one-player sides: a Gaussian
+// belief (mu, sigma) per player, updated after every game, for two players or
+// a free-for-all among more.
 
 #include <map>
+#include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace tournament_broker::trueskill {
 
@@ -41,14 +44,27 @@ double DrawMargin(const Params &params);
 std::pair<Rating, Rating> Rate1v1(const Rating &winner, const Rating &loser,
                                   bool draw, const Params &params);
 
+// Ratings after a free-for-all, in argument order. |places| per player: 0 is
+// first, equal places tie. Message passing is scheduled as the reference
+// Python package does it, so the two agree.
+std::vector<Rating> RateFreeForAll(std::span<const Rating> ratings,
+                                   std::span<const int> places,
+                                   const Params &params);
+
 // P(|a| beats |b| outright); draws take what is left of 1 - P(b beats a).
 double WinProbability(const Rating &a, const Rating &b, const Params &params);
 
+// The chance of a draw among |ratings|, relative to the most even game
+// possible: 1 for equal, exactly known skills.
+double Quality(std::span<const Rating> ratings, double beta);
+
 struct PlayerRecord {
   Rating rating;
+  // A sole first is a win, a shared first a draw, anything else a loss.
   int wins = 0;
   int draws = 0;
   int losses = 0;
+  std::vector<int> finishes = {};  // games per place, first first
 };
 
 // Ratings by player name, fed one game at a time in the order played.
@@ -57,9 +73,9 @@ class Ranker {
  public:
   explicit Ranker(Params params) : params_(params) {}
 
-  // |winner| is the seat that won (0 or 1), or -1 for a draw.
-  void AddGame(const std::string &player0, const std::string &player1,
-               int winner);
+  // |places| by seat, as RateFreeForAll takes them.
+  void AddGame(std::span<const std::string> players,
+               std::span<const int> places);
   // An unseen player is at the initial rating with no games.
   PlayerRecord Get(const std::string &player) const;
 

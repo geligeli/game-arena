@@ -2,8 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <numbers>
-#include <tuple>
+#include <numeric>
 
 namespace tournament_broker::trueskill {
 
@@ -47,6 +48,37 @@ Truncation DrawTruncation(double t, double margin) {
   return {v, std::clamp(w, 0.0, 1.0)};
 }
 
+// A message of the factor graph, in the natural parameters it is multiplied
+// and divided in.
+struct Gaussian {
+  double pi = 0.0;  // precision; 0 is uniform
+  double tau = 0.0;
+
+  static Gaussian Of(double mu, double var) { return {1.0 / var, mu / var}; }
+  double mu() const { return pi == 0.0 ? 0.0 : tau / pi; }
+  Gaussian operator*(const Gaussian &o) const {
+    return {pi + o.pi, tau + o.tau};
+  }
+  Gaussian operator/(const Gaussian &o) const {
+    return {pi - o.pi, tau - o.tau};
+  }
+};
+
+// x + sign * y, uniform when either is.
+Gaussian Sum(const Gaussian &x, const Gaussian &y, double sign) {
+  if (x.pi == 0.0 || y.pi == 0.0) {
+    return {};
+  }
+  return Gaussian::Of(x.mu() + sign * y.mu(), 1.0 / x.pi + 1.0 / y.pi);
+}
+
+double Delta(const Gaussian &a, const Gaussian &b) {
+  const double pi_delta = std::abs(a.pi - b.pi);
+  return std::isinf(pi_delta)
+             ? 0.0
+             : std::max(std::abs(a.tau - b.tau), std::sqrt(pi_delta));
+}
+
 }  // namespace
 
 double DrawMargin(const Params &params) {
@@ -80,28 +112,157 @@ std::pair<Rating, Rating> Rate1v1(const Rating &winner, const Rating &loser,
   return {update(winner.mu, w_var, 1.0), update(loser.mu, l_var, -1.0)};
 }
 
+std::vector<Rating> RateFreeForAll(std::span<const Rating> ratings,
+                                   std::span<const int> places,
+                                   const Params &params) {
+  const std::size_t n = ratings.size();
+  std::vector<std::size_t> order(n);
+  std::iota(order.begin(), order.end(), std::size_t{0});
+  std::ranges::stable_sort(order, {}, [&](std::size_t i) { return places[i]; });
+  const double tau2 = params.tau * params.tau;
+  const double beta2 = params.beta * params.beta;
+  const double margin = DrawMargin(params);
+
+  // Performances best first; the differences of neighbours, perf[k] -
+  // perf[k + 1], with the messages their factors sent.
+  std::vector<Gaussian> skill(n), prior(n), perf(n);
+  for (std::size_t k = 0; k < n; ++k) {
+    const Rating &r = ratings[order[k]];
+    skill[k] = Gaussian::Of(r.mu, r.sigma * r.sigma + tau2);
+    prior[k] = perf[k] = Gaussian::Of(r.mu, r.sigma * r.sigma + tau2 + beta2);
+  }
+  const std::size_t m = n - 1;
+  std::vector<Gaussian> diff(m), to_diff(m), to_left(m), to_right(m), trunc(m);
+  const auto down = [&](std::size_t k) {
+    const Gaussian msg =
+        Sum(perf[k] / to_left[k], perf[k + 1] / to_right[k], -1.0);
+    diff[k] = diff[k] / to_diff[k] * msg;
+    to_diff[k] = msg;
+  };
+  const auto truncate = [&](std::size_t k) {
+    const Gaussian div = diff[k] / trunc[k];
+    const double sqrt_pi = std::sqrt(div.pi);
+    const double t = div.tau / sqrt_pi;
+    const auto [v, w] = places[order[k]] == places[order[k + 1]]
+                            ? DrawTruncation(t, margin * sqrt_pi)
+                            : WinTruncation(t, margin * sqrt_pi);
+    // A tie without a draw margin pins the difference at 0: w is 1.
+    const double denom = std::max(1.0 - w, 1e-12);
+    const Gaussian updated{div.pi / denom, (div.tau + sqrt_pi * v) / denom};
+    const double delta = Delta(diff[k], updated);
+    trunc[k] = updated / div;
+    diff[k] = updated;
+    return delta;
+  };
+  const auto up_right = [&](std::size_t k) {
+    const Gaussian msg = Sum(perf[k] / to_left[k], diff[k] / to_diff[k], -1.0);
+    perf[k + 1] = perf[k + 1] / to_right[k] * msg;
+    to_right[k] = msg;
+  };
+  const auto up_left = [&](std::size_t k) {
+    const Gaussian msg =
+        Sum(diff[k] / to_diff[k], perf[k + 1] / to_right[k], 1.0);
+    perf[k] = perf[k] / to_left[k] * msg;
+    to_left[k] = msg;
+  };
+  for (int iteration = 0; iteration < 10; ++iteration) {
+    double delta = 0.0;
+    if (m == 1) {
+      down(0);
+      delta = truncate(0);
+    }
+    for (std::size_t k = 0; m > 1 && k + 1 < m; ++k) {
+      down(k);
+      delta = std::max(delta, truncate(k));
+      up_right(k);
+    }
+    for (std::size_t k = m - 1; m > 1 && k > 0; --k) {
+      down(k);
+      delta = std::max(delta, truncate(k));
+      up_left(k);
+    }
+    if (delta <= 1e-4) {
+      break;
+    }
+  }
+  up_left(0);
+  up_right(m - 1);
+
+  std::vector<Rating> rated(n);
+  for (std::size_t k = 0; k < n; ++k) {
+    // What the game says of the performance, blurred by beta into the skill.
+    const Gaussian evidence = perf[k] / prior[k];
+    const double a = 1.0 / (1.0 + beta2 * evidence.pi);
+    const Gaussian posterior =
+        skill[k] * Gaussian{a * evidence.pi, a * evidence.tau};
+    rated[order[k]] = {posterior.mu(), std::sqrt(1.0 / posterior.pi)};
+  }
+  return rated;
+}
+
 double WinProbability(const Rating &a, const Rating &b, const Params &params) {
   const double c = std::sqrt(2.0 * params.beta * params.beta +
                              a.sigma * a.sigma + b.sigma * b.sigma);
   return NormalCdf((a.mu - b.mu - DrawMargin(params)) / c);
 }
 
-void Ranker::AddGame(const std::string &player0, const std::string &player1,
-                     int winner) {
-  const PlayerRecord initial{params_.Initial()};
-  PlayerRecord &p0 = players_.try_emplace(player0, initial).first->second;
-  PlayerRecord &p1 = players_.try_emplace(player1, initial).first->second;
-  const bool draw = winner < 0;
-  PlayerRecord &won = winner == 1 ? p1 : p0;
-  PlayerRecord &lost = winner == 1 ? p0 : p1;
-  std::tie(won.rating, lost.rating) =
-      Rate1v1(won.rating, lost.rating, draw, params_);
-  if (draw) {
-    ++p0.draws;
-    ++p1.draws;
+double Quality(std::span<const Rating> ratings, double beta) {
+  // Over the differences of neighbours both matrices of the paper's formula
+  // are tridiagonal: an LDL^T gives the determinant and the quadratic form.
+  const double beta2 = beta * beta;
+  double det = 1.0, quad = 0.0, d = 0.0, y = 0.0;
+  for (std::size_t k = 0; k + 1 < ratings.size(); ++k) {
+    const double s0 = ratings[k].sigma * ratings[k].sigma;
+    const double s1 = ratings[k + 1].sigma * ratings[k + 1].sigma;
+    double a = 2 * beta2 + s0 + s1;
+    double r = ratings[k].mu - ratings[k + 1].mu;
+    if (k > 0) {
+      const double b = -(beta2 + s0);
+      a -= b * b / d;
+      r -= b / d * y;
+    }
+    d = a;
+    y = r;
+    det *= d;
+    quad += y * y / d;
+  }
+  const auto n = static_cast<double>(ratings.size());
+  return std::sqrt(std::pow(beta2, n - 1) * n / det) * std::exp(-quad / 2);
+}
+
+void Ranker::AddGame(std::span<const std::string> players,
+                     std::span<const int> places) {
+  std::vector<PlayerRecord *> records;
+  std::vector<Rating> ratings;
+  for (const std::string &player : players) {
+    records.push_back(
+        &players_.try_emplace(player, PlayerRecord{params_.Initial()})
+             .first->second);
+    ratings.push_back(records.back()->rating);
+  }
+  std::vector<Rating> rated;
+  if (players.size() == 2) {
+    // The closed form, so ratings from before free-for-alls replay unchanged.
+    const bool second = places[1] < places[0];
+    const auto [won, lost] = Rate1v1(ratings[second], ratings[!second],
+                                     places[0] == places[1], params_);
+    rated = second ? std::vector{lost, won} : std::vector{won, lost};
   } else {
-    ++won.wins;
-    ++lost.losses;
+    rated = RateFreeForAll(ratings, places, params_);
+  }
+  const int first = std::ranges::min(places);
+  const bool shared = std::ranges::count(places, first) > 1;
+  for (std::size_t i = 0; i < records.size(); ++i) {
+    PlayerRecord &record = *records[i];
+    record.rating = rated[i];
+    const auto place = static_cast<std::size_t>(places[i]);
+    if (record.finishes.size() <= place) {
+      record.finishes.resize(place + 1);
+    }
+    ++record.finishes[place];
+    ++(places[i] != first ? record.losses
+       : shared           ? record.draws
+                          : record.wins);
   }
 }
 

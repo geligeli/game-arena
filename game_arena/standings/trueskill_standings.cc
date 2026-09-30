@@ -41,8 +41,11 @@ TrueSkillStandings::TrueSkillStandings(
 void TrueSkillStandings::RecordGame(const GameRecord &record) {
   const int winner =
       record.result() == GameRecord::WIN ? record.winning_player() : -1;
+  const std::vector<std::string> players(record.player_names().begin(),
+                                         record.player_names().end());
+  const std::vector<int> places = {winner == 1, winner == 0};
   std::lock_guard lock(mutex_);
-  ranker_.AddGame(record.player_names(0), record.player_names(1), winner);
+  ranker_.AddGame(players, places);
 }
 
 Standing TrueSkillStandings::Get(const std::string &candidate_id) const {
