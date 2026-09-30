@@ -104,6 +104,7 @@ cc_library(
         "@boost.asio",
         "@boost.beast",
         "@boost.json",
+        "//game_arena/referee:match_tally",
     ],
 )
 

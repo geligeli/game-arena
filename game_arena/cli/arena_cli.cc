@@ -17,6 +17,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -30,6 +31,8 @@
 #include "absl/flags/parse.h"
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
 #include "game_arena/cli/mcp.h"
 #include "game_arena/proto/arena.grpc.pb.h"
 #include "game_arena/proto/kit.pb.h"
@@ -237,19 +240,27 @@ bool IsTerminal(proto::Job::State state) {
          state == proto::Job::CANCELLED;
 }
 
-void PrintStandingHeader(const std::string &score_label, bool graded) {
+// Seats per game, from the kit: a kit from before it has two.
+int SeatsOf(const Client &client) {
+  return client.kit.players() > 0 ? client.kit.players() : 2;
+}
+
+void PrintStandingHeader(const std::string &score_label, bool graded,
+                         int seats) {
   if (graded) {
     std::printf("%-28s %9s %5s %-12s %-12s %-12s %s\n", "candidate_id",
                 score_label.empty() ? "score" : score_label.c_str(), "runs",
                 "machine", "status", "author", "name");
   } else {
     std::printf("%-28s %9s %11s %5s %-12s %-12s %s\n", "candidate_id",
-                score_label.empty() ? "score" : score_label.c_str(), "W/D/L",
-                "games", "status", "author", "name");
+                score_label.empty() ? "score" : score_label.c_str(),
+                seats == 2 ? "W/D/L" : "places", "games", "status", "author",
+                "name");
   }
 }
 
-void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
+void PrintStandingRow(const proto::CandidateStanding &standing, bool graded,
+                      int seats) {
   const proto::Candidate &candidate = standing.candidate();
   std::printf("%-28s %9.3f ", candidate.candidate_id().c_str(),
               standing.score());
@@ -260,8 +271,13 @@ void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
                     : standing.machine_class().c_str());
   } else {
     const int played = standing.wins() + standing.draws() + standing.losses();
-    std::printf("%3d/%3d/%3d %4dg ", standing.wins(), standing.draws(),
-                standing.losses(), played);
+    if (seats == 2) {
+      std::printf("%3d/%3d/%3d %4dg ", standing.wins(), standing.draws(),
+                  standing.losses(), played);
+    } else {
+      std::printf("%11s %4dg ", absl::StrJoin(standing.finishes(), "/").c_str(),
+                  played);
+    }
   }
   std::printf("%-12s %-12s %s", NameOf(candidate.status()).c_str(),
               candidate.author().empty() ? "-" : candidate.author().c_str(),
@@ -272,15 +288,18 @@ void PrintStandingRow(const proto::CandidateStanding &standing, bool graded) {
   std::printf("\n");
 }
 
-void PrintJob(const proto::Job &job) {
+void PrintJob(const proto::Job &job, int seats) {
   std::string state = NameOf(job.state());
   if (job.state() == proto::Job::RUNNING) {
     state += ", " + NameOf(job.phase());
   }
   std::printf("job %s [%s] candidate %s\n", job.job_id().c_str(), state.c_str(),
               job.candidate_id().c_str());
-  std::printf("games %d/%d  W/D/L %d/%d/%d  score %.3f\n", job.games_played(),
-              job.games_requested(), job.wins(), job.draws(), job.losses(),
+  std::printf("games %d/%d  %s  score %.3f\n", job.games_played(),
+              job.games_requested(),
+              tournament_broker::RecordText(seats, job.wins(), job.draws(),
+                                            job.losses(), job.finishes())
+                  .c_str(),
               job.elo());
   if (!job.error().empty()) {
     std::printf("\n%s\n", job.error().c_str());
@@ -299,7 +318,7 @@ int WaitForJob(const Client &client, const std::string &job_id, bool wait) {
       return kExitError;
     }
     if (job.state() != last || last_phase != job.phase()) {
-      PrintJob(job);
+      PrintJob(job, SeatsOf(client));
       last = job.state();
       last_phase = job.phase();
     }
@@ -569,9 +588,9 @@ int CmdCandidates(const Client &client) {
                   [](const proto::CandidateStanding &standing) {
                     return !standing.metrics().empty();
                   });
-  PrintStandingHeader("score", graded);
+  PrintStandingHeader("score", graded, SeatsOf(client));
   for (const proto::CandidateStanding &standing : response.candidates()) {
-    PrintStandingRow(standing, graded);
+    PrintStandingRow(standing, graded, SeatsOf(client));
   }
   return 0;
 }
@@ -588,9 +607,9 @@ int CmdLeaderboard(const Client &client) {
     return 0;
   }
   const bool graded = response.graded();
-  PrintStandingHeader(response.score_label(), graded);
+  PrintStandingHeader(response.score_label(), graded, SeatsOf(client));
   for (const proto::CandidateStanding &standing : response.rows()) {
-    PrintStandingRow(standing, graded);
+    PrintStandingRow(standing, graded, SeatsOf(client));
   }
   return 0;
 }
@@ -789,13 +808,42 @@ int CmdSpar(const Client &client, const std::vector<char *> &args) {
     return kExitUsage;
   }
   const std::string me = client.me;
-  const std::string rival = args[0];
-  // A builtin plays inside the referee; there is nothing of it to pull or run.
-  const bool builtin = rival.rfind("builtin:", 0) == 0;
-  // Pulled every time; one only in this kit (the starter) is played as it is.
-  if (!builtin && CmdSource(client, args) != 0 &&
-      !std::filesystem::exists(client.DirOf(rival))) {
-    return kExitError;
+  const int seats = SeatsOf(client);
+  std::vector<std::string> rivals;
+  for (const char *arg : args) {
+    for (const absl::string_view rival :
+         absl::StrSplit(arg, ',', absl::SkipEmpty())) {
+      rivals.emplace_back(rival);
+    }
+  }
+  // A builtin plays inside the referee, so it can fill every seat left; a
+  // player cannot take two.
+  while (!rivals.empty() && static_cast<int>(rivals.size()) + 1 < seats &&
+         rivals.back().starts_with("builtin:")) {
+    rivals.push_back(rivals.back());
+  }
+  if (static_cast<int>(rivals.size()) + 1 != seats) {
+    std::fprintf(stderr,
+                 "spar: a game seats %d, so name %d rival(s), or end with a "
+                 "builtin to fill the rest\n",
+                 seats, seats - 1);
+    return kExitUsage;
+  }
+  std::vector<std::string> players;  // the rivals with code, pulled and built
+  std::vector<std::string> specs;
+  for (std::string &rival : rivals) {
+    const bool builtin = rival.starts_with("builtin:");
+    specs.push_back(builtin ? rival : "player:" + rival);
+    if (builtin || std::ranges::contains(players, rival)) {
+      continue;
+    }
+    // Pulled every time; one only in this kit (the starter) is played as it
+    // is.
+    if (CmdSource(client, {rival.data()}) != 0 &&
+        !std::filesystem::exists(client.DirOf(rival))) {
+      return kExitError;
+    }
+    players.push_back(rival);
   }
 
   std::filesystem::current_path(client.kit_dir);
@@ -803,14 +851,13 @@ int CmdSpar(const Client &client, const std::vector<char *> &args) {
   const std::string bin = client.kit.bot_binary();
   std::vector<std::string> build = {"bazel", "build", "//:match_referee",
                                     "//" + dir + "/" + me + ":" + bin};
-  if (!builtin) {
-    build.push_back("//" + dir + "/" + rival + ":" + bin);
+  for (const std::string &player : players) {
+    build.push_back("//" + dir + "/" + player + ":" + bin);
   }
   if (Wait(Spawn(build, "")) != 0) {
     return kExitError;
   }
 
-  const std::string opponent = builtin ? rival : "player:" + rival;
   char scratch_template[] = "/tmp/spar.XXXXXX";
   const std::string scratch = ::mkdtemp(scratch_template);
   const std::string games = std::to_string(absl::GetFlag(FLAGS_games));
@@ -820,7 +867,7 @@ int CmdSpar(const Client &client, const std::vector<char *> &args) {
                                       "--game=" + client.kit.game(),
                                       "--games=" + games,
                                       "--player_a=" + me,
-                                      "--player_b=" + opponent,
+                                      "--player_b=" + absl::StrJoin(specs, ","),
                                       "--scratch_dir=" + scratch,
                                       "--report=" + scratch + "/match.pb",
                                       "--deadline_s=900"};
@@ -846,12 +893,20 @@ int CmdSpar(const Client &client, const std::vector<char *> &args) {
                   "--games=" + games},
                  scratch + "/" + name + ".log");
   };
-  const pid_t mine = bot(me, opponent);
-  const pid_t theirs = builtin ? -1 : bot(rival, "player:" + me);
+  const pid_t mine = bot(me, absl::StrJoin(specs, ","));
+  std::vector<pid_t> theirs;
+  for (const std::string &player : players) {
+    // Every seat but its own, as the referee seats them.
+    std::vector<std::string> others = {"player:" + me};
+    std::ranges::copy_if(
+        specs, std::back_inserter(others),
+        [&](const std::string &spec) { return spec != "player:" + player; });
+    theirs.push_back(bot(player, absl::StrJoin(others, ",")));
+  }
   Wait(refereeing);
   Wait(mine);
-  if (theirs > 0) {
-    Wait(theirs);
+  for (const pid_t pid : theirs) {
+    Wait(pid);
   }
 
   // Counted from player_a's side: yours.
@@ -860,9 +915,17 @@ int CmdSpar(const Client &client, const std::vector<char *> &args) {
   report.ParseFromIstream(&in);
   const tournament_broker::MatchTally tally =
       tournament_broker::TallyOf(report, me);
-  std::printf("\n%s %d   draws %d   %s %d   (%d of %s games; logs in %s)\n",
-              me.c_str(), tally.wins, tally.draws, rival.c_str(), tally.losses,
-              tally.games, games.c_str(), scratch.c_str());
+  if (seats == 2) {
+    std::printf("\n%s %d   draws %d   %s %d   (%d of %s games; logs in %s)\n",
+                me.c_str(), tally.wins, tally.draws, rivals[0].c_str(),
+                tally.losses, tally.games, games.c_str(), scratch.c_str());
+  } else {
+    std::printf("\n%s %s   (%d of %s games; logs in %s)\n", me.c_str(),
+                tournament_broker::RecordText(seats, tally.wins, tally.draws,
+                                              tally.losses, tally.finishes)
+                    .c_str(),
+                tally.games, games.c_str(), scratch.c_str());
+  }
   return tally.games > 0 ? 0 : kExitError;
 }
 
@@ -911,6 +974,8 @@ void PrintUsage() {
       "here\n"
       "  spar builtin:<name>            yours against one of the problem's "
       "builtins\n"
+      "  spar <name> <name2> ...        with more seats, a rival for each; a\n"
+      "                                 last builtin fills the seats left\n"
       "  mcp                            all of these as MCP tools, on stdio\n"
       "  init                           make your directory: the starter, or\n"
       "                                 with ARENA_RESTORE=1 your last "

@@ -807,9 +807,17 @@ std::string KitReadme(const proto::ProblemConfig& config,
 
   md << "\n## Iterating locally\n\n```sh\n";
   if (config.has_match()) {
-    md << "arena_cli spar <name>           # pull <name>'s directory beside "
-          "yours, build both, play them here\n"
-          "arena_cli spar builtin:<name>   # or yours against a builtin\n";
+    if (config.match().players() > 2) {
+      md << "arena_cli spar <name> <name2>   # a game seats "
+         << config.match().players()
+         << ": a rival for each other seat, pulled and built beside yours\n"
+            "arena_cli spar builtin:<name>   # a builtin fills every seat "
+            "left\n";
+    } else {
+      md << "arena_cli spar <name>           # pull <name>'s directory beside "
+            "yours, build both, play them here\n"
+            "arena_cli spar builtin:<name>   # or yours against a builtin\n";
+    }
     if (!config.match().placement_opponents().empty()) {
       md << "# builtins the arena rates you against first: "
          << absl::StrJoin(config.match().placement_opponents(), ", ") << "\n";
@@ -1046,6 +1054,7 @@ std::string KitConfigText(const proto::ProblemConfig& config,
                            ? "bot"
                            : config.submission().harness().binary_name());
     kit.set_game(match.game());
+    kit.set_players(static_cast<int>(match.players()));
     // Bounded as sandbox/worker/order_job.cc bounds a rated game.
     for (const auto& [flag, value] :
          {std::pair{"--turn_timeout_ms=", match.turn_timeout_ms()},

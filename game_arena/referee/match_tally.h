@@ -3,6 +3,7 @@
 
 // A match's result from one player's side, counted from its game records.
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,14 @@ bool AddGame(const proto::GameRecord &record, const std::string &player,
              MatchTally *tally);
 
 MatchTally TallyOf(const proto::MatchReport &report, const std::string &player);
+
+// "1st" for place 0, "2nd" for 1, ...
+std::string Ordinal(int place);
+
+// A match record for a person: W/D/L with two seats; with more, the games in
+// each place, as "1st/2nd/3rd 4/2/1". |finishes| is those counts, first first.
+std::string RecordText(int players, int wins, int draws, int losses,
+                       std::span<const int> finishes);
 
 }  // namespace tournament_broker
 

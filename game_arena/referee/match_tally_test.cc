@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <vector>
+
 namespace tournament_broker {
 namespace {
 
@@ -26,6 +28,29 @@ TEST(MatchTallyTest, CountsFromThePlayersSeatWhicheverItIs) {
   EXPECT_EQ(tally.wins, 2);
   EXPECT_EQ(tally.draws, 1);
   EXPECT_EQ(tally.losses, 1);
+}
+
+TEST(MatchTallyTest, CountsPlacesOfAFreeForAll) {
+  proto::MatchReport report;
+  for (const std::vector<int> &places :
+       {std::vector{0, 1, 2}, std::vector{2, 0, 1}, std::vector{1, 2, 0}}) {
+    proto::GameRecord *record = report.add_games();
+    for (const char *name : {"me", "you", "them"}) {
+      record->add_player_names(name);
+    }
+    *record->mutable_places() = {places.begin(), places.end()};
+  }
+  const MatchTally tally = TallyOf(report, "me");
+  EXPECT_EQ(tally.games, 3);
+  EXPECT_EQ(tally.finishes, (std::vector{1, 1, 1}));
+  EXPECT_EQ(tally.wins, 1);
+  EXPECT_EQ(tally.losses, 2);
+  EXPECT_EQ(
+      RecordText(3, tally.wins, tally.draws, tally.losses, tally.finishes),
+      "1st/2nd/3rd 1/1/1");
+  EXPECT_EQ(RecordText(2, 4, 1, 3, {}), "W/D/L 4/1/3");
+  EXPECT_EQ(Ordinal(10), "11th");
+  EXPECT_EQ(Ordinal(21), "22nd");
 }
 
 TEST(MatchTallyTest, SkipsAGameThePlayerWasNotIn) {

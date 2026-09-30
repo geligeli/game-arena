@@ -12,17 +12,21 @@
 #include <boost/json/parse.hpp>
 #include <boost/json/serialize.hpp>
 #include <boost/json/value.hpp>
+#include <boost/json/value_from.hpp>
 #include <chrono>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
+#include "game_arena/referee/match_tally.h"
 
 namespace tournament_broker {
 
@@ -51,6 +55,33 @@ std::string HtmlEscape(std::string_view s) {
                                  {">", "&gt;"},
                                  {"\"", "&quot;"},
                                  {"'", "&#39;"}});
+}
+
+std::string RecordHeaders(int players) {
+  if (players <= 2) {
+    return "<th>W</th><th>D</th><th>L</th>";
+  }
+  std::string html;
+  for (int place = 0; place < players; ++place) {
+    absl::StrAppend(&html, "<th>", Ordinal(place), "</th>");
+  }
+  return html;
+}
+
+std::string RecordCells(int players, int wins, int draws, int losses,
+                        std::span<const int> finishes) {
+  if (players <= 2) {
+    return absl::StrCat("<td>", wins, "</td><td>", draws, "</td><td>", losses,
+                        "</td>");
+  }
+  std::string html;
+  for (int place = 0; place < players; ++place) {
+    absl::StrAppend(
+        &html, "<td>",
+        place < static_cast<int>(finishes.size()) ? finishes[place] : 0,
+        "</td>");
+  }
+  return html;
 }
 
 std::string PageStart(std::string_view title, bool refresh) {
@@ -203,7 +234,7 @@ std::string HttpLeaderboard::RenderLeaderboardHtml() const {
          << HtmlEscape(score) << "</th>"
          << (rated ? "<th>mu</th><th>sigma</th>" : "")
          << (graded ? "<th>runs</th><th class=\"d\">machine</th>"
-                    : "<th>W</th><th>D</th><th>L</th>")
+                    : RecordHeaders(players_))
          << "</tr>";
     int rank = first_rank;
     for (const Standing *row : section) {
@@ -233,8 +264,8 @@ std::string HttpLeaderboard::RenderLeaderboardHtml() const {
                                                       : row->machine_class)
              << "</td>";
       } else {
-        html << "<td>" << row->wins << "</td><td>" << row->draws << "</td><td>"
-             << row->losses << "</td>";
+        html << RecordCells(players_, row->wins, row->draws, row->losses,
+                            row->finishes);
       }
       html << "</tr>";
     }
@@ -319,6 +350,7 @@ std::string HttpLeaderboard::RenderLeaderboardJson() const {
         {"wins", row.wins},
         {"draws", row.draws},
         {"losses", row.losses},
+        {"finishes", json::value_from(row.finishes)},
         {"runs", row.runs},
         {"worker_id", row.worker_id},
         {"machine_class", row.machine_class},

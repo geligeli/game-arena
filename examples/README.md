@@ -8,7 +8,7 @@ game-arena's build refers to them.
 
 | | [`knapsack/`](knapsack) | [`connect4/`](connect4) |
 | --- | --- | --- |
-| Shape | graded | two-player match |
+| Shape | graded | match (two seats; `players` sets more) |
 | Scored by | a grader you write | ELO from played games |
 | Needs a registry | no | yes |
 | Config block | `grade { ... }` | `match { ... }` |

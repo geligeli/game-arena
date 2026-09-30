@@ -202,11 +202,22 @@ builtins the same way.
    the tally counted from them; the coordinator keeps the games and updates
    ELO from the tally (TrueSkill: from each game as it is kept).
 
-A candidate-vs-candidate match is **one** order carrying both sides: the
-worker starts both bots beside one referee, each told
-`--opponent=player:<the other>`, which is what the broker's `player:<name>`
-rendezvous exists for. A side named `builtin:<spec>` has no code: the referee
-plays it, and when both sides are builtins it plays the whole match itself.
+A candidate-vs-candidate match is **one** order carrying every side: the
+worker starts every bot beside one referee, each told
+`--opponent=player:<each other>` (comma-separated past two seats), which is
+what the broker's `player:<name>` rendezvous exists for. A side named
+`builtin:<spec>` has no code: the referee plays it, and when every side is a
+builtin it plays the whole match itself. The worker fleet is redeployed with
+the coordinator: a worker from before repeated opponents would read an order
+of three as one of two.
+
+**More than two seats** (`match.players`, as the game's registry entry has
+it) needs TrueSkill, which rates each game by its placings as a free-for-all.
+An order plays `players - 1` opponents together; placement plays every such
+group of the `placement_opponents`, then the ladder's rated rivals in groups of
+neighbours, from different authors where it can. `games_per_order` and
+`matchmaking.games` are multiples of `players`, so each side has each seat as
+often; a multiple of `players!` also plays every order of the others.
 
 ## Versions and continuous matchmaking
 
@@ -229,8 +240,10 @@ Two opt-in settings change what a submission is and how often the fleet plays.
     scheduled, so the work grows with the pool, not with every version ever
     submitted, and a version keeps playing until its own games show it out.
   - Whenever nothing is queued and a slot is free, the least certain member
-    whose place is still open plays the rival where a game moves the ratings
-    most: TrueSkill's match quality times their combined variance.
+    whose place is still open plays the rivals, one per other seat, where a
+    game moves the ratings most: TrueSkill's match quality times their
+    combined variance. Past two seats a group of different authors comes
+    first: two versions of one author could gang up on a third.
   - Placement jobs are queued, so they never wait behind a match.
   - The leaderboard shows the pool apart from those that dropped out.
   - `/pool` has the matches and the Swiss re-rank's charts, live, from
@@ -255,8 +268,9 @@ reading the tournament's state dir and never writing it. Every version that
 played a game becomes an entry, `<participant>-vNN`, its patch moved to
 `<files_submit_dir>/<participant>-vNN/`; the builtins are entries too. The
 entries play Swiss rounds (`--swiss_rounds`, default ceil(log2 n) + 3; the
-first drawn, then neighbours by TrueSkill mu, no rematch while a fresh
-opponent is left), `--swiss_games` per match, on whatever workers attach.
+first drawn, then neighbours by TrueSkill mu in groups of the game's seats, no
+rematch while a fresh opponent is left), `--swiss_games` per match (default:
+every order of the seats), on whatever workers attach.
 `/swiss` shows the rounds, where each entry's skill converges, and each
 version's skill by when it was submitted. Ratings use TrueSkill with no dynamics
 (tau 0), since no version's code ever changes. The run keeps its rounds in
@@ -368,8 +382,8 @@ score label, not ratings or milliseconds.
 | | match problem | graded problem |
 |---|---|---|
 | config | `match { … }` | `grade { … }` |
-| an order | build both sides, referee N games | run a command N times |
-| result | W/D/L tally | a metric per run |
+| an order | build every side, referee N games | run a command N times |
+| result | W/D/L tally, and games per place | a metric per run |
 | standings | ELO, keyed `(problem_id, submission_id)`; or TrueSkill (`ranking.kind`) | the primary metric, in its direction |
 
 **The coordinator owns the standings.** A match's referee keeps its own ratings

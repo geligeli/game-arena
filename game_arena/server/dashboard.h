@@ -27,11 +27,11 @@ struct ReplayAssets {
 
 class Dashboard {
  public:
-  // |standings| may be null.
+  // |standings| may be null. Past two |players|, records show places.
   Dashboard(const CandidateStore* candidates, const JobLog* jobs,
             const tournament_broker::GameHistory* games,
             const Standings* standings, bool show_source,
-            ReplayAssets assets = {});
+            ReplayAssets assets = {}, int players = 2);
 
   // The content type and body, or nullopt for a 404.
   std::optional<std::pair<std::string, std::string>> Route(
@@ -52,6 +52,7 @@ class Dashboard {
   const Standings* standings_;                   // not owned, may be null
   const bool show_source_;
   const ReplayAssets assets_;
+  const int players_;
 };
 
 }  // namespace tournament_arena

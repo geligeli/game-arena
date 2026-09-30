@@ -340,7 +340,7 @@ int main(int argc, char** argv) {
       &candidates, &job_log, &history, standings.get(),
       problem->source().visibility() ==
           tournament_arena::proto::SourcePolicy::ALL,
-      std::move(*assets));
+      std::move(*assets), static_cast<int>(problem->match().players()));
   tournament_broker::HttpLeaderboard leaderboard(
       absl::GetFlag(FLAGS_http_port), &history, &candidates, standings.get(),
       problem->display_name().empty() ? problem->problem_id()
@@ -358,6 +358,7 @@ int main(int argc, char** argv) {
         }
         return dashboard.Route(target);
       });
+  leaderboard.set_players(static_cast<int>(problem->match().players()));
   if (matchmaker) {
     leaderboard.set_pool([&matchmaker] { return matchmaker->Members(); });
   }

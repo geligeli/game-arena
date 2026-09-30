@@ -18,6 +18,7 @@ cc_binary(
         "@abseil-cpp//absl/flags:parse",
         "@abseil-cpp//absl/log:globals",
         "@abseil-cpp//absl/log:initialize",
+        "@abseil-cpp//absl/strings",
         "@grpc//:grpc++",
         "@protobuf//:protobuf",
     ],

@@ -83,7 +83,10 @@ const std::vector<Tool> &Tools() {
        "spar",
        "Plays your directory against a participant's, or builtin:<name>, "
        "here, bounded as the tournament bounds a game.",
-       {{"name", "string", "The rival, or builtin:<name>.", true, true},
+       {{"name", "string",
+         "The rival, or builtin:<name>; with more seats, one per other seat, "
+         "comma-separated (a last builtin fills the seats left).",
+         true, true},
         {"games", "integer", "Games to play."}}},
   };
   return *tools;

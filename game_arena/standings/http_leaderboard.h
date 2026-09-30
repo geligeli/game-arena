@@ -10,6 +10,7 @@
 #include <functional>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -26,6 +27,11 @@ std::string HtmlEscape(std::string_view s);
 
 // Head, style, navigation and heading; |refresh| reloads every five seconds.
 std::string PageStart(std::string_view title, bool refresh = false);
+
+// RecordText() as table headers, and as a row's cells.
+std::string RecordHeaders(int players);
+std::string RecordCells(int players, int wins, int draws, int losses,
+                        std::span<const int> finishes);
 
 class HttpLeaderboard {
  public:
@@ -46,6 +52,8 @@ class HttpLeaderboard {
   void set_pool(std::function<std::set<std::string>()> pool) {
     pool_ = std::move(pool);
   }
+  // Seats per game, before Start(): past two, records show places, not W/D/L.
+  void set_players(int players) { players_ = players; }
 
   // Starts the accept thread. Returns false when the port cannot be bound.
   bool Start();
@@ -73,6 +81,7 @@ class HttpLeaderboard {
   const std::string problem_name_;
   const Routes more_;
   std::function<std::set<std::string>()> pool_;
+  int players_ = 2;
   // Everything on the acceptor and its sockets runs on thread_.
   boost::asio::io_context ioc_{1};
   boost::asio::ip::tcp::acceptor acceptor_{ioc_};

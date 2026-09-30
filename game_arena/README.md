@@ -1,8 +1,8 @@
 # The match referee and the broker protocol
 
-`match_referee` is a gRPC server that plays one match -- two named strategies,
-or one against a built-in -- turn by turn, enforcing a per-turn time limit,
-and exits. Bots speak the broker protocol below to it. It stores each game in
+`match_referee` is a gRPC server that plays one match -- named strategies and
+built-ins, one per seat -- turn by turn, enforcing a per-turn time limit, and
+exits. Bots speak the broker protocol below to it. It stores each game in
 its scratch directory and reports the tally; the coordinator does the rating.
 
 ## Running
@@ -18,9 +18,11 @@ bazel run //game_arena/testgame:match_referee -- \
     --rendezvous_timeout_ms=60000 --max_moves_per_game=50000
 ```
 
-It writes a `MatchReport` -- every game's `GameRecord` -- to `--report`,
-prints one `RESULT games= wins= draws= losses=` line counted from
-`--player_a`'s side, and exits.
+`--player_b` names every other seat, comma-separated (`player:bob,builtin:random`
+for a game of three). It writes a `MatchReport` -- every game's `GameRecord` --
+to `--report`, prints one `RESULT games= wins= draws= losses= finishes=` line
+counted from `--player_a`'s side (a win is a sole first place, a draw a shared
+one, `finishes` the games in each place), and exits.
 
 `--turn_timeout_ms` bounds a single move. It does not bound a game: a strategy
 that thinks for just under the limit on every one of thousands of moves stays
@@ -34,26 +36,32 @@ One bidirectional `TournamentBroker.Play` stream per game
 (`tournament_broker.proto`):
 
 1. Client opens the stream and sends `hello` with `player_name`, `game` (a key
-   into the linked registry, e.g. `"nim"`), and `opponent`:
+   into the linked registry, e.g. `"nim"`), and an `opponent` for every other
+   seat (`play_loop` takes them comma-separated), each:
    - `builtin:<spec>`: play a built-in immediately. Which specs exist is up to
      the registry — the reference one offers `builtin:random` and
      `builtin:optimal`; a spec may carry knobs, as in
      `builtin:mcts:iterations=N`;
-   - `player:<name>`: wait for that one named player, who must name you in
-     return. Both sides are paired as soon as the second arrives. Seats
-     alternate across a pair's series, so which side connects first does not
-     decide who moves first. A partner that never shows up closes this stream
-     after `--rendezvous_timeout_ms`.
-2. Server sends `game_start` (your seat, opponent name, initial state).
+   - `player:<name>`: wait for that named player, who must name you and the
+     rest of the group in return. A group starts as soon as its last player
+     arrives. Across a group's series each member has each seat once in every
+     n games (n seats) and every order of the others comes round, so which
+     side connects first does not decide who moves first. A partner that never
+     shows up closes this stream after `--rendezvous_timeout_ms`.
+2. Server sends `game_start` (your seat, every seat's name, initial state).
 3. On each of your turns the server sends `your_turn` with the serialized
    state and a wall-clock `deadline_unix_ms`. Reply with `action` containing
    the serialized action proto. Missing the deadline loses the game
    (`reason="timeout"`, or `"time_budget"` when it was the game budget rather
    than the per-turn limit that ran out); an invalid action loses with
-   `"illegal_action"`; disconnecting loses with `"opponent_disconnect"`.
-4. The game ends with `game_over` (result and reason), after which
-   the server closes the stream itself. A draw goes to the seat that used
-   less total thinking time (`reason="time_tiebreak"`). Clients may
+   `"illegal_action"`; disconnecting loses with `"opponent_disconnect"`. A
+   seat that loses so places below everyone still playing, the earliest to go
+   last; with more than two seats the registry's `forfeit_builtin` plays on
+   for it, so the rest are still ranked by the game.
+4. The game ends with `game_over` (result, place and reason), after which
+   the server closes the stream itself; a forfeiter's waits for the end.
+   Seats the game leaves level go to the one that used less total thinking
+   time (`reason="time_tiebreak"`). Clients may
    half-close at any point; they no longer have to in order for the server to
    release the call.
 

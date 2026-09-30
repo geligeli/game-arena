@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <numeric>
 #include <sstream>
 #include <vector>
 
@@ -19,6 +20,7 @@
 #include "absl/strings/str_split.h"
 #include "absl/strings/strip.h"
 #include "absl/time/time.h"
+#include "game_arena/referee/match_tally.h"
 #include "game_arena/server/unified_diff.h"
 #include "game_arena/standings/http_leaderboard.h"
 
@@ -246,7 +248,7 @@ std::string SourceOf(const std::string& patch) {
   return html;
 }
 
-std::string JobRow(const JobRecord& record, bool show_source) {
+std::string JobRow(const JobRecord& record, bool show_source, int players) {
   const proto::Job& job = record.job();
   return absl::StrCat(
       "<tr><td class=\"l\">", Time(job.created_unix_ms()),
@@ -254,16 +256,20 @@ std::string JobRow(const JobRecord& record, bool show_source) {
       HtmlEscape(job.job_id()), "</a></td><td class=\"l\">",
       PlayerLink(job.candidate_id()), "</td><td class=\"l\">",
       proto::Job::State_Name(job.state()), "</td><td class=\"l\">",
-      BuildSummary(record), "</td><td>", job.wins(), "</td><td>", job.draws(),
-      "</td><td>", job.losses(), "</td><td class=\"l\">",
+      BuildSummary(record), "</td>",
+      tournament_broker::RecordCells(players, job.wins(), job.draws(),
+                                     job.losses(), job.finishes()),
+      "<td class=\"l\">",
       show_source ? HtmlEscape(StripAnsi(FirstLine(job.error()))) : "",
       "</td></tr>");
 }
 
-constexpr std::string_view kJobHeader =
-    "<table><tr><th>Submitted</th><th>Job</th><th>Participant</th>"
-    "<th>State</th><th>Build</th><th>W</th><th>D</th><th>L</th>"
-    "<th>Error</th></tr>";
+std::string JobHeader(int players) {
+  return absl::StrCat(
+      "<table><tr><th>Submitted</th><th>Job</th><th>Participant</th>"
+      "<th>State</th><th>Build</th>",
+      tournament_broker::RecordHeaders(players), "<th>Error</th></tr>");
+}
 
 std::string Field(const json::object& game, std::string_view key) {
   const json::value* value = game.if_contains(key);
@@ -285,8 +291,29 @@ std::vector<std::string> Players(const json::object& game) {
   return players;
 }
 
+// The index's "places", empty in a line from before them.
+std::vector<int> Places(const json::object& game) {
+  std::vector<int> places;
+  if (const json::value* value = game.if_contains("places")) {
+    for (const json::value& place : value->as_array()) {
+      places.push_back(static_cast<int>(place.to_number<int64_t>()));
+    }
+  }
+  return places;
+}
+
 std::string ResultText(int64_t result, int64_t winner,
+                       const std::vector<int>& places,
                        const std::vector<std::string>& players) {
+  if (players.size() > 2 && places.size() == players.size()) {
+    std::vector<int> seats(players.size());
+    std::iota(seats.begin(), seats.end(), 0);
+    std::ranges::stable_sort(seats, {}, [&](int seat) { return places[seat]; });
+    return absl::StrJoin(seats, ", ", [&](std::string* out, int seat) {
+      absl::StrAppend(out, tournament_broker::Ordinal(places[seat]), " ",
+                      PlayerLink(players[seat]));
+    });
+  }
   if (result == GameRecord::DRAW) {
     return "draw";
   }
@@ -342,13 +369,14 @@ stage.textContent='(replay module failed to load: '+e+')'})})();
 Dashboard::Dashboard(const CandidateStore* candidates, const JobLog* jobs,
                      const tournament_broker::GameHistory* games,
                      const Standings* standings, bool show_source,
-                     ReplayAssets assets)
+                     ReplayAssets assets, int players)
     : candidates_(candidates),
       jobs_(jobs),
       games_(games),
       standings_(standings),
       show_source_(show_source),
-      assets_(std::move(assets)) {}
+      assets_(std::move(assets)),
+      players_(players) {}
 
 std::optional<std::pair<std::string, std::string>> Dashboard::Route(
     std::string_view target) const {
@@ -397,9 +425,9 @@ std::optional<std::pair<std::string, std::string>> Dashboard::Route(
 
 std::string Dashboard::JobsPage() const {
   std::ostringstream html;
-  html << PageStart("Jobs") << kJobHeader;
+  html << PageStart("Jobs") << JobHeader(players_);
   for (const JobRecord& record : jobs_->List()) {
-    html << JobRow(record, show_source_);
+    html << JobRow(record, show_source_, players_);
   }
   html << "</table>" << kPageEnd;
   return html.str();
@@ -415,8 +443,9 @@ std::optional<std::string> Dashboard::JobPage(const std::string& job_id) const {
   html << PageStart("Job " + job_id) << "<p>" << PlayerLink(job.candidate_id())
        << " &middot; submitted "
        << Time(record->submission().submitted_unix_ms()) << " &middot; "
-       << proto::Job::State_Name(job.state()) << " &middot; W/D/L "
-       << job.wins() << "/" << job.draws() << "/" << job.losses()
+       << proto::Job::State_Name(job.state()) << " &middot; "
+       << tournament_broker::RecordText(players_, job.wins(), job.draws(),
+                                        job.losses(), job.finishes())
        << " &middot; finished " << Time(job.finished_unix_ms()) << "</p>";
   if (!job.error().empty()) {
     html << (show_source_ ? Pre(job.error()) : std::string(kHidden));
@@ -434,8 +463,10 @@ std::optional<std::string> Dashboard::JobPage(const std::string& job_id) const {
     if (!result.machine_class().empty()) {
       html << " (" << HtmlEscape(result.machine_class()) << ")";
     }
-    html << " &middot; W/D/L " << result.wins() << "/" << result.draws() << "/"
-         << result.losses();
+    html << " &middot; "
+         << tournament_broker::RecordText(players_, result.wins(),
+                                          result.draws(), result.losses(),
+                                          result.finishes());
     for (int i = 0; i < order.game_ids_size(); ++i) {
       html << (i == 0 ? " &middot; games " : " ") << "<a href=\"/games/"
            << HtmlEscape(order.game_ids(i)) << "\">" << i + 1 << "</a>";
@@ -502,12 +533,13 @@ std::optional<std::string> Dashboard::ParticipantPage(
   if (standings_ != nullptr && standings_->has(id)) {
     const Standing row = standings_->Get(id);
     html << " &middot; " << HtmlEscape(standings_->score_label()) << " "
-         << absl::StrCat(row.score) << " &middot; W/D/L " << row.wins << "/"
-         << row.draws << "/" << row.losses;
+         << absl::StrCat(row.score) << " &middot; "
+         << tournament_broker::RecordText(players_, row.wins, row.draws,
+                                          row.losses, row.finishes);
   }
-  html << "</p><h2>Submissions</h2>" << kJobHeader;
+  html << "</p><h2>Submissions</h2>" << JobHeader(players_);
   for (const JobRecord& record : submissions) {
-    html << JobRow(record, show_source_);
+    html << JobRow(record, show_source_, players_);
   }
   html << "</table>";
 
@@ -570,7 +602,7 @@ std::string Dashboard::GamesPage(int page, const std::string& player) const {
          << "</td><td class=\"l\">" << PlayerLinks(players)
          << "</td><td class=\"l\">"
          << ResultText(Number(game, "result"), Number(game, "winning_player"),
-                       players)
+                       Places(game), players)
          << "</td><td class=\"l\">" << HtmlEscape(Field(game, "reason"))
          << "</td><td>" << Number(game, "moves")
          << "</td><td class=\"l\"><a href=\"/games/"
@@ -602,9 +634,15 @@ std::optional<std::string> Dashboard::ReplayPage(
   std::ostringstream html;
   html << PageStart(record->game() + ": " + absl::StrJoin(players, " vs "))
        << "<p>" << PlayerLinks(players) << " &middot; "
-       << ResultText(record->result(), record->winning_player(), players)
-       << " (" << HtmlEscape(record->termination_reason()) << ") &middot; "
-       << record->steps_size() << " moves &middot; "
+       << ResultText(record->result(), record->winning_player(),
+                     tournament_broker::PlacesOf(*record), players)
+       << " (" << HtmlEscape(record->termination_reason()) << ")";
+  for (const GameRecord::Forfeit& forfeit : record->forfeits()) {
+    html << " &middot; " << PlayerLink(players[forfeit.seat()])
+         << " forfeited (" << HtmlEscape(forfeit.reason()) << ") at move "
+         << forfeit.move();
+  }
+  html << " &middot; " << record->steps_size() << " moves &middot; "
        << Time(record->started_unix_ms()) << " to "
        << Time(record->finished_unix_ms()) << "</p>"
        << "<p><button onclick=\"go(0)\">first</button> "

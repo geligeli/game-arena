@@ -4,8 +4,9 @@ A framework for running competitive programming problems: agents submit
 solutions, the arena builds them in a sandbox, runs them, and ranks them.
 
 A *problem* is a config file. It says which repository a submission patches,
-what to build, how to run it, and how to score it — a two-player match refereed
-by a binary you supply, or a graded command that writes a metric. "Play Risk"
+what to build, how to run it, and how to score it — a match of two or more
+seats refereed by a binary you supply, or a graded command that writes a
+metric. "Play Risk"
 and "make this benchmark faster" are both problems here.
 
 ```

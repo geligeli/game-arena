@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "game_arena/standings/game_history.h"
 
 namespace tournament_broker {
@@ -40,6 +42,32 @@ MatchTally TallyOf(const proto::MatchReport &report,
     AddGame(record, player, &tally);
   }
   return tally;
+}
+
+std::string Ordinal(int place) {
+  const int n = place + 1;
+  const int tens = n % 100;
+  const char *suffix = tens >= 11 && tens <= 13 ? "th"
+                       : n % 10 == 1            ? "st"
+                       : n % 10 == 2            ? "nd"
+                       : n % 10 == 3            ? "rd"
+                                                : "th";
+  return absl::StrCat(n, suffix);
+}
+
+std::string RecordText(int players, int wins, int draws, int losses,
+                       std::span<const int> finishes) {
+  if (players <= 2) {
+    return absl::StrCat("W/D/L ", wins, "/", draws, "/", losses);
+  }
+  std::vector<std::string> places, counts;
+  for (int place = 0; place < players; ++place) {
+    places.push_back(Ordinal(place));
+    counts.push_back(absl::StrCat(
+        place < static_cast<int>(finishes.size()) ? finishes[place] : 0));
+  }
+  return absl::StrCat(absl::StrJoin(places, "/"), " ",
+                      absl::StrJoin(counts, "/"));
 }
 
 }  // namespace tournament_broker

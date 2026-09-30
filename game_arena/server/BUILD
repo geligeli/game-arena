@@ -198,6 +198,7 @@ cc_library(
         "@abseil-cpp//absl/strings",
         "@abseil-cpp//absl/time",
         "@boost.json",
+        "//game_arena/referee:match_tally",
     ],
 )
 

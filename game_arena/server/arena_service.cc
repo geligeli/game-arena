@@ -105,6 +105,7 @@ proto::CandidateStanding ArenaService::StandingFor(
   standing.set_wins(row.wins);
   standing.set_draws(row.draws);
   standing.set_losses(row.losses);
+  *standing.mutable_finishes() = {row.finishes.begin(), row.finishes.end()};
   standing.set_runs(row.runs);
   standing.set_worker_id(row.worker_id);
   standing.set_machine_class(row.machine_class);

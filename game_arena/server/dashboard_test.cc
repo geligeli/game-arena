@@ -293,6 +293,38 @@ TEST_F(DashboardTest, AReplayWithAModuleHandsItTheViews) {
   EXPECT_THAT(html, HasSubstr("data-p=\"1\""));
 }
 
+// Past two seats a result is the placings, and a forfeit says who and why.
+TEST_F(DashboardTest, AFreeForAllShowsPlacingsAndForfeits) {
+  GameRecord record;
+  record.set_game_id("o1_1-g3_0");
+  record.set_game("nim3");
+  for (const char* name : {"alice", "bob", "carol"}) {
+    record.add_player_names(name);
+  }
+  record.set_result(GameRecord::WIN);
+  record.set_winning_player(1);
+  for (const int place : {2, 0, 1}) {
+    record.add_places(place);
+  }
+  GameRecord::Forfeit* forfeit = record.add_forfeits();
+  forfeit->set_seat(0);
+  forfeit->set_reason("timeout");
+  forfeit->set_move(4);
+  record.set_termination_reason("normal");
+  record.set_finished_unix_ms(3000);
+  games_->Store(record);
+
+  const std::string games = Page("/games");
+  EXPECT_NE(games.find("1st <a href=\"/participants/bob\">bob</a>, 2nd "),
+            std::string::npos)
+      << games;
+  const std::string replay = Page("/games/o1_1-g3_0");
+  EXPECT_NE(replay.find("3rd <a href=\"/participants/alice\">alice</a>"),
+            std::string::npos);
+  EXPECT_NE(replay.find("forfeited (timeout) at move 4"), std::string::npos)
+      << replay;
+}
+
 TEST_F(DashboardTest, UnknownAndUnsafeTargetsAreNotFound) {
   EXPECT_FALSE(Found("/jobs/nope"));
   EXPECT_FALSE(Found("/jobs/../candidates"));

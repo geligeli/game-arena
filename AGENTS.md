@@ -20,8 +20,9 @@ game_arena/sandbox/    exec/ (the execution engine), common/ (docker mechanics),
                        worker/ (the fleet's own policy)
 game_arena/referee/    match loop + broker protocol; entry points as libraries
 game_arena/client/     the generic reference client
-game_arena/testgame/   Nim: the arena's own game and reference registry
-game_arena/problems/   nim.textproto
+game_arena/testgame/   Nim, for two and for three seats: the arena's own game
+                       and reference registry
+game_arena/problems/   nim.textproto, nim3.textproto
 game_arena/rules/      arena_problem, the macro a problem repo calls
 game_arena/image/      what bazel layers a problem's images onto: kit_base
                        and sandbox_base
