@@ -285,6 +285,9 @@ void Matchmaker::Shutdown() {
 void Matchmaker::ReaperLoop() {
   std::unique_lock lock(mutex_);
   while (!stopping_) {
+    // A refused join can leave a group with no one in it: nothing to wait on.
+    std::erase_if(rendezvous_,
+                  [](const auto& entry) { return entry.second.empty(); });
     if (rendezvous_.empty()) {
       reaper_cv_.wait(lock);
       continue;
@@ -313,8 +316,6 @@ void Matchmaker::ReaperLoop() {
         return gone;
       });
     }
-    std::erase_if(rendezvous_,
-                  [](const auto& entry) { return entry.second.empty(); });
     if (expired.empty()) {
       continue;
     }
