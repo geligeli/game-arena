@@ -849,8 +849,11 @@ int CmdSpar(const Client &client, const std::vector<char *> &args) {
   std::filesystem::current_path(client.kit_dir);
   const std::string dir = client.kit.submit_dir();
   const std::string bin = client.kit.bot_binary();
-  std::vector<std::string> build = {"bazel", "build", "//:match_referee",
-                                    "//" + dir + "/" + me + ":" + bin};
+  std::vector<std::string> build = {"bazel", "build"};
+  build.insert(build.end(), client.kit.bazel_flags().begin(),
+               client.kit.bazel_flags().end());
+  build.push_back("//:match_referee");
+  build.push_back("//" + dir + "/" + me + ":" + bin);
   for (const std::string &player : players) {
     build.push_back("//" + dir + "/" + player + ":" + bin);
   }

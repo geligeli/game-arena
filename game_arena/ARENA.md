@@ -160,7 +160,8 @@ a kit alike, with the BUILD the arena generates -- which names no directory,
 so it builds wherever it lands. A kit makes yours from the problem's starter
 the first time `arena_cli` runs, `arena_cli source <name>` puts a rival's
 beside it, and `arena_cli spar <name>` builds both and referees them on your
-machine with the referee and the game bounds the fleet uses. That is a
+machine with the referee, the game bounds and the build flags
+(`build.bazel_flags`, e.g. `-c opt`) the fleet uses. That is a
 rival's code run by you, on your own machine, by your choice: it gets no
 token, and it is not something the tournament ever does.
 `arena_cli spar builtin:<name>` plays yours against one of the problem's

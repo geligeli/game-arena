@@ -826,6 +826,13 @@ std::string KitReadme(const proto::ProblemConfig& config,
     md << "bazel build //...\n";
   }
   md << "```\n";
+  if (!config.build().bazel_flags().empty()) {
+    md << "\nRated builds use `bazel build "
+       << absl::StrJoin(config.build().bazel_flags(), " ") << "`"
+       << (config.has_match() ? ", and so does `arena_cli spar`" : "")
+       << ". A plain `bazel build` does not: build with these flags to "
+          "measure your code as it will run.\n";
+  }
 
   md << "\n## Submitting\n\n"
         "The arena is at `"
@@ -1048,6 +1055,7 @@ std::string KitConfigText(const proto::ProblemConfig& config,
   kit.set_client_id(client_id);
   kit.set_submit_dir(config.submission().files_submit_dir());
   kit.set_starter_dir(config.kit().starter_dir());
+  *kit.mutable_bazel_flags() = config.build().bazel_flags();
   if (config.has_match()) {
     const proto::MatchSpec& match = config.match();
     kit.set_bot_binary(config.submission().harness().binary_name().empty()
