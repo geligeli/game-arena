@@ -10,6 +10,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -99,12 +100,20 @@ class WorkerSession {
     runner_->Cancel(order_id);
   }
 
+  // Cancels what the slots are running too: the arena requeued every order
+  // of a worker it lost, and a result has no stream left to go back on, so
+  // finishing one would only keep this worker from attaching again.
   void Stop() {
+    std::set<std::string> running;
     {
       std::lock_guard lock(mutex_);
       stopping_ = true;
+      running = running_;
     }
     cv_.notify_all();
+    for (const std::string &order_id : running) {
+      runner_->Cancel(order_id);
+    }
   }
 
  private:
@@ -119,6 +128,7 @@ class WorkerSession {
         }
         order = std::move(queue_.front());
         queue_.pop_front();
+        running_.insert(order.order_id());
       }
 
       LOG(INFO) << "slot " << slot << ": order " << order.order_id()
@@ -131,6 +141,10 @@ class WorkerSession {
                                    proto::OrderProgress::Phase phase) {
                               SendProgress(order_id, phase);
                             });
+      {
+        std::lock_guard lock(mutex_);
+        running_.erase(order.order_id());
+      }
 
       // Before the result, so the coordinator has them when it concludes.
       for (const auto &record : outcome.games) {
@@ -177,6 +191,7 @@ class WorkerSession {
   std::mutex mutex_;
   std::condition_variable cv_;
   std::deque<proto::WorkOrder> queue_;
+  std::set<std::string> running_;  // order ids the slots are on
   bool stopping_ = false;
 
   std::mutex write_mutex_;
