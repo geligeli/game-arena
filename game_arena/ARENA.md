@@ -245,6 +245,14 @@ Two opt-in settings change what a submission is and how often the fleet plays.
     game moves the ratings most: TrueSkill's match quality times their
     combined variance. Past two seats a group of different authors comes
     first: two versions of one author could gang up on a third.
+  - A rating is only comparable to one earned against the same field, and
+    with tau 0 old games count forever: a version rated before a strong
+    newcomer arrived would otherwise stay settled without ever meeting it.
+    So certainty is sigma widened by how lopsided a member's games are: for
+    each other author in the pool, how far the share of its games that author
+    sat in falls short of a fair one (the other seats over the other
+    authors), the worst shortfall times beta. A member meets the authors it
+    is shortest of first; `/pool` shows each one's worst.
   - Placement jobs are queued, so they never wait behind a match.
   - The leaderboard shows the pool apart from those that dropped out.
   - `/pool` has the matches and the Swiss re-rank's charts, live, from

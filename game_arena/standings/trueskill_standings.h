@@ -37,6 +37,8 @@ class TrueSkillStandings final : public Standings {
   // Mu and sigma, for a caller that needs more than the score.
   tournament_broker::trueskill::Rating RatingOf(
       const std::string &player) const;
+  tournament_broker::trueskill::PlayerRecord RecordOf(
+      const std::string &player) const;
   std::vector<Standing> Rank(int limit) const override;
   std::string score_label() const override { return "trueskill"; }
   bool has(const std::string &candidate_id) const override;

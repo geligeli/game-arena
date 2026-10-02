@@ -1,6 +1,7 @@
 #include "game_arena/standings/trueskill.h"
 
 #include <cmath>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -228,6 +229,7 @@ TEST(RankerTest, CountsFinishesOfAFreeForAll) {
   EXPECT_EQ(a.draws, 1);
   EXPECT_EQ(c.finishes, (std::vector{0, 1, 1}));
   EXPECT_EQ(c.losses, 2);
+  EXPECT_EQ(a.met, (std::map<std::string, int>{{"b", 2}, {"c", 2}}));
   EXPECT_GT(ranker.Get("b").rating.mu, c.rating.mu);
 }
 

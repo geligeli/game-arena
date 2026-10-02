@@ -1,5 +1,7 @@
 #include "game_arena/server/matchmaking.h"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -9,6 +11,8 @@ namespace tournament_arena {
 namespace {
 
 using tournament_broker::trueskill::Params;
+
+constexpr double kBeta = Params{}.beta;
 
 PoolMember Member(const std::string &id, double mu, double sigma,
                   int running = 0, const std::string &author = "") {
@@ -33,23 +37,54 @@ TEST(PoolOfTest, EveryonePlausiblyInTheTop) {
                                          Member("d", 26, 2), Member("b", 28, 1),
                                          Member("e", 24, 0.5)};
   // The bar is b's 26: c and d could still reach it, e cannot.
-  EXPECT_EQ(Ids(PoolOf(rated, 2)),
+  EXPECT_EQ(Ids(PoolOf(rated, 2, 2, kBeta)),
             (std::vector<std::string>{"a", "b", "c", "d"}));
-  EXPECT_EQ(Ids(PoolOf(rated, 10)),
+  EXPECT_EQ(Ids(PoolOf(rated, 10, 2, kBeta)),
             (std::vector<std::string>{"a", "b", "c", "e", "d"}));
-  EXPECT_TRUE(PoolOf({}, 10).empty());
+  EXPECT_TRUE(PoolOf({}, 10, 2, kBeta).empty());
 }
 
 TEST(PoolOfTest, OnlyAPlaceNoOutsiderCouldTakeIsSettled) {
   // d could reach 30: a's 28 is not safe from it, b's 26 even less.
   const std::vector<PoolMember> pool =
-      PoolOf({Member("a", 30, 1), Member("b", 28, 1), Member("d", 26, 2)}, 2);
+      PoolOf({Member("a", 30, 1), Member("b", 28, 1), Member("d", 26, 2)}, 2, 2, kBeta);
   ASSERT_EQ(pool.size(), 3u);
   EXPECT_FALSE(pool[0].settled);
   const std::vector<PoolMember> safe =
-      PoolOf({Member("a", 40, 1), Member("b", 28, 1), Member("d", 26, 2)}, 2);
+      PoolOf({Member("a", 40, 1), Member("b", 28, 1), Member("d", 26, 2)}, 2, 2, kBeta);
   EXPECT_TRUE(safe[0].settled);
   EXPECT_FALSE(safe[1].settled);
+}
+
+// opus rated against x and y alone, then z arrived: z sat in 10 of its 100
+// games where a fair share, two seats over three other authors, is 2/3.
+TEST(PoolOfTest, ALopsidedFieldIsDoubtAndUnsettlesAPlace) {
+  PoolMember opus = Member("opus", 36, 0.2, 0, "opus");
+  opus.games = 100;
+  opus.met = {{"x", 100}, {"y", 90}, {"z", 10}};
+  // x2 is outside the top 4 but could reach 32.
+  const std::vector<PoolMember> rated = {opus, Member("x", 30, 0.2, 0, "x"),
+                                         Member("y", 29, 0.2, 0, "y"),
+                                         Member("z", 28, 0.2, 0, "z"),
+                                         Member("x2", 28, 2, 0, "x")};
+  const std::vector<PoolMember> pool = PoolOf(rated, 4, 3, kBeta);
+  ASSERT_EQ(pool.front().id, "opus");
+  // x and y it met its share of.
+  EXPECT_EQ(pool.front().shortfall.size(), 1u);
+  EXPECT_NEAR(pool.front().shortfall.at("z"), 2.0 / 3 - 0.1, 1e-9);
+  EXPECT_NEAR(Doubt(pool.front(), kBeta),
+              std::hypot(0.2, kBeta * (2.0 / 3 - 0.1)), 1e-9);
+  // 36 - 2 * 0.2 is safe from x2's 32, 36 - 2 * 2.4 is not.
+  EXPECT_FALSE(pool.front().settled);
+  opus.met["z"] = 70;
+  EXPECT_TRUE(PoolOf({opus, rated[1], rated[2], rated[3], rated[4]}, 4, 3,
+                     kBeta)
+                  .front()
+                  .shortfall.empty());
+  // A version yet to play is short of no one.
+  EXPECT_TRUE(PoolOf({Member("new", 25, 8, 0, "new"), rated[1]}, 4, 3, kBeta)
+                  .front()
+                  .shortfall.empty());
 }
 
 TEST(ChooseGroupTest, TheLeastCertainMeetsItsClosestUncertainRival) {
@@ -105,6 +140,24 @@ TEST(ChooseGroupTest, ThreeSeatsPreferDistinctAuthors) {
   // Only one other author left: the best group after all.
   EXPECT_EQ(*ChooseGroup({pool[0], pool[1], pool[2]}, {}, Params{}, 3),
             (std::vector<std::string>{"unsure", "near", "next"}));
+}
+
+// A settled leader short of z's games is the most doubtful member, and meets
+// z, however far, before closer rivals it has met enough of.
+TEST(ChooseGroupTest, AMemberMeetsTheAuthorsItIsShortestOf) {
+  PoolMember leader = Member("leader", 36, 0.2, 0, "opus");
+  leader.shortfall = {{"z", 0.6}};
+  const std::vector<PoolMember> pool = {
+      leader, Member("x1", 35, 1, 0, "x"), Member("y1", 34, 1, 0, "y"),
+      Member("z1", 25, 1, 0, "z")};
+  const auto group = ChooseGroup(pool, {}, Params{}, 3);
+  EXPECT_EQ(group->front(), "leader");
+  EXPECT_TRUE(std::ranges::contains(*group, std::string("z1")));
+  // Short of no one, it has the least doubt of all.
+  leader.shortfall.clear();
+  EXPECT_EQ(ChooseGroup({leader, pool[1], pool[2], pool[3]}, {}, Params{}, 3)
+                ->front(),
+            "x1");
 }
 
 // Two versions cannot fill three seats alone: both play, and the builtin

@@ -38,7 +38,16 @@ std::string When(int64_t unix_ms) {
 
 }  // namespace
 
-std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size) {
+double Doubt(const PoolMember &member, double beta) {
+  double worst = 0;
+  for (const auto &[author, fraction] : member.shortfall) {
+    worst = std::max(worst, fraction);
+  }
+  return std::hypot(member.rating.sigma, beta * worst);
+}
+
+std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size,
+                               std::size_t seats, double beta) {
   const auto low = [](const PoolMember &m) {
     return m.rating.mu - 2 * m.rating.sigma;
   };
@@ -56,12 +65,33 @@ std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size) {
   for (std::size_t i = top; i < rated.size(); ++i) {
     challenger = std::max(challenger, high(rated[i]));
   }
+  // The top first, in order.
   std::vector<PoolMember> pool;
+  std::set<std::string> authors;
   for (std::size_t i = 0; i < rated.size(); ++i) {
     if (i < top || high(rated[i]) >= bar) {
-      rated[i].settled = i < top && low(rated[i]) > challenger;
       pool.push_back(rated[i]);
+      authors.insert(rated[i].author);
     }
+  }
+  if (authors.size() > 1) {
+    const double fair = std::min(
+        1.0, static_cast<double>(seats - 1) / static_cast<double>(authors.size() - 1));
+    for (PoolMember &m : pool) {
+      for (const std::string &author : authors) {
+        const auto met = m.met.find(author);
+        const double share =
+            m.games == 0 || met == m.met.end()
+                ? 0.0
+                : static_cast<double>(met->second) / m.games;
+        if (author != m.author && m.games > 0 && share < fair) {
+          m.shortfall[author] = fair - share;
+        }
+      }
+    }
+  }
+  for (std::size_t i = 0; i < top; ++i) {
+    pool[i].settled = pool[i].rating.mu - 2 * Doubt(pool[i], beta) > challenger;
   }
   return pool;
 }
@@ -77,8 +107,8 @@ std::optional<std::vector<std::string>> ChooseGroup(
   // The least certain first, less so the more it is already playing; while
   // anyone's place is open, one of those.
   const bool open = !std::ranges::all_of(pool, &PoolMember::settled);
-  const auto urgency = [open](const PoolMember &m) {
-    return open && m.settled ? -1 : m.rating.sigma / (1 + m.running);
+  const auto urgency = [&](const PoolMember &m) {
+    return open && m.settled ? -1 : Doubt(m, params.beta) / (1 + m.running);
   };
   const PoolMember &a = *std::ranges::max_element(
       pool,
@@ -105,13 +135,13 @@ std::optional<std::vector<std::string>> ChooseGroup(
   const std::size_t k = seats - 1 - fixed.size();
   std::vector<std::size_t> pick(k);
   std::iota(pick.begin(), pick.end(), std::size_t{0});
-  std::optional<std::tuple<bool, bool, double>> best_key;
+  std::optional<std::tuple<bool, double, bool, double>> best_key;
   std::vector<std::string> best;
   for (;;) {
     std::vector<Rating> ratings = {a.rating};
     std::set<std::string> authors = {a.author};
     bool fresh = true;
-    double variance = a.rating.sigma * a.rating.sigma;
+    double variance = std::pow(Doubt(a, params.beta), 2);
     int running = 0;
     std::vector<const PoolMember *> group = fixed;
     for (const std::size_t i : pick) {
@@ -122,12 +152,18 @@ std::optional<std::vector<std::string>> ChooseGroup(
       ratings.push_back(b.rating);
       authors.insert(b.author);
       fresh = fresh && !is_recent(b);
-      variance += b.rating.sigma * b.rating.sigma;
+      variance += std::pow(Doubt(b, params.beta), 2);
       running += b.running;
     }
-    // Close and uncertain: where a game moves the ratings most.
+    double short_of = 0;
+    for (const std::string &author : authors) {
+      const auto it = a.shortfall.find(author);
+      short_of += it == a.shortfall.end() ? 0.0 : it->second;
+    }
+    // The authors |a| is shortest of, then close and uncertain: where a game
+    // moves the ratings most.
     const auto key =
-        std::tuple(seats == 2 || authors.size() == seats, fresh,
+        std::tuple(seats == 2 || authors.size() == seats, short_of, fresh,
                    tournament_broker::trueskill::Quality(ratings, params.beta) *
                        variance / (1 + running));
     if (!best_key.has_value() || key > *best_key) {
@@ -227,24 +263,37 @@ void Matchmaker::Append(const std::string &line) const {
 
 std::vector<PoolMember> Matchmaker::Rated(
     const std::map<std::string, int> &running) const {
+  const std::vector<proto::Candidate> candidates = candidates_->List();
+  std::map<std::string, std::string> author_of;  // a builtin is its own
+  for (const proto::Candidate &c : candidates) {
+    author_of[c.candidate_id()] =
+        c.author().empty() ? c.candidate_id() : c.author();
+  }
   std::vector<PoolMember> rated;
-  for (const proto::Candidate &c : candidates_->List()) {
+  for (const proto::Candidate &c : candidates) {
     if (c.status() != proto::Candidate::READY) {
       continue;
     }
     const auto playing = running.find(c.candidate_id());
-    rated.push_back(
-        {.id = c.candidate_id(),
-         .author = c.author().empty() ? c.candidate_id() : c.author(),
-         .rating = ratings_->RatingOf(c.candidate_id()),
-         .running = playing == running.end() ? 0 : playing->second});
+    const tournament_broker::trueskill::PlayerRecord record =
+        ratings_->RecordOf(c.candidate_id());
+    PoolMember &m = rated.emplace_back(
+        PoolMember{.id = c.candidate_id(),
+                   .author = author_of[c.candidate_id()],
+                   .rating = record.rating,
+                   .running = playing == running.end() ? 0 : playing->second,
+                   .games = record.wins + record.draws + record.losses});
+    for (const auto &[opponent, games] : record.met) {
+      const auto author = author_of.find(opponent);
+      m.met[author == author_of.end() ? opponent : author->second] += games;
+    }
   }
   return rated;
 }
 
 std::set<std::string> Matchmaker::Members() const {
   std::set<std::string> ids;
-  for (const PoolMember &m : PoolOf(Rated({}), config_.pool())) {
+  for (const PoolMember &m : PoolOf(Rated({}), config_.pool(), seats_, params_.beta)) {
     ids.insert(m.id);
   }
   return ids;
@@ -283,7 +332,8 @@ void Matchmaker::TopUp() {
       }
     }
   }
-  std::vector<PoolMember> pool = PoolOf(Rated(running), config_.pool());
+  std::vector<PoolMember> pool =
+      PoolOf(Rated(running), config_.pool(), seats_, params_.beta);
   std::vector<PoolMember> fillers;
   for (const std::string &builtin : builtins_) {
     fillers.push_back({.id = builtin,
@@ -376,7 +426,7 @@ std::optional<std::pair<std::string, std::string>> Matchmaker::Route(
     finished.assign(finished_.begin(), finished_.end());
     done = matches_done_;
   }
-  const std::vector<PoolMember> pool = PoolOf(Rated({}), config_.pool());
+  const std::vector<PoolMember> pool = PoolOf(Rated({}), config_.pool(), seats_, params_.beta);
   std::map<std::string, const PoolMember *> member;
   std::map<std::string, int> place;  // 1-based, in the pool
   for (std::size_t i = 0; i < pool.size(); ++i) {
@@ -412,6 +462,12 @@ std::optional<std::pair<std::string, std::string>> Matchmaker::Route(
     e.note = !in_pool ? "out"
                       : absl::StrCat("pool #", place[id],
                                      member[id]->settled ? "" : ", place open");
+    if (in_pool && !member[id]->shortfall.empty()) {
+      const auto &[author, fraction] = *std::ranges::max_element(
+          member[id]->shortfall, {}, [](const auto &s) { return s.second; });
+      absl::StrAppend(&e.note, ", ", std::lround(100 * fraction), "% short of ",
+                      author);
+    }
   }
   for (const std::string &builtin : builtins_) {
     if (ratings_->has(builtin)) {

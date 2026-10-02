@@ -65,6 +65,7 @@ struct PlayerRecord {
   int draws = 0;
   int losses = 0;
   std::vector<int> finishes = {};  // games per place, first first
+  std::map<std::string, int> met = {};  // games shared, by opponent
 };
 
 // Ratings by player name, fed one game at a time in the order played.

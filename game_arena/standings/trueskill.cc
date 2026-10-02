@@ -260,6 +260,11 @@ void Ranker::AddGame(std::span<const std::string> players,
       record.finishes.resize(place + 1);
     }
     ++record.finishes[place];
+    for (const std::string &opponent : players) {
+      if (opponent != players[i]) {
+        ++record.met[opponent];
+      }
+    }
     ++(places[i] != first ? record.losses
        : shared           ? record.draws
                           : record.wins);

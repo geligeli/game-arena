@@ -9,17 +9,28 @@
 // out and are not scheduled, so the work grows with the pool, not with every
 // version ever submitted; and a version stays until its own games show it
 // out, however new. Whenever nothing is queued and a slot is free, the least
-// certain member whose place is still open (sigma, discounted by the matches
-// it already has running) plays the rivals, one per other seat, that maximise
-// TrueSkill's match quality times their combined variance, skipping its last
-// few opponents and, with more than two seats, preferring rivals of different
-// authors. Placement jobs are queued, so they never wait behind a match.
+// certain member whose place is still open (its doubt, below, discounted by
+// the matches it already has running) plays the rivals, one per other seat,
+// of the authors it is shortest of, then those that maximise TrueSkill's match
+// quality times their combined doubt, skipping its last few opponents and,
+// with more than two seats, preferring rivals of different authors. Placement
+// jobs are queued, so they never wait behind a match.
+//
+// A rating is only comparable to one earned against the same field, and
+// without dynamics a version's old games count forever: one rated before a
+// strong newcomer arrived, and settled since, would never meet it. So a
+// member's doubt is its sigma widened by how lopsided its games are: for each
+// other author in the pool, the share of its games that author sat in falls
+// short of its fair share (the other seats over the other authors) by some
+// fraction, and the worst fraction times beta, the performance noise a game is
+// decided by, is about how far off the rating may be.
 //
 // <data_dir>/matchmaking.tsv keeps, across restarts, every finished match
 // ("G  <unix ms>  <job>  <games>  <a>,<b>,...  <a's finishes, first first>"),
 // for /pool.
 
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -48,15 +59,25 @@ struct PoolMember {
   std::string author;  // the id itself for a builtin or a version with none
   tournament_broker::trueskill::Rating rating;
   int running = 0;  // matches of its in flight
-  // Surely in the top: no version outside it could plausibly overtake it.
+  int games = 0;
+  std::map<std::string, int> met = {};  // games shared with each author
+  // Filled by PoolOf: the fraction of its games each author of the pool falls
+  // short of a fair share, for those that do.
+  std::map<std::string, double> shortfall = {};
+  // Surely in the top, doubt included: no version outside it could
+  // plausibly overtake it.
   bool settled = false;
 };
 
+// sigma, widened by the worst shortfall, as above.
+double Doubt(const PoolMember &member, double beta);
+
 // The pool out of every READY version, as above. Best first, by mu - 2 sigma.
-std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size);
+std::vector<PoolMember> PoolOf(std::vector<PoolMember> rated, int size,
+                               std::size_t seats, double beta);
 
 // The next match, the member it is for first, or nullopt with fewer than two
-// members. |recent| maps a member to its last opponents, which it does not
+// members. Its rivals are of the authors it is shortest of first. |recent| maps a member to its last opponents, which it does not
 // meet again while another group is left. With more than two seats a group
 // whose authors differ goes before one that has recent opponents: a third
 // seat is what two versions of one author could gang up on. A pool smaller
